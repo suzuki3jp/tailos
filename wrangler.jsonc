@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "meguri",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [{ "pattern": "meguri.suzuki3.jp", "custom_domain": true }],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "vars": {
+    "APP_ORIGIN": "http://localhost:8787",
+    "PROJECTS": "[]"
+  },
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "meguri-artifacts" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CREDENTIALS", "class_name": "CredentialBroker" },
+      { "name": "CONTROL", "class_name": "ControlPlane" },
+      { "name": "RUNS", "class_name": "RunCoordinator" },
+      { "name": "SANDBOXES", "class_name": "ExecutionSandbox" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CredentialBroker", "ControlPlane", "RunCoordinator", "ExecutionSandbox"] }],
+  "containers": [{
+    "class_name": "ExecutionSandbox",
+    "scheduling_policy": "durable_object",
+    "images": { "agent": { "dockerfile": "./Dockerfile", "build_context": "." } }
+  }]
+}

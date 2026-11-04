@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example",
+    "repository": "OWNER/REPOSITORY",
+    "installationId": 123456,
+    "triggerLabel": "meguri:run",
+    "allowedActors": ["your-github-login"],
+    "engine": "codex",
+    "connectionId": "default",
+    "maxRunMinutes": 30,
+    "setupCommands": [],
+    "testCommands": ["npm test"]
+  }
+]

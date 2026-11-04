@@ -1,0 +1,32 @@
+{
+  "name": "meguri",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "scripts": {
+    "dev": "npm run build:runner && wrangler dev --infer-origin-from-routes=false",
+    "build:runner": "node scripts/build-runner.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check": "npm run check:boundaries && npm run typecheck && npm test && npm run build:runner",
+    "deploy": "npm run build:runner && wrangler deploy",
+    "deploy:config": "node --experimental-strip-types scripts/configure-deploy.ts"
+  },
+  "dependencies": {
+    "jose": "6.2.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261104.1",
+    "@openai/codex": "0.166.0",
+    "@types/node": "22.19.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.2",
+    "vitest": "5.1.0",
+    "wrangler": "4.157.0"
+  }
+}

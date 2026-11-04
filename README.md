@@ -1,5 +1,7 @@
 # Meguri
 
+Hello World from meguri
+
 Issue にラベルを付けると、Cloudflare の Sandbox で Codex が実装し、GitHub App が PR を作成するプロトタイプです。複数の Public / Private リポジトリを設定できます。
 
 MVP の終点は **PR 作成**です。CI 修正ループ、自動レビュー、自動マージ、汎用の管理画面は含みません。Web UI は ChatGPT の接続・再接続・切断に絞っています。

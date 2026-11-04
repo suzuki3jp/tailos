@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentAdapter } from '../core/ports';
 import type { AgentResult, FileChange, RunnerJob } from '../contracts/index';
+import { prepareRepositoryAccess } from './repository';
 
 export function command(argv: string[], cwd: string, signal: AbortSignal, emit?: (type: string, data: unknown) => void): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -60,8 +61,13 @@ export async function executeJob(job: RunnerJob, adapter: AgentAdapter, context:
   const root = await mkdtemp(join(tmpdir(), 'meguri-job-'));
   const cwd = join(root, 'repo');
   try {
+    const credentials = await prepareRepositoryAccess(root, job.repository, job.repositoryAccess);
     context.emit('workspace.clone', { repository: job.repository, baseSha: job.issue.baseSha });
-    await command(['git', 'clone', '--no-checkout', '--', `https://github.com/${job.repository}.git`, cwd], root, context.signal, context.emit);
+    await command(['git', ...credentials.cloneOptions, 'clone', '--no-checkout', '--', job.repositoryAccess.cloneUrl, cwd], root, context.signal, context.emit);
+    await git(['config', '--local', 'credential.helper', credentials.helper], cwd, context.signal);
+    await git(['config', '--local', 'credential.useHttpPath', 'true'], cwd, context.signal);
+    await git(['config', '--local', 'user.name', job.repositoryAccess.author.name], cwd, context.signal);
+    await git(['config', '--local', 'user.email', job.repositoryAccess.author.email], cwd, context.signal);
     await git(['checkout', '--detach', job.issue.baseSha], cwd, context.signal);
     for (const script of job.setupCommands) {
       context.emit('workspace.setup', { command: script });

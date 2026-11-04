@@ -26,7 +26,7 @@ function emit(type: string, data: unknown): void {
 async function start(job: RunnerJob): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, job.deadline - Date.now()));
-  secrets = [job.access.accessToken, job.refresh.bearer];
+  secrets = [job.access.accessToken, job.refresh.bearer, job.repositoryAccess.token];
   try {
     const adapter = engines[job.engine];
     if (!adapter) throw new Error(`Unknown engine: ${job.engine}`);
@@ -57,7 +57,7 @@ createServer(async (request, response) => {
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of request) { size += chunk.length; if (size > 1_000_000) throw new Error('Job is too large'); chunks.push(chunk); }
       const job = JSON.parse(Buffer.concat(chunks).toString()) as RunnerJob;
-      if (!job.runId || !engines[job.engine] || !Number.isFinite(job.deadline) || job.deadline <= Date.now() || job.deadline > Date.now() + 61 * 60_000) throw new Error('Invalid job');
+      if (!job.runId || !engines[job.engine] || !job.repositoryAccess?.token || !Number.isFinite(job.deadline) || job.deadline <= Date.now() || job.deadline > Date.now() + 61 * 60_000) throw new Error('Invalid job');
       if (jobId && jobId !== job.runId) { response.statusCode = 409; response.end('{}'); return; }
       if (!jobId) { jobId = job.runId; void start(job); }
       response.statusCode = 202; response.end('{}'); return;

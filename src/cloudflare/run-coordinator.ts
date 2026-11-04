@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { isTerminal, type AgentResult, type ExecutionRequest, type Project, type Run } from '../contracts/index';
+import { isTerminal, type AgentResult, type ExecutionRequest, type Project, type RepositoryAccess, type Run } from '../contracts/index';
 import { advanceRun, ExecutionFailed } from '../core/run-controller';
 import { GitHubAppRepository } from '../adapters/git/github-app';
 import { CloudflareSandboxProvider } from '../adapters/sandbox/cloudflare';
@@ -62,8 +62,20 @@ export class RunCoordinator extends DurableObject<Env> {
   private async cleanup(run: Run): Promise<void> {
     // Invalidate the lease before stopping the workload or releasing its Issue lock.
     await this.ctx.storage.delete(['leaseHash', 'lease']);
+    let revokeFailure: unknown;
+    const sealed = await this.ctx.storage.get<Sealed>('repositoryAccess');
+    if (sealed) {
+      try {
+        const access = await unseal<RepositoryAccess>(sealed, this.env.CREDENTIAL_ENCRYPTION_KEY, `run:${run.id}:repository`);
+        await new GitHubAppRepository(this.env.MEGURI_GH_APP_ID, this.env.MEGURI_GH_APP_PRIVATE_KEY).revoke(access);
+        await this.ctx.storage.delete('repositoryAccess');
+      } catch (error) { revokeFailure = error; }
+    }
+    // Destroy the workload and release the Issue even if GitHub is unavailable.
+    // Keep the encrypted token and alarm until revocation can be retried.
     await this.env.SANDBOXES.getByName(run.id).stop();
     await this.env.CONTROL.getByName('global').update(run.id, run.phase);
+    if (revokeFailure) throw revokeFailure;
     await this.ctx.storage.put('cleaned', true);
     await this.ctx.storage.deleteAlarm();
   }
@@ -89,8 +101,19 @@ export class RunCoordinator extends DurableObject<Env> {
           if (!artifact) throw new Error('Run result artifact is missing');
           run.result = await artifact.json<AgentResult>();
         }
+        const source = new GitHubAppRepository(this.env.MEGURI_GH_APP_ID, this.env.MEGURI_GH_APP_PRIVATE_KEY);
         await advanceRun(run, {
-          source: new GitHubAppRepository(this.env.MEGURI_GH_APP_ID, this.env.MEGURI_GH_APP_PRIVATE_KEY),
+          source,
+          repositoryCredentials: {
+            acquire: async (project, issue) => {
+              const sealed = await this.ctx.storage.get<Sealed>('repositoryAccess');
+              if (sealed) return unseal<RepositoryAccess>(sealed, this.env.CREDENTIAL_ENCRYPTION_KEY, `run:${run.id}:repository`);
+              const access = await source.acquire(project, issue);
+              await this.ctx.storage.put('repositoryAccess', await seal(access, this.env.CREDENTIAL_ENCRYPTION_KEY, `run:${run.id}:repository`));
+              return access;
+            },
+            revoke: access => source.revoke(access),
+          },
           credentials: { acquire: (id, version) => this.env.CREDENTIALS.getByName('codex:default').acquire(id, version) },
           sandboxes: new CloudflareSandboxProvider(this.env.SANDBOXES), archive, save: r => this.save(r), now: () => Date.now(),
           refreshEndpoint: async r => {

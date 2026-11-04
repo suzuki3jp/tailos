@@ -1,9 +1,9 @@
 import { createPrivateKey } from 'node:crypto';
 import { importPKCS8, SignJWT } from 'jose';
-import type { SourceRepository } from '../../core/ports';
-import type { AgentResult, ExecutionRequest, IssueContext, Project } from '../../contracts/index';
+import type { RepositoryCredentialProvider, SourceRepository } from '../../core/ports';
+import type { AgentResult, ExecutionRequest, IssueContext, Project, RepositoryAccess } from '../../contracts/index';
 
-export class GitHubAppRepository implements SourceRepository {
+export class GitHubAppRepository implements SourceRepository, RepositoryCredentialProvider {
   // Workers requires the global receiver when invoking its native fetch.
   constructor(private readonly appId: string, private readonly privateKey: string, private readonly http: typeof fetch = (input, init) => globalThis.fetch(input, init)) {}
   private async appJwt(): Promise<string> {
@@ -21,11 +21,44 @@ export class GitHubAppRepository implements SourceRepository {
     if (!response.ok) throw new Error(`GitHub API ${method} ${path.split('?')[0]} failed (${response.status})`);
     return response.status === 204 ? undefined as T : await response.json() as T;
   }
-  private async token(project: Project): Promise<string> {
-    const result = await this.api<{ token: string }>(await this.appJwt(), `/app/installations/${project.installationId}/access_tokens`, 'POST', {
+  private mintToken(project: Project): Promise<{ token: string; expires_at: string }> {
+    return this.appJwt().then(jwt => this.api<{ token: string; expires_at: string }>(jwt, `/app/installations/${project.installationId}/access_tokens`, 'POST', {
       repositories: [project.repository.split('/')[1]], permissions: { contents: 'write', issues: 'read', pull_requests: 'write' },
-    });
-    return result.token;
+    }));
+  }
+  private async token(project: Project): Promise<string> { return (await this.mintToken(project)).token; }
+  async acquire(project: Project, issue: IssueContext): Promise<RepositoryAccess> {
+    const minted = await this.mintToken(project);
+    try {
+      const expiresAt = Date.parse(minted.expires_at);
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error('Invalid repository token expiration');
+      const prefix = `/repos/${project.repository}`;
+      const repo = await this.api<{ default_branch: string }>(minted.token, prefix);
+      for (const branch of new Set([repo.default_branch, issue.baseBranch])) {
+        const rules = await this.api<{ type: string }[]>(minted.token, `${prefix}/rules/branches/${encodeURIComponent(branch)}?per_page=100`);
+        if (!['creation', 'update', 'deletion'].every(type => rules.some(rule => rule.type === type))) {
+          throw new Error(`Protect ${branch} with active creation, update, and deletion rules before granting sandbox write access. Keep the GitHub App out of the bypass list.`);
+        }
+      }
+      // Reading bypass actors requires ruleset administration. Operators configure
+      // administrator-only bypass; the App has no administration permission.
+      const app = await this.api<{ slug: string }>(await this.appJwt(), '/app');
+      const botName = `${app.slug}[bot]`;
+      const bot = await this.api<{ id: number }>(minted.token, `/users/${encodeURIComponent(botName)}`);
+      return { cloneUrl: `https://github.com/${project.repository}.git`, username: 'x-access-token', token: minted.token,
+        expiresAt, author: { name: botName, email: `${bot.id}+${botName}@users.noreply.github.com` } };
+    } catch (error) {
+      await this.revokeToken(minted.token).catch(() => {});
+      throw error;
+    }
+  }
+  private async revokeToken(token: string): Promise<void> {
+    const response = await this.http('https://api.github.com/installation/token', { method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'Meguri', 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(15_000) });
+    if (![204, 401].includes(response.status)) throw new Error(`Could not revoke repository token (${response.status})`);
+  }
+  async revoke(access: RepositoryAccess): Promise<void> {
+    if (access.expiresAt > Date.now()) await this.revokeToken(access.token);
   }
   async loadIssue(project: Project, request: ExecutionRequest): Promise<IssueContext> {
     const token = await this.token(project);
@@ -34,7 +67,6 @@ export class GitHubAppRepository implements SourceRepository {
       this.api<{ default_branch: string; private: boolean }>(token, prefix),
       this.api<{ title: string; body: string | null; html_url: string; state: string; pull_request?: unknown; labels: { name: string }[] }>(token, `${prefix}/issues/${request.issueNumber}`),
     ]);
-    if (repo.private) throw new Error('This prototype supports public target repositories only');
     if (issue.pull_request || issue.state !== 'open') throw new Error('Target must be an open Issue');
     if (!issue.labels.some(l => l.name === project.triggerLabel)) throw new Error('Trigger label was removed before execution');
     const baseBranch = project.baseBranch ?? repo.default_branch;

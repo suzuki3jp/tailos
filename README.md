@@ -1,6 +1,6 @@
 # Meguri
 
-Issue にラベルを付けると、Cloudflare の Sandbox で Codex が実装し、GitHub App が PR を作成するプロトタイプです。複数の公開リポジトリを設定できます。
+Issue にラベルを付けると、Cloudflare の Sandbox で Codex が実装し、GitHub App が PR を作成するプロトタイプです。複数の Public / Private リポジトリを設定できます。
 
 MVP の終点は **PR 作成**です。CI 修正ループ、自動レビュー、自動マージ、汎用の管理画面は含みません。Web UI は ChatGPT の接続・再接続・切断に絞っています。
 
@@ -16,6 +16,7 @@ flowchart LR
   S --> R[使い捨て Runner]
   R --> A[AgentAdapter: Codex app-server]
   C --> G[SourceRepository: GitHub App]
+  G -->|対象 repo 限定の短命トークン| R
   G --> PR[Pull Request]
   WEB[認証 Web UI] --> B[CredentialBroker]
   B --> AUTH[AuthAdapter: Codex device OAuth]
@@ -30,7 +31,7 @@ flowchart LR
 | `src/adapters/triggers` | 署名検証、ラベルと installation の確認、共通実行要求への変換 |
 | `src/adapters/auth` | プロバイダ固有の認証・更新。保存の責務を持たない |
 | `src/adapters/agents` | Agent の起動、入力、セッション ID、イベント、認証更新要求の変換 |
-| `src/adapters/git` | Issue と基準コミットの取得、変更の公開、PR 作成 |
+| `src/adapters/git` | Issue と基準コミットの取得、実行用トークンの発行・失効、保護ルール確認、変更の公開、PR 作成 |
 | `src/adapters/sandbox` | Sandbox の起動・状態取得・停止 |
 | `src/cloudflare` | Workers の HTTP 経路、Durable Objects による永続化・排他・スケジューリング、R2 |
 | `src/runtime` | コンテナ内のジョブ管理、Git 作業ディレクトリ、セットアップ、検証、変更抽出 |
@@ -43,14 +44,16 @@ Core と共有契約は Cloudflare SDK、Node.js、Codex、OAuth クライアン
 
 1. 署名済みの `issues.labeled` Webhook を受信します。設定されたラベル、installation、許可された起動者を確認します。
 2. ControlPlane が delivery ID の重複を排除し、同一 Issue の同時実行を防ぎます。全体の同時実行は最大4件です。永続的な outbox と Durable Object の alarm で実行を起動します。
-3. GitHub App が公開 Issue と base commit を取得します。Runner は認証なしで対象リポジトリを clone します。
-4. Codex が実装し、設定された検証コマンドを実行します。Agent がコミットした変更も含め、base commit との差分を抽出します。
-5. 制御側の GitHub App がファイル・tree・commit・branch・PR を作成します。**GitHub のトークンや秘密鍵は Sandbox に渡しません。** PR 作成の通信結果が失われても、同じブランチの PR を確認して復旧します。
-6. 実行終了時に Sandbox を破棄し、Issue のロックを解放します。変更がなければ `no_changes`、検証失敗は `failed` で終了します。
+3. GitHub App が Issue と base commit を取得します。`RepositoryCredentialProvider` が対象1リポジトリだけに Contents / Pull requests write、Issues read を持つ1時間有効の installation token を発行し、Runner が認証付きで clone します。既定ブランチと PR の base branch に有効な作成・更新・削除の制限があることを確認してから Sandbox へ渡します。
+4. Codex が実装し、設定された検証コマンドを実行します。Git の作者は App の bot identity に設定します。Agent がコミットした変更も含め、base commit との差分を抽出します。
+5. 制御側の GitHub App がファイル・tree・commit・branch・PR を作成します。**GitHub App の秘密鍵はクラウドに置き、Sandbox へ渡す GitHub 認証情報は実行用の短命トークンです。** PR 作成の通信結果が失われても、同じブランチの PR を確認して復旧します。
+6. 実行終了・キャンセル時に実行用トークンを失効させ、Sandbox を破棄し、Issue のロックを解放します。失効 API が失敗しても Sandbox は停止し、失効処理を再試行します。変更がなければ `no_changes`、検証失敗は `failed` で終了します。
 
 ChatGPT 接続は、Web 画面のボタンから開始します。表示されたコードをコピーして OpenAI の認証画面へ進み、ログインしてコードを入力すると、Meguri が完了を検知します。ローカルヘルパーは不要です。アカウントによっては ChatGPT のセキュリティ設定で device code login を有効にする必要があります。
 
-CredentialBroker が接続ごとのアクセストークン・refresh token を AES-256-GCM で暗号化して保持します。暗号鍵は Worker Secret に保存します。更新処理は1つの Durable Object で直列化し、ローテーション後の組を保存してからアクセストークンを返します。Sandbox へ渡すのはアクセストークンと、実行時間・接続バージョンに紐づいた更新用 lease だけです。lease は認証用エンドポイントだけに使え、実行終了・切断・接続の置き換えで更新できなくなります。モデル通信のプロキシは実装していません。
+CredentialBroker が接続ごとのアクセストークン・refresh token を AES-256-GCM で暗号化して保持します。暗号鍵は Worker Secret に保存します。更新処理は1つの Durable Object で直列化し、ローテーション後の組を保存してからアクセストークンを返します。モデル用の認証情報として Sandbox へ渡すのはアクセストークンと、実行時間・接続バージョンに紐づいた更新用 lease だけです。lease は認証用エンドポイントだけに使え、実行終了・切断・接続の置き換えで更新できなくなります。モデル通信のプロキシは実装していません。
+
+GitHub の実行用トークンも RunCoordinator 内では暗号化して保存し、実行詳細 API には含めません。Sandbox ではジョブ専用の credential helper と権限 `0600` のファイルを使い、Git の URL・設定値・コマンド引数にトークンを埋め込みません。helper は対象 repo の HTTPS 認証にだけ応答します。Agent はこのトークンを利用でき、ログと変更内容の検査では既知の値をマスク・検出します。
 
 接続の切断は Meguri 内の認証情報を削除します。既に渡したアクセストークンは OpenAI 側の有効期限まで利用できる可能性があります。実行中のジョブも止める場合は cancel API を使用してください。上流アカウントのセッション失効とは別の操作です。
 
@@ -80,7 +83,7 @@ npm run dev
 `config/projects.example.json` が形式の例です。
 
 - `id`: 一意なプロジェクト識別子。
-- `repository`: 公開リポジトリの `owner/name`。同じリポジトリの重複登録は拒否します。
+- `repository`: 対象リポジトリの `owner/name`。Public / Private に対応し、同じリポジトリの重複登録は拒否します。
 - `installationId`: GitHub App のインストール設定 URL の末尾にある数値。取得手順は下の「GitHub App」を参照してください。
 - `triggerLabel`: 起動するラベル。例は `meguri:run`。
 - `allowedActors`: ラベルを付けて起動できる GitHub ログイン名。空にはできません。
@@ -110,6 +113,18 @@ npm run dev
 Organization にインストールした場合は、その Organization の Settings → GitHub Apps → 対象 App の Configure を開き、`https://github.com/organizations/ORG/settings/installations/12345678` の末尾の数値を使用します。同じ App を同じアカウントへインストールして複数リポジトリを許可した場合、各プロジェクトの installation ID は共通です。
 
 実行トークンは installation 単位からさらに対象の1リポジトリに絞って発行します。PR とコミットは GitHub App によって作成されます。個人 PAT は使用しません。`.github/workflows` の変更は、GitHub App 側で追加の権限が必要になる場合があります。
+
+### main の保護
+
+GitHub の `Contents: write` には PR のマージも含まれるため、トークンだけで「ブランチへ push できるが main にマージできない」を表現できません。GitHub の Branch Ruleset で既定ブランチと PR の base branch の作成・更新・削除を制限し、GitHub App を bypass list に入れない設定が必要です。`Require a pull request` だけでは App のマージを禁止できません。[権限の仕様](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request)、[Restrict updates](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#restrict-updates)
+
+`config/protected-branch-rules.example.json` は `main` を保護し、Repository admin だけが例外として更新できる設定例です。管理者の GitHub CLI から次のように設定できます。既存のルールがある場合は先に内容を確認してください。別名の base branch を使う場合はルールの対象にも追加します。
+
+```sh
+gh api --method POST repos/OWNER/REPO/rulesets --input config/protected-branch-rules.example.json
+```
+
+実行前には有効な作成・更新・削除ルールを API で確認します。bypass list の閲覧にはルールの管理権限が必要で、実行用 App には付与しないため、App が例外に含まれていないことは管理者が設定時に確認します。Private リポジトリでの Ruleset 利用には GitHub Pro / Team / Enterprise Cloud が必要です。[Rulesets の利用条件](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
 
 ## GitHub Actions からの Cloudflare デプロイ
 
@@ -160,11 +175,13 @@ Cloudflare Workers Logs には実行状態・エラー・認証更新の診断�
 | `GET /api/runs/<id>/logs?part=00000001` | 指定 part の NDJSON |
 | `POST /api/runs/<id>/cancel` | 実行を中止し Sandbox を破棄。ブラウザと同じ Origin が必要 |
 
+GitHub Actions の **Inspect Meguri execution** を手動実行しても確認できます。`run_id` が空なら最新の実行を選び、`wait` を有効にすると完了まで監視します。管理用パスワードとセッション Cookie は runner 内でだけ使用し、ログには実行 ID・状態・エラー・PR URL を出します。失敗時は直近の Agent イベントも表示します。
+
 既知のトークン値・credential フィールド・JWT・GitHub token をログでマスクします。Langfuse は未接続です。R2 の保存期間は自動設定していないため、必要に応じて bucket の lifecycle rule を設定してください。
 
 ## プロトタイプの範囲
 
-- 個人利用、公開の対象リポジトリ、ChatGPT 接続は1つです。複数プロジェクトに対応しますが、マルチテナントではありません。
+- 個人利用、Public / Private の対象リポジトリ、ChatGPT 接続は1つです。複数プロジェクトに対応しますが、マルチテナントではありません。
 - 1実行最大100ファイル、1ファイル1MB、変更全体7MB。削除・rename・実行権限・symlink・binary に対応し、submodule の変更は失敗として扱います。
 - ログは最大2万イベント・約20MBで打ち切り、打ち切りイベントを記録します。各イベント本文も制限します。
 - Sandbox が消失した場合は失敗にし、Agent を自動で最初から再実行しません。セッションファイル・作業ディレクトリの永続化や再開はありません。

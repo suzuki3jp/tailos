@@ -36,6 +36,13 @@ export interface AccessGrant {
   expiresAt: number;
   connectionVersion: string;
 }
+export interface RepositoryAccess {
+  cloneUrl: string;
+  username: string;
+  token: string;
+  expiresAt: number;
+  author: { name: string; email: string };
+}
 export interface AgentEvent {
   seq: number;
   time: string;
@@ -62,6 +69,7 @@ export interface RunnerJob {
   testCommands: string[];
   deadline: number;
   access: AccessGrant;
+  repositoryAccess: RepositoryAccess;
   refresh: { url: string; bearer: string };
 }
 export interface JobStatus {

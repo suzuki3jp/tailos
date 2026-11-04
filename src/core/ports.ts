@@ -1,4 +1,4 @@
-import type { AccessGrant, AgentEvent, AgentResult, ExecutionRequest, IssueContext, JobStatus, Project, RunnerJob } from '../contracts/index';
+import type { AccessGrant, AgentEvent, AgentResult, ExecutionRequest, IssueContext, JobStatus, Project, RepositoryAccess, RunnerJob } from '../contracts/index';
 
 export interface TriggerAdapter<Input> {
   normalize(input: Input): Promise<ExecutionRequest | null>;
@@ -32,6 +32,10 @@ export interface CredentialProvider {
 export interface SourceRepository {
   loadIssue(project: Project, request: ExecutionRequest): Promise<IssueContext>;
   publish(project: Project, request: ExecutionRequest, issue: IssueContext, runId: string, result: AgentResult): Promise<string>;
+}
+export interface RepositoryCredentialProvider {
+  acquire(project: Project, issue: IssueContext): Promise<RepositoryAccess>;
+  revoke(access: RepositoryAccess): Promise<void>;
 }
 export interface SandboxProvider {
   start(job: RunnerJob): Promise<void>;

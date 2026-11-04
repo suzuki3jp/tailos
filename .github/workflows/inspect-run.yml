@@ -1,0 +1,33 @@
+name: Inspect Meguri execution
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Execution ID (empty selects the latest execution)
+        type: string
+        required: false
+      wait:
+        description: Wait until the execution finishes
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    environment: production
+    env:
+      MEGURI_APP_ORIGIN: ${{ vars.MEGURI_APP_ORIGIN }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      MEGURI_RUN_ID: ${{ inputs.run_id }}
+      MEGURI_WAIT: ${{ inputs.wait }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read execution state
+        run: node scripts/inspect-run.mjs

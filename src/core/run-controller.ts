@@ -1,9 +1,10 @@
 import { isTerminal, type Run } from '../contracts/index';
-import type { CredentialProvider, EventArchive, SandboxProvider, SourceRepository } from './ports';
+import type { CredentialProvider, EventArchive, RepositoryCredentialProvider, SandboxProvider, SourceRepository } from './ports';
 
 export interface RunPorts {
   credentials: CredentialProvider;
   source: SourceRepository;
+  repositoryCredentials: RepositoryCredentialProvider;
   sandboxes: SandboxProvider;
   archive: EventArchive;
   save(run: Run): Promise<void>;
@@ -29,6 +30,7 @@ export async function advanceRun(run: Run, ports: RunPorts): Promise<Run> {
       runId: run.id, engine: run.project.engine, repository: run.project.repository,
       issue: run.issue!, model: run.project.model, setupCommands: run.project.setupCommands,
       testCommands: run.project.testCommands, deadline: run.deadline, access,
+      repositoryAccess: await ports.repositoryCredentials.acquire(run.project, run.issue!),
       refresh: await ports.refreshEndpoint(run),
     });
     run.phase = 'running';

@@ -19,7 +19,8 @@ export interface CodexCredentials {
 export class CodexDeviceAuth implements AuthAdapter<CodexCredentials> {
   readonly id = 'codex';
   private jwks: ReturnType<typeof createRemoteJWKSet>;
-  constructor(private readonly http: typeof fetch = fetch) {
+  // Workers requires the global receiver when invoking its native fetch.
+  constructor(private readonly http: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
     this.jwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`), { [customFetch]: http });
   }
   private async post(path: string, body: unknown, form = false): Promise<Response> {

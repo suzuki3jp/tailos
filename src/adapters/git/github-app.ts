@@ -4,7 +4,8 @@ import type { SourceRepository } from '../../core/ports';
 import type { AgentResult, ExecutionRequest, IssueContext, Project } from '../../contracts/index';
 
 export class GitHubAppRepository implements SourceRepository {
-  constructor(private readonly appId: string, private readonly privateKey: string, private readonly http: typeof fetch = fetch) {}
+  // Workers requires the global receiver when invoking its native fetch.
+  constructor(private readonly appId: string, private readonly privateKey: string, private readonly http: typeof fetch = (input, init) => globalThis.fetch(input, init)) {}
   private async appJwt(): Promise<string> {
     const pem = createPrivateKey(this.privateKey).export({ format: 'pem', type: 'pkcs8' }).toString();
     const key = await importPKCS8(pem, 'RS256');

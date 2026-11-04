@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { CodexDeviceAuth, ReauthenticationRequired } from '../src/adapters/auth/codex-device';
+afterEach(() => vi.restoreAllMocks());
 describe('Codex OAuth compatibility adapter', () => {
-  it('completes device authorization with verified identity and supports rotating refresh tokens', async () => {
+  it.each(['injected', 'global'] as const)('completes device authorization and rotating refresh with %s fetch', async (transport) => {
     const { publicKey, privateKey } = await generateKeyPair('RS256');
     const jwk = { ...await exportJWK(publicKey), kid: 'test-key', alg: 'RS256', use: 'sig' };
     const jwt = await new SignJWT({ email: 'owner@example.test', 'https://api.openai.com/auth': { chatgpt_account_id: 'account', chatgpt_plan_type: 'plus' } })
@@ -10,7 +11,8 @@ describe('Codex OAuth compatibility adapter', () => {
       .setAudience('app_EMoamEEZ73f0CkXaXp7hrann').setExpirationTime('1h').sign(privateKey);
     const calls: { path: string; body: string }[] = [];
     let poll = 0;
-    const http: typeof fetch = async (input, init) => {
+    const http: typeof fetch = async function (this: unknown, input, init) {
+      if (transport === 'global' && this !== globalThis) throw new TypeError('Illegal invocation: incorrect fetch receiver');
       const path = new URL(String(input)).pathname;
       calls.push({ path, body: String(init?.body ?? '') });
       if (path.endsWith('/jwks.json')) return Response.json({ keys: [jwk] });
@@ -19,7 +21,9 @@ describe('Codex OAuth compatibility adapter', () => {
       if (String(init?.body).includes('refresh_token')) return Response.json({ access_token: jwt, refresh_token: 'rotated-refresh' });
       return Response.json({ access_token: jwt, refresh_token: 'initial-refresh', id_token: jwt });
     };
-    const adapter = new CodexDeviceAuth(http), challenge = await adapter.begin();
+    if (transport === 'global') vi.spyOn(globalThis, 'fetch').mockImplementation(http);
+    const adapter = transport === 'global' ? new CodexDeviceAuth() : new CodexDeviceAuth(http);
+    const challenge = await adapter.begin();
     expect(challenge.userCode).toBe('ABCD-1234');
     expect(await adapter.complete(challenge)).toBeNull();
     const tokens = await adapter.complete(challenge);

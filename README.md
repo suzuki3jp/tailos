@@ -142,7 +142,7 @@ GitHub Actions の Secrets と Variables は `GITHUB_` で始まる名前を登�
 
 `MEGURI_APP_ORIGIN` と Custom Domain が異なる場合はデプロイ設定の検証で停止します。ドメインを変える際は両方を更新してください。ローカル開発は `http://localhost:8787` のままです。
 
-ワークフローは設定を検証し、未作成なら R2 bucket を作成してからデプロイします。秘密情報は runner の一時ファイルへ書き、`wrangler deploy --secrets-file` に渡して終了時に削除します。ログや成果物へアップロードしません。PR の CI はテスト・Worker の dry-run・Docker image のビルドまでで、デプロイ用 Secrets を使用しません。
+ワークフローは設定を検証し、未作成なら R2 bucket を作成してからデプロイします。秘密情報は runner の一時ファイルへ書き、`wrangler deploy --secrets-file` に渡して終了時に削除します。ログや成果物へアップロードしません。PR の CI は actionlint による GitHub Actions の構文・式の検証、テスト、Worker の dry-run、Docker image のビルドまでで、デプロイ用 Secrets を使用しません。
 
 デプロイ後は Web 画面で ChatGPT を接続し、対象 Issue に設定したラベルを付けます。
 

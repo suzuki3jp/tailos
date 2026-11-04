@@ -26,8 +26,9 @@ jobs:
       MEGURI_GH_APP_ID: ${{ vars.MEGURI_GH_APP_ID }}
       MEGURI_GH_APP_PRIVATE_KEY: ${{ secrets.MEGURI_GH_APP_PRIVATE_KEY }}
       MEGURI_GH_WEBHOOK_SECRET: ${{ secrets.MEGURI_GH_WEBHOOK_SECRET }}
-      MEGURI_SECRETS_FILE: ${{ runner.temp }}/meguri-secrets.json
     steps:
+      - name: Prepare deployment paths
+        run: printf 'MEGURI_SECRETS_FILE=%s/meguri-secrets.json\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           persist-credentials: false

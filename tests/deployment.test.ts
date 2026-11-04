@@ -1,4 +1,4 @@
-import { mkdtemp, copyFile, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, copyFile, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -50,4 +50,21 @@ it('uses Actions configuration names accepted by GitHub', async () => {
   expect(names).toContain('MEGURI_GH_APP_PRIVATE_KEY');
   expect(names).toContain('MEGURI_GH_APP_ID');
   expect(names).toContain('MEGURI_GH_WEBHOOK_SECRET');
+});
+it('reports Cloudflare R2 error details without exposing the API token or attempting bucket creation', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'meguri-bucket-test-'));
+  try {
+    await writeFile(join(cwd, 'wrangler.deploy.json'), JSON.stringify({ account_id: 'fake-account', r2_buckets: [{ bucket_name: 'test-artifacts' }] }));
+    const mock = `globalThis.fetch = async (_url, options) => {
+      if (options.method === 'POST') throw new Error('Unexpected bucket creation after a forbidden response');
+      return new Response(JSON.stringify({ errors: [{ code: 10042, message: 'Please enable R2 through the Cloudflare Dashboard.' }] }), { status: 403 });
+    };`;
+    const executed = spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(mock)}`, resolve('scripts/ensure-bucket.mjs')], {
+      cwd, encoding: 'utf8', env: { PATH: process.env.PATH, CLOUDFLARE_API_TOKEN: 'fake-api-token-do-not-print' },
+    });
+    expect(executed.status).not.toBe(0);
+    expect(executed.stderr).toContain('Could not inspect R2 bucket (403): 10042: Please enable R2 through the Cloudflare Dashboard.');
+    expect(executed.stderr).not.toContain('Unexpected bucket creation');
+    expect(executed.stdout + executed.stderr).not.toContain('fake-api-token-do-not-print');
+  } finally { await rm(cwd, { recursive: true, force: true }); }
 });

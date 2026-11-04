@@ -40,12 +40,12 @@ jobs:
       - run: npm run check
       - name: Validate production settings
         run: node --experimental-strip-types scripts/configure-deploy.ts
+      - name: Ensure artifact storage exists
+        run: node scripts/ensure-bucket.mjs
       - name: Check the runner image before publishing
         run: docker build --tag meguri-runner:preflight .
       - name: Verify the Linux runner
         run: node scripts/check-image.mjs meguri-runner:preflight
-      - name: Ensure artifact storage exists
-        run: node scripts/ensure-bucket.mjs
       - name: Build and deploy Worker and Sandbox image
         run: npx wrangler deploy --config wrangler.deploy.json --secrets-file "$MEGURI_SECRETS_FILE"
       - name: Check deployed service

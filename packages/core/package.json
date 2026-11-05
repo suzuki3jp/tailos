@@ -1,0 +1,14 @@
+{
+  "name": "@meguri/core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./runner": "./src/runner.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "valibot": "1.3.0"
+  }
+}

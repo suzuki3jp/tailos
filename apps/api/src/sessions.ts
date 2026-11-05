@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
-import { sessionMessages, sessions } from "./db/schema.ts";
+import { runs, sessionMessages, sessions } from "./db/schema.ts";
 
 import { smokeAuth, smokeOwnerId, type Bindings } from "./internal.ts";
 
@@ -56,5 +56,15 @@ sessionRoutes.get("/:id", async (c) => {
     .from(sessionMessages)
     .where(eq(sessionMessages.sessionId, id))
     .orderBy(asc(sessionMessages.seq));
-  return c.json({ session, messages });
+  const executions = await db
+    .select({
+      id: runs.id,
+      status: runs.status,
+      result: runs.result,
+      errorCode: runs.errorCode,
+    })
+    .from(runs)
+    .where(eq(runs.sessionId, id))
+    .orderBy(asc(runs.createdAt), asc(runs.id));
+  return c.json({ session, messages, runs: executions });
 });

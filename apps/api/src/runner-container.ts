@@ -22,6 +22,12 @@ import {
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
+type RepositoryGrant = {
+  value: Sealed;
+  expiresAt: number;
+  attempts: number;
+};
+
 type RefreshLease = {
   digest: string;
   runId: string;
@@ -67,8 +73,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     await this.ctx.storage.delete("refreshLease");
-    if (this.ctx.container?.running) await this.ctx.container.destroy();
-    await this.revokeRepositoryGrant(runId);
+    try {
+      if (this.ctx.container?.running) await this.ctx.container.destroy();
+    } finally {
+      await this.revokeRepositoryGrant(runId);
+    }
   }
 
   private async startRunner(deadlineAt: number, enableInternet = false) {
@@ -182,15 +191,37 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   private async revokeRepositoryGrant(runId: string) {
-    const grant = await this.ctx.storage.get<Sealed>("repositoryGrant");
-    const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
-    const github = this.github;
-    if (!grant || !key || !github) return;
-    const token = v.parse(
-      v.string(),
-      await unseal(grant, key, `meguri:github:${runId}`),
-    );
-    await github.revoke(token);
+    const grant =
+      await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
+    if (!grant) return;
+    if (grant.expiresAt <= Date.now()) {
+      await this.ctx.storage.delete("repositoryGrant");
+      return;
+    }
+
+    try {
+      const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+      const github = this.github;
+      if (!key || !github) throw new Error("Repository revocation unavailable");
+      const token = v.parse(
+        v.string(),
+        await unseal(grant.value, key, `meguri:github:${runId}`),
+      );
+      await github.revoke(token);
+    } catch {
+      if (grant.attempts < 4) {
+        await this.ctx.storage.put("repositoryGrant", {
+          ...grant,
+          attempts: grant.attempts + 1,
+        });
+        await this.ctx.storage.setAlarm(
+          Math.min(grant.expiresAt, Date.now() + 15_000),
+        );
+        return;
+      }
+      // oxlint-disable-next-line no-console -- Record revocation exhaustion without token data.
+      console.warn("Repository grant revocation failed; relying on expiry");
+    }
     await this.ctx.storage.delete("repositoryGrant");
   }
 
@@ -220,10 +251,15 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       try {
-        await this.ctx.storage.put(
-          "repositoryGrant",
-          await seal(checkout.token, key, `meguri:github:${request.runId}`),
-        );
+        await this.ctx.storage.put("repositoryGrant", {
+          value: await seal(
+            checkout.token,
+            key,
+            `meguri:github:${request.runId}`,
+          ),
+          expiresAt: checkout.expiresAt,
+          attempts: 0,
+        } satisfies RepositoryGrant);
         await this.env.DB.prepare(
           "UPDATE runs SET step_state = ? WHERE id = ? AND status = 'running'",
         )
@@ -243,7 +279,12 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       }
-      job.checkout = { repository: target.repository, ...checkout };
+      job.checkout = {
+        repository: target.repository,
+        baseSha: checkout.baseSha,
+        branch: checkout.branch,
+        token: checkout.token,
+      };
     }
     const port = await this.startRunner(job.deadlineAt, job.engine === "codex");
     const response = await port.fetch("http://runner/job", {

@@ -62,7 +62,9 @@ test("scopes app grants to one repository and protects the default branch before
   await assert.rejects(github.checkout(target, runId), /active creation/);
   assert.deepEqual(permissions, [{ contents: "read", issues: "read" }]);
   protectedBranch = true;
-  assert.deepEqual(await github.checkout(target, runId), {
+  const { expiresAt, ...checkout } = await github.checkout(target, runId);
+  assert.ok(expiresAt > Date.now());
+  assert.deepEqual(checkout, {
     token: "test-grant",
     baseSha: sha,
     branch: workBranchFor(target, runId),

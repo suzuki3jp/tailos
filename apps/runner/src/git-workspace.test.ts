@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -55,9 +55,18 @@ test("pushes changes to the assigned branch without changing the base ref or sto
     signal,
     async (cwd) => {
       assert.equal(await readFile(join(cwd, "README.md"), "utf8"), "base\n");
+      const pointer = await readFile(join(cwd, ".git"), "utf8");
+      assert.match(pointer, /^gitdir: /);
+      const metadata = pointer.slice("gitdir: ".length).trim();
       assert.doesNotMatch(
-        await readFile(join(cwd, ".git", "config"), "utf8"),
+        await readFile(join(metadata, "config"), "utf8"),
         /secret-repo-token/,
+      );
+      await rm(join(cwd, ".git"));
+      await mkdir(join(cwd, ".git"));
+      await writeFile(
+        join(cwd, ".git", "config"),
+        "[core]\nfsmonitor = /bin/false\n[http]\nproxy = http://127.0.0.1:9\n",
       );
       await writeFile(join(cwd, "README.md"), "changed\n");
       return "Edited README";
@@ -72,6 +81,23 @@ test("pushes changes to the assigned branch without changing the base ref or sto
     result.publication.sha,
   );
   assert.equal(git(repository, "show", `${branch}:README.md`), "changed");
+  await assert.rejects(
+    runInGitWorkspace(
+      checkout,
+      signal,
+      async (cwd) => {
+        const pointer = await readFile(join(cwd, ".git"), "utf8");
+        const metadata = pointer.slice("gitdir: ".length).trim();
+        await writeFile(
+          join(metadata, "config"),
+          "[core]\nfsmonitor = /bin/false\n",
+        );
+        return "tampered";
+      },
+      remote,
+    ),
+    /Git metadata configuration changed/,
+  );
   assert.deepEqual(
     (await runInGitWorkspace(checkout, signal, async () => "No work", remote))
       .publication,

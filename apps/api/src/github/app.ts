@@ -33,6 +33,7 @@ const pullSchema = v.object({
 type GitHubConfig = { appId: string; privateKey: string };
 export type GitHubCheckout = {
   token: string;
+  expiresAt: number;
   baseSha: string;
   branch: string;
 };
@@ -108,16 +109,17 @@ export class GitHubApp {
         { repository_ids: [target.repositoryId], permissions },
       ),
     );
-    if (!(Date.parse(grant.expires_at) > Date.now()))
+    const expiresAt = Date.parse(grant.expires_at);
+    if (!(expiresAt > Date.now()))
       throw new Error("Expired GitHub installation grant");
-    return grant.token;
+    return { token: grant.token, expiresAt };
   }
 
   async checkout(
     target: RepositoryTarget,
     runId: string,
   ): Promise<GitHubCheckout> {
-    const token = await this.token(target, {
+    const { token } = await this.token(target, {
       contents: "read",
       issues: "read",
     });
@@ -161,7 +163,7 @@ export class GitHubApp {
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
       );
       return {
-        token: await this.token(target, { contents: "write" }),
+        ...(await this.token(target, { contents: "write" })),
         baseSha: base.object.sha,
         branch: workBranchFor(target, runId),
       };
@@ -188,7 +190,7 @@ export class GitHubApp {
 
     const repo = "/repos/" + target.repository;
     const owner = target.repository.split("/")[0];
-    const token = await this.token(target, {
+    const { token } = await this.token(target, {
       contents: "read",
       pull_requests: "write",
     });

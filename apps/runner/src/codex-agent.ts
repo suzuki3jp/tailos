@@ -17,8 +17,8 @@ const completedSchema = v.object({
   turn: v.object({ status: v.string() }),
 });
 
-type LaunchCodex = (directory: string) => CodexProcess;
-const launchCodex: LaunchCodex = (directory) =>
+type LaunchCodex = (directory: string, workspace: string) => CodexProcess;
+const launchCodex: LaunchCodex = (directory, workspace) =>
   spawn(
     "codex",
     [
@@ -31,6 +31,12 @@ const launchCodex: LaunchCodex = (directory) =>
       "check_for_update_on_startup=false",
       "-c",
       "features.plugins=false",
+      "-c",
+      "sandbox_workspace_write.exclude_slash_tmp=true",
+      "-c",
+      "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+      "-c",
+      `projects.${JSON.stringify(workspace)}.trust_level="untrusted"`,
     ],
     {
       cwd: directory,
@@ -51,7 +57,7 @@ export function createCodexAgent(
       try {
         signal.throwIfAborted();
         return await runTurn(
-          launch(directory),
+          launch(directory, cwd ?? directory),
           cwd ?? directory,
           job,
           signal,

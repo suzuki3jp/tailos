@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -16,7 +16,15 @@ export async function runInGitWorkspace(
   work: (cwd: string) => Promise<string>,
   remote = `https://github.com/${checkout.repository}.git`,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
-  const cwd = await mkdtemp(join(tmpdir(), "meguri-repo-"));
+  const metadata = await mkdtemp(
+    join(process.env.MEGURI_GIT_STATE_DIR ?? tmpdir(), "meguri-git-"),
+  );
+  const cwd = await mkdtemp(join(tmpdir(), "meguri-repo-")).catch(
+    async (error) => {
+      await rm(metadata, { recursive: true, force: true });
+      throw error;
+    },
+  );
   const baseEnv = {
     PATH: process.env.PATH,
     GIT_TERMINAL_PROMPT: "0",
@@ -43,8 +51,19 @@ export async function runInGitWorkspace(
         await exec(
           "git",
           [
+            "--git-dir=" + metadata,
+            "--work-tree=" + cwd,
+            "--no-pager",
             "-c",
             "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "http.proxy=",
+            "-c",
+            "http.sslVerify=true",
             "-c",
             "http.followRedirects=false",
             ...args,
@@ -59,6 +78,7 @@ export async function runInGitWorkspace(
   };
   try {
     await git(["init", "--quiet"]);
+    await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, { flag: "wx" });
     await git(
       [
         "fetch",
@@ -72,7 +92,11 @@ export async function runInGitWorkspace(
       true,
     );
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+    const configPath = join(metadata, "config");
+    const trustedConfig = await readFile(configPath);
     const reply = await work(cwd);
+    if (!(await readFile(configPath)).equals(trustedConfig))
+      throw new Error("Git metadata configuration changed");
     await git(["add", "--all"]);
     const changes = await git([
       "status",
@@ -90,6 +114,7 @@ export async function runInGitWorkspace(
     await git(["merge-base", "--is-ancestor", checkout.baseSha, "HEAD"]);
     const changedPaths = await git([
       "diff",
+      "--no-ext-diff",
       "--name-only",
       checkout.baseSha,
       "HEAD",
@@ -105,6 +130,9 @@ export async function runInGitWorkspace(
       publication: { kind: "pushed", branch: checkout.branch, sha },
     };
   } finally {
-    await rm(cwd, { recursive: true, force: true });
+    await Promise.all([
+      rm(cwd, { recursive: true, force: true }),
+      rm(metadata, { recursive: true, force: true }),
+    ]);
   }
 }

@@ -2,13 +2,14 @@ import { readFile } from "node:fs/promises";
 import type { TestContext } from "node:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
-export async function createTestDb(t: TestContext) {
+export async function createTestBindings(t: TestContext) {
   const worker = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
       script: "export default { fetch: () => new Response(null) }",
       compatibilityDate: "2026-10-06",
       d1Databases: ["DB"],
+      r2Buckets: ["RUN_ARTIFACTS"],
     }),
   );
   t.after(() => worker.dispose());
@@ -23,5 +24,9 @@ export async function createTestDb(t: TestContext) {
       .map((statement) => db.prepare(statement)),
   );
 
-  return db;
+  return { DB: db, RUN_ARTIFACTS: await worker.getR2Bucket("RUN_ARTIFACTS") };
+}
+
+export async function createTestDb(t: TestContext) {
+  return (await createTestBindings(t)).DB;
 }

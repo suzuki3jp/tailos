@@ -1,5 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
+import {
+  runnerStatusSchema,
+  type RunnerJob,
+  type RunnerStatus,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "./internal.ts";
 import { executeRun } from "./run-execution.ts";
@@ -17,18 +21,23 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   async execute(runId: string) {
-    return executeRun(this.env.DB, runId, async (job) => {
-      try {
-        return await this.runJob(job);
-      } finally {
-        await this.ctx.container?.destroy().catch(() => {
-          // oxlint-disable-next-line no-console -- Record cleanup failures without job data.
-          console.warn(
-            "Runner cleanup failed; inactivity timeout remains in effect",
-          );
-        });
-      }
-    });
+    return executeRun(
+      this.env.DB,
+      runId,
+      async (job) => {
+        try {
+          return await this.runJob(job);
+        } finally {
+          await this.ctx.container?.destroy().catch(() => {
+            // oxlint-disable-next-line no-console -- Record cleanup failures without job data.
+            console.warn(
+              "Runner cleanup failed; inactivity timeout remains in effect",
+            );
+          });
+        }
+      },
+      this.env.RUN_ARTIFACTS,
+    );
   }
 
   private async startRunner(deadlineAt: number) {
@@ -66,7 +75,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
     throw new Error("Runner readiness check timed out");
   }
 
-  private async runJob(job: RunnerJob) {
+  private async runJob(
+    job: RunnerJob,
+  ): Promise<Exclude<RunnerStatus, { status: "running" }>> {
     const port = await this.startRunner(job.deadlineAt);
     const signal = AbortSignal.timeout(
       Math.max(0, job.deadlineAt - Date.now()),
@@ -90,6 +101,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (status.status !== "running") return status;
       await pause();
     }
-    return { status: "failed", errorCode: "deadline_exceeded" } as const;
+    return {
+      status: "failed",
+      errorCode: "deadline_exceeded",
+      events: [],
+    };
   }
 }

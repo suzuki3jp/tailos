@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import {
   runnerJobSchema,
   runnerStatusSchema,
+  type RunnerEvent,
   type RunnerJob,
   type RunnerStatus,
 } from "@meguri/core/runner";
@@ -36,20 +37,28 @@ function json(response: ServerResponse, code: number, body: object) {
 }
 
 async function execute(job: CurrentJob, agent: AgentAdapter) {
+  const events: RunnerEvent[] = [{ type: "job_started", at: Date.now() }];
   const remaining = job.input.deadlineAt - Date.now();
   if (remaining <= 0) {
-    job.state = { status: "failed", errorCode: "deadline_exceeded" };
+    events.push({ type: "job_failed", at: Date.now() });
+    job.state = { status: "failed", errorCode: "deadline_exceeded", events };
     return;
   }
   const signal = AbortSignal.timeout(remaining);
   try {
     const reply = await agent.run(job.input, signal);
     signal.throwIfAborted();
-    job.state = v.parse(runnerStatusSchema, { status: "succeeded", reply });
+    job.state = v.parse(runnerStatusSchema, {
+      status: "succeeded",
+      reply,
+      events: [...events, { type: "job_succeeded", at: Date.now() }],
+    });
   } catch {
+    events.push({ type: "job_failed", at: Date.now() });
     job.state = {
       status: "failed",
       errorCode: signal.aborted ? "deadline_exceeded" : "agent_failed",
+      events,
     };
   }
 }

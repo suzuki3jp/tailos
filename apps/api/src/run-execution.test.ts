@@ -30,7 +30,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
         .first("status"),
       "running",
     );
-    return { status: "succeeded", reply: "All done" } as const;
+    return { status: "succeeded" as const, reply: "All done", events: [] };
   };
 
   const statuses = await Promise.all([
@@ -79,7 +79,7 @@ test("records an expired or invalid run without starting a runner", async (t) =>
     assert.equal(
       await executeRun(db, runId, async () => {
         started = true;
-        return { status: "succeeded", reply: "unexpected" };
+        return { status: "succeeded", reply: "unexpected", events: [] };
       }),
       "failed",
     );
@@ -106,6 +106,7 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     await executeRun(db, runId, async () => ({
       status: "succeeded",
       reply: "Unstored reply",
+      events: [],
     })),
     "failed",
   );

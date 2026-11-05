@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+saveExact: true
+
+# Wait five days before resolving newly published dependency versions.
+minimumReleaseAge: 7200

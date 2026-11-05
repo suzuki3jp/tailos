@@ -1,0 +1,1 @@
+pnpm run lint:commits --edit "$1"

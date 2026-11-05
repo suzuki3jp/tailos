@@ -4,9 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
-    "deploy": "pnpm --filter @meguri/runner run build && node scripts/deploy.mjs",
+    "deploy": "pnpm --filter @meguri/runner run build && node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
-    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts' 'scripts/*.test.mjs'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "@types/node": "22.19.0",
     "drizzle-kit": "0.31.8",
     "esbuild": "0.28.2",
+    "jsonc-parser": "3.3.1",
     "miniflare": "5.20261006.2-beta",
     "wrangler": "4.150.0"
   }

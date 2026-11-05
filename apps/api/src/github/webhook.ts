@@ -4,32 +4,12 @@ import * as v from "valibot";
 import type { ExecutionContext } from "@meguri/core/runner";
 import { operatorOwnerId, type Bindings } from "../internal.ts";
 import { admitTrigger } from "../trigger-admission.ts";
+import { projectsSchema } from "./projects.ts";
 
 const id = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repository = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-);
-const project = v.strictObject({
-  id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
-  repository,
-  repositoryId: id,
-  installationId: id,
-  triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
-  allowedActors: v.pipe(v.array(v.string()), v.minLength(1), v.maxLength(100)),
-  maxRunMinutes: v.optional(
-    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(30)),
-    30,
-  ),
-});
-const projects = v.pipe(
-  v.array(project),
-  v.maxLength(100),
-  v.check(
-    (items) =>
-      new Set(items.map((item) => item.repositoryId)).size === items.length &&
-      new Set(items.map((item) => item.id)).size === items.length,
-  ),
 );
 const payload = v.object({
   repository: v.object({
@@ -105,7 +85,7 @@ githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
   const issueEvent = v.safeParse(payload, event);
   if (!issueEvent.success) return c.json({ error: "invalid_event" }, 400);
 
-  const config = v.safeParse(projects, parseJson(c.env.PROJECTS));
+  const config = v.safeParse(projectsSchema, parseJson(c.env.PROJECTS));
   if (!config.success) return c.json({ error: "invalid_project_config" }, 503);
   const data = issueEvent.output;
   const target = config.output.find(

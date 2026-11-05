@@ -6,7 +6,10 @@ test("the Worker serves the health endpoint", async () => {
   const response = await app.request("/health");
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: "ok" });
+  assert.deepEqual(await response.json(), {
+    status: "ok",
+    service: "meguri-api",
+  });
 });
 
 test("runner smoke does not allocate a container without a configured bearer token", async () => {

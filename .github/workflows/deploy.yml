@@ -16,7 +16,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,3 +34,15 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
           MEGURI_D1_DATABASE_ID: ${{ vars.MEGURI_D1_DATABASE_ID }}
+          MEGURI_PROJECTS: ${{ vars.MEGURI_PROJECTS }}
+          MEGURI_GH_APP_ID: ${{ vars.MEGURI_GH_APP_ID }}
+          MEGURI_GH_APP_PRIVATE_KEY: ${{ secrets.MEGURI_GH_APP_PRIVATE_KEY }}
+          MEGURI_GH_WEBHOOK_SECRET: ${{ secrets.MEGURI_GH_WEBHOOK_SECRET }}
+          CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
+          MEGURI_OPERATOR_TOKEN: ${{ secrets.MEGURI_OPERATOR_TOKEN }}
+      - name: Verify the deployed Worker
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            --retry-delay 5 --max-time 15 https://meguri.suzuki3.jp/health |
+            jq -e '.status == "ok" and .service == "meguri-api"'

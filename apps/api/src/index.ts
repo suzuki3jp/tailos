@@ -13,7 +13,7 @@ app.route("/connect", connectRoutes);
 app.route("/operator/sessions", operatorSessions);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
-app.get("/health", (c) => c.json({ status: "ok" }));
+app.get("/health", (c) => c.json({ status: "ok", service: "meguri-api" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);
 app.route("/_internal/triggers", triggerRoutes);

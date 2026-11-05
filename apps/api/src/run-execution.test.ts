@@ -127,3 +127,45 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     1,
   );
 });
+
+test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
+  const db = await createTestDb(t);
+  const { runId, sessionId } = await admitTrigger(db, request);
+  const artifacts = {
+    async get() {
+      return null;
+    },
+    async put() {
+      throw new Error("R2 unavailable");
+    },
+  };
+  assert.equal(
+    await executeRun(
+      db,
+      runId,
+      async () => ({
+        status: "succeeded",
+        reply: "Unstored",
+        events: [],
+      }),
+      artifacts,
+    ),
+    "failed",
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+    "artifact_write_failed",
+  );
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?",
+      )
+      .bind(sessionId)
+      .first("count"),
+    1,
+  );
+});

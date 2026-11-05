@@ -45,8 +45,12 @@ runRoutes.get("/:id/artifacts/:file", async (c) => {
           status: run.status,
           errorCode: run.errorCode ?? "unknown",
         } as const);
-  return (
-    (await readRunArtifact(artifacts, run.id, file.output, terminal)) ??
-    c.notFound()
-  );
+  try {
+    return (
+      (await readRunArtifact(artifacts, run.id, file.output, terminal)) ??
+      c.notFound()
+    );
+  } catch {
+    return c.json({ error: "artifact_unreadable" }, 502);
+  }
 });

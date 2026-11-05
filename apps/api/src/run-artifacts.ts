@@ -58,6 +58,7 @@ export async function readRunArtifact(
   if (!object) return null;
 
   const record = v.parse(artifactSchema, JSON.parse(await object.text()));
+  if (record.runId !== runId) throw new Error("Artifact run mismatch");
   const { events, ...metadata } = record;
   // The outcome in D1 is authoritative if persisting the reply failed after
   // R2 accepted the runner output.

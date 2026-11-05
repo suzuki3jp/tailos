@@ -6,19 +6,20 @@ import { smokeOwnerId } from "./internal.ts";
 import { executeRun } from "./run-execution.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 
+const trigger = {
+  source: "test",
+  idempotencyKey: "delivery",
+  ownerId: smokeOwnerId,
+  concurrencyKey: "issue",
+  prompt: "private-prompt",
+  executionContext: '{"version":1,"engine":"fake"}',
+  timeoutMs: 60_000,
+};
+
 test("authorizes a run's R2 events and result and excludes chat content", async (t) => {
   const env = {
     ...(await createTestBindings(t)),
     MEGURI_TEST_TOKEN: "local-smoke",
-  };
-  const trigger = {
-    source: "test",
-    idempotencyKey: "delivery",
-    ownerId: smokeOwnerId,
-    concurrencyKey: "issue",
-    prompt: "private-prompt",
-    executionContext: '{"version":1,"engine":"fake"}',
-    timeoutMs: 60_000,
   };
   const { runId } = await admitTrigger(env.DB, trigger);
   const failed = await admitTrigger(env.DB, {
@@ -93,4 +94,70 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
     assert.doesNotMatch(body, /private-/);
     assert.deepEqual(JSON.parse(body).result, expected);
   }
+});
+
+test("an unreadable artifact returns a fixed error without exposing its contents", async (t) => {
+  const env = {
+    ...(await createTestBindings(t)),
+    MEGURI_TEST_TOKEN: "local-smoke",
+  };
+  const { runId } = await admitTrigger(env.DB, trigger);
+  await executeRun(
+    env.DB,
+    runId,
+    async () => ({
+      status: "succeeded",
+      reply: "done",
+      events: [],
+    }),
+    env.RUN_ARTIFACTS,
+  );
+  await env.RUN_ARTIFACTS.put(
+    `meguri-api/v1/runs/${runId}/execution.json`,
+    "sensitive invalid json",
+  );
+
+  const response = await app.request(
+    `/_internal/runs/${runId}/artifacts/result.json`,
+    {
+      headers: { Authorization: "Bearer local-smoke" },
+    },
+    env,
+  );
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "artifact_unreadable" });
+});
+
+test("the public artifact result reflects D1 if persisting the agent reply fails", async (t) => {
+  const env = {
+    ...(await createTestBindings(t)),
+    MEGURI_TEST_TOKEN: "local-smoke",
+  };
+  const { runId } = await admitTrigger(env.DB, trigger);
+  await env.DB.prepare(`CREATE TRIGGER reject_artifact_reply BEFORE INSERT ON session_messages
+    WHEN NEW.author_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'test failure'); END`).run();
+  await executeRun(
+    env.DB,
+    runId,
+    async () => ({
+      status: "succeeded",
+      reply: "done",
+      events: [],
+    }),
+    env.RUN_ARTIFACTS,
+  );
+
+  const response = await app.request(
+    `/_internal/runs/${runId}/artifacts/result.json`,
+    {
+      headers: { Authorization: "Bearer local-smoke" },
+    },
+    env,
+  );
+  assert.equal(response.status, 200);
+  const artifact = JSON.parse(await response.text());
+  assert.deepEqual(artifact.result, {
+    status: "failed",
+    errorCode: "persistence_failed",
+  });
 });

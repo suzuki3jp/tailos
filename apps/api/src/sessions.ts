@@ -1,3 +1,5 @@
+import type { D1Database } from "@cloudflare/workers-types";
+import { operatorAuth } from "./auth/operator.ts";
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
@@ -5,7 +7,12 @@ import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import { runs, sessionMessages, sessions } from "./db/schema.ts";
 
-import { smokeAuth, smokeOwnerId, type Bindings } from "./internal.ts";
+import {
+  operatorOwnerId,
+  smokeAuth,
+  smokeOwnerId,
+  type Bindings,
+} from "./internal.ts";
 
 const sessionInput = v.strictObject({
   messages: v.pipe(
@@ -42,14 +49,13 @@ sessionRoutes.post("/", bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
   return c.json({ id }, 201);
 });
 
-sessionRoutes.get("/:id", async (c) => {
-  const db = drizzle(c.env.DB);
-  const id = c.req.param("id");
+async function readSession(database: D1Database, id: string, owner: string) {
+  const db = drizzle(database);
   const [session] = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.id, id), eq(sessions.ownerId, smokeOwnerId)));
-  if (!session) return c.notFound();
+    .where(and(eq(sessions.id, id), eq(sessions.ownerId, owner)));
+  if (!session) return null;
 
   const messages = await db
     .select()
@@ -66,5 +72,21 @@ sessionRoutes.get("/:id", async (c) => {
     .from(runs)
     .where(eq(runs.sessionId, id))
     .orderBy(asc(runs.createdAt), asc(runs.id));
-  return c.json({ session, messages, runs: executions });
+  return { session, messages, runs: executions };
+}
+
+sessionRoutes.get("/:id", async (c) => {
+  const detail = await readSession(c.env.DB, c.req.param("id"), smokeOwnerId);
+  return detail ? c.json(detail) : c.notFound();
+});
+
+export const operatorSessions = new Hono<{ Bindings: Bindings }>();
+operatorSessions.use("*", operatorAuth);
+operatorSessions.get("/:id", async (c) => {
+  const detail = await readSession(
+    c.env.DB,
+    c.req.param("id"),
+    operatorOwnerId,
+  );
+  return detail ? c.json(detail) : c.notFound();
 });

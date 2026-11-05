@@ -16,10 +16,15 @@ export type Bindings = {
   MEGURI_TEST_TOKEN?: string;
   MEGURI_OPERATOR_TOKEN?: string;
   MEGURI_PUBLIC_ORIGIN?: string;
+  PROJECTS?: string;
+  MEGURI_GH_APP_ID?: string;
+  MEGURI_GH_APP_PRIVATE_KEY?: string;
+  MEGURI_GH_WEBHOOK_SECRET?: string;
   CREDENTIAL_ENCRYPTION_KEY?: string;
   CREDENTIALS?: { getByName(name: string): ConnectionControl };
 };
 
+export const operatorOwnerId = "meguri-operator";
 export const smokeOwnerId = "internal-smoke";
 
 export const smokeAuth = createMiddleware<{ Bindings: Bindings }>(

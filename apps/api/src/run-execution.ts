@@ -6,6 +6,7 @@ import {
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
+import { pendingPublication } from "./github/publication.ts";
 import { writeRunArtifacts, type RunArtifactsBucket } from "./run-artifacts.ts";
 
 type RunStatus = "queued" | "running" | "succeeded" | "failed";
@@ -13,14 +14,26 @@ type RunInput = {
   messageId: string;
   executionContext: string;
   deadlineAt: number;
+  stepState: string | null;
 };
+type PublicationResult =
+  | { kind: "no_changes" }
+  | { kind: "pull_request"; url: string; branch: string; sha: string };
 type RunOutcome =
-  | Exclude<RunnerStatus, { status: "running" }>
+  | {
+      status: "succeeded";
+      reply: string;
+      events: RunnerEvent[];
+      publicationResult?: PublicationResult;
+    }
+  | Extract<RunnerStatus, { status: "failed" }>
   | {
       status: "failed";
       errorCode:
         | "runner_unavailable"
         | "runner_lost"
+        | "repository_unavailable"
+        | "publication_unconfirmed"
         | "provider_unavailable"
         | "invalid_execution_context"
         | "artifact_write_failed";
@@ -36,7 +49,12 @@ export type RunRequest = {
 
 export type RunnerDriver = {
   start(job: RunRequest): Promise<RunnerStatus | RunOutcome>;
-  poll(runId: string): Promise<RunnerStatus | RunOutcome>;
+  poll(
+    runId: string,
+    context: ExecutionContext,
+    deadlineAt: number,
+    stepState: string | null,
+  ): Promise<RunnerStatus | RunOutcome>;
 };
 
 type RunProgress =
@@ -66,7 +84,7 @@ export async function advanceRun(
       `UPDATE runs SET status = 'running', next_action_at = ?
      WHERE id = ? AND status = 'queued'
      RETURNING start_message_id AS messageId, execution_context AS executionContext,
-               deadline_at AS deadlineAt`,
+               deadline_at AS deadlineAt, step_state AS stepState`,
     )
     .bind(Date.now(), runId)
     .first<RunInput>();
@@ -75,21 +93,35 @@ export async function advanceRun(
     (await db
       .prepare(
         `SELECT start_message_id AS messageId, execution_context AS executionContext,
-            deadline_at AS deadlineAt FROM runs WHERE id = ? AND status = 'running'`,
+            deadline_at AS deadlineAt, step_state AS stepState FROM runs WHERE id = ? AND status = 'running'`,
       )
       .bind(runId)
       .first<RunInput>());
   if (!run) return undefined;
 
+  const context = v.safeParse(
+    executionContextSchema,
+    parseJson(run.executionContext),
+  );
   let outcome: RunnerStatus | RunOutcome;
-  if (run.deadlineAt <= Date.now()) {
+  const reconciling = !claimed && Boolean(pendingPublication(run.stepState));
+  if (run.deadlineAt <= Date.now() && !reconciling) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
+  } else if (!context.success) {
+    outcome = { status: "failed", errorCode: "invalid_execution_context" };
   } else if (claimed) {
-    outcome = await dispatchNewRun(db, runId, run, driver);
+    outcome = await dispatchNewRun(db, runId, run, context.output, driver);
   } else {
     outcome = await driver
-      .poll(runId)
-      .catch(() => ({ status: "running" as const }));
+      .poll(runId, context.output, run.deadlineAt, run.stepState)
+      .catch(() =>
+        reconciling && run.deadlineAt <= Date.now()
+          ? {
+              status: "failed" as const,
+              errorCode: "publication_unconfirmed" as const,
+            }
+          : { status: "running" as const },
+      );
   }
 
   if (outcome.status === "running" && run.deadlineAt > Date.now()) {
@@ -117,23 +149,20 @@ async function dispatchNewRun(
   db: D1Database,
   runId: string,
   run: RunInput,
+  context: ExecutionContext,
   driver: RunnerDriver,
 ): Promise<RunnerStatus | RunOutcome> {
   const message = await db
     .prepare("SELECT body FROM session_messages WHERE id = ?")
     .bind(run.messageId)
     .first<{ body: string }>();
-  const context = v.safeParse(
-    executionContextSchema,
-    parseJson(run.executionContext),
-  );
-  if (!context.success || !message) {
+  if (!message) {
     return { status: "failed", errorCode: "invalid_execution_context" };
   }
   return driver
     .start({
       runId,
-      context: context.output,
+      context,
       prompt: message.body,
       deadlineAt: run.deadlineAt,
     })
@@ -157,7 +186,14 @@ async function storeOutcome(
       : result;
 
   const finishedAt = Date.now();
-  if (finishedAt >= deadlineAt) {
+  const published =
+    outcome.status === "succeeded" &&
+    "publicationResult" in outcome &&
+    outcome.publicationResult?.kind === "pull_request";
+  const unconfirmed =
+    outcome.status === "failed" &&
+    outcome.errorCode === "publication_unconfirmed";
+  if (finishedAt >= deadlineAt && !published && !unconfirmed) {
     outcome = {
       status: "failed",
       errorCode: "deadline_exceeded",
@@ -178,13 +214,20 @@ async function storeOutcome(
         outcome.events ?? [],
       );
     } catch {
-      outcome = { status: "failed", errorCode: "artifact_write_failed" };
+      if (!published)
+        outcome = { status: "failed", errorCode: "artifact_write_failed" };
     }
   }
   if (outcome.status === "failed") {
     return failRun(db, runId, outcome.errorCode, finishedAt);
   }
 
+  const storedResult = JSON.stringify({
+    version: 1,
+    ...("publicationResult" in outcome && outcome.publicationResult
+      ? outcome.publicationResult
+      : { kind: "completed" }),
+  });
   try {
     const [, update] = await db.batch([
       db
@@ -197,17 +240,19 @@ async function storeOutcome(
         .bind(crypto.randomUUID(), outcome.reply, finishedAt, runId),
       db
         .prepare(
-          "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running'",
+          "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running'",
         )
-        .bind(
-          JSON.stringify({ version: 1, kind: "completed" }),
-          finishedAt,
-          runId,
-        ),
+        .bind(storedResult, finishedAt, runId),
     ]);
     if (update?.meta.changes === 1) return "succeeded";
   } catch {
-    return failRun(db, runId, "persistence_failed", finishedAt);
+    return failRun(
+      db,
+      runId,
+      "persistence_failed",
+      finishedAt,
+      published ? storedResult : null,
+    );
   }
   return readRunStatus(db, runId);
 }
@@ -225,12 +270,13 @@ async function failRun(
   runId: string,
   code: string,
   finishedAt: number,
+  result: string | null = null,
 ) {
   const failed = await db
     .prepare(
-      "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING status",
+      "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
     )
-    .bind(code, finishedAt, runId)
+    .bind(code, finishedAt, result, runId)
     .first<{ status: "failed" }>();
   return failed?.status ?? readRunStatus(db, runId);
 }

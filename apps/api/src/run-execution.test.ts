@@ -255,3 +255,66 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
     1,
   );
 });
+
+test("reconciles a published pull request after the deadline without restarting the runner", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, {
+    ...request,
+    timeoutMs: -1,
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "codex",
+      connectionId: "codex/default",
+      repository: {
+        repository: "owner/private",
+        repositoryId: 42,
+        installationId: 2,
+        issueNumber: 8,
+        defaultBranch: "main",
+        triggerLabel: "meguri:run",
+      },
+    }),
+  });
+  const publication = {
+    kind: "pushed",
+    branch: `meguri/issue-8/${runId}`,
+    sha: "a".repeat(40),
+    reply: "Completed",
+    events: [],
+  };
+  await db
+    .prepare("UPDATE runs SET status = 'running', step_state = ? WHERE id = ?")
+    .bind(
+      JSON.stringify({ version: 1, pendingPublication: publication }),
+      runId,
+    )
+    .run();
+  const result = await advanceRun(db, runId, {
+    async start() {
+      throw new Error("must not restart");
+    },
+    async poll(id, _context, deadline, stepState) {
+      assert.equal(id, runId);
+      assert.ok(deadline < Date.now());
+      assert.match(stepState ?? "", /pendingPublication/);
+      return {
+        status: "succeeded",
+        reply: publication.reply,
+        events: [],
+        publicationResult: {
+          kind: "pull_request",
+          url: "https://github.com/owner/private/pull/5",
+          branch: publication.branch,
+          sha: publication.sha,
+        },
+      };
+    },
+  });
+  assert.deepEqual(result, { status: "succeeded" });
+  const stored = await db
+    .prepare("SELECT result, step_state FROM runs WHERE id = ?")
+    .bind(runId)
+    .first();
+  assert.match(String(stored?.result), /pull\/5/);
+  assert.equal(stored?.step_state, '{"version":1}');
+});

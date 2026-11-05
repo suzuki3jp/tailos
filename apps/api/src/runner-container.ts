@@ -1,6 +1,17 @@
+import {
+  pendingPublication,
+  type PendingPublication,
+} from "./github/publication.ts";
+import { GitHubApp } from "./github/app.ts";
+import { seal, unseal, type Sealed } from "./auth/sealed-store.ts";
 import { hashRunLease, matchRunLease, newRunLease } from "./auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
-import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
+import {
+  runnerStatusSchema,
+  type ExecutionContext,
+  type RunnerJob,
+  type RepositoryTarget,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "./internal.ts";
 import {
@@ -41,7 +52,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     const driver: RunnerDriver = {
       start: (job) => this.submitJob(job),
-      poll: (id) => this.pollJob(id),
+      poll: (id, context, deadlineAt, stepState) =>
+        this.pollJob(id, context, deadlineAt, stepState),
     };
     const progress = await advanceRun(
       this.env.DB,
@@ -56,6 +68,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     await this.ctx.storage.delete("refreshLease");
     if (this.ctx.container?.running) await this.ctx.container.destroy();
+    await this.revokeRepositoryGrant(runId);
   }
 
   private async startRunner(deadlineAt: number, enableInternet = false) {
@@ -162,10 +175,76 @@ export class RunnerContainer extends DurableObject<Bindings> {
     };
   }
 
+  private get github() {
+    const appId = this.env.MEGURI_GH_APP_ID;
+    const privateKey = this.env.MEGURI_GH_APP_PRIVATE_KEY;
+    return appId && privateKey ? new GitHubApp({ appId, privateKey }) : null;
+  }
+
+  private async revokeRepositoryGrant(runId: string) {
+    const grant = await this.ctx.storage.get<Sealed>("repositoryGrant");
+    const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+    const github = this.github;
+    if (!grant || !key || !github) return;
+    const token = v.parse(
+      v.string(),
+      await unseal(grant, key, `meguri:github:${runId}`),
+    );
+    await github.revoke(token);
+    await this.ctx.storage.delete("repositoryGrant");
+  }
+
   private async submitJob(request: RunRequest) {
     const job = await this.prepareJob(request).catch(() => null);
     if (!job)
       return { status: "failed", errorCode: "provider_unavailable" } as const;
+
+    const target =
+      request.context.engine === "codex"
+        ? request.context.repository
+        : undefined;
+    if (target && job.engine === "codex") {
+      const github = this.github;
+      const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+      if (!github || !key)
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      const checkout = await github
+        .checkout(target, request.runId)
+        .catch(() => null);
+      if (!checkout)
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      try {
+        await this.ctx.storage.put(
+          "repositoryGrant",
+          await seal(checkout.token, key, `meguri:github:${request.runId}`),
+        );
+        await this.env.DB.prepare(
+          "UPDATE runs SET step_state = ? WHERE id = ? AND status = 'running'",
+        )
+          .bind(
+            JSON.stringify({
+              version: 1,
+              baseSha: checkout.baseSha,
+              branch: checkout.branch,
+            }),
+            request.runId,
+          )
+          .run();
+      } catch {
+        await github.revoke(checkout.token).catch(() => {});
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      }
+      job.checkout = { repository: target.repository, ...checkout };
+    }
     const port = await this.startRunner(job.deadlineAt, job.engine === "codex");
     const response = await port.fetch("http://runner/job", {
       method: "POST",
@@ -182,7 +261,17 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return { status: "running" } as const;
   }
 
-  private async pollJob(runId: string) {
+  private async pollJob(
+    runId: string,
+    context: ExecutionContext,
+    deadlineAt: number,
+    stepState: string | null,
+  ) {
+    const target = context.engine === "codex" ? context.repository : undefined;
+    const pending = target ? pendingPublication(stepState) : null;
+    if (target && pending)
+      return this.publish(runId, target, deadlineAt, pending);
+
     const container = this.ctx.container;
     if (!container?.running)
       return { status: "failed", errorCode: "runner_lost" } as const;
@@ -200,6 +289,57 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await reply.body?.cancel();
       throw new Error("Runner status unavailable");
     }
-    return v.parse(runnerStatusSchema, await reply.json());
+    const status = v.parse(runnerStatusSchema, await reply.json());
+    if (status.status !== "succeeded" || !target) return status;
+    if (!status.publication)
+      return { status: "failed", errorCode: "repository_unavailable" } as const;
+    if (status.publication.kind === "no_changes") {
+      return { ...status, publicationResult: { kind: "no_changes" as const } };
+    }
+
+    const pendingWork = {
+      reply: status.reply,
+      events: status.events,
+      ...status.publication,
+    };
+    await this.env.DB.prepare(
+      `UPDATE runs SET step_state = json_set(coalesce(step_state, '{}'), '$.pendingPublication', json(?))
+       WHERE id = ? AND status = 'running'`,
+    )
+      .bind(JSON.stringify(pendingWork), runId)
+      .run();
+    return this.publish(runId, target, deadlineAt, pendingWork);
+  }
+
+  private async publish(
+    runId: string,
+    target: RepositoryTarget,
+    deadlineAt: number,
+    work: PendingPublication,
+  ) {
+    const github = this.github;
+    if (!github)
+      return {
+        status: "failed",
+        errorCode: "publication_unconfirmed",
+      } as const;
+    const url = await github.publish(target, runId, work, deadlineAt);
+    if (!url)
+      return {
+        status: "failed",
+        errorCode: "deadline_exceeded",
+        events: work.events,
+      } as const;
+    return {
+      status: "succeeded" as const,
+      reply: work.reply,
+      events: work.events,
+      publicationResult: {
+        kind: "pull_request" as const,
+        url,
+        branch: work.branch,
+        sha: work.sha,
+      },
+    };
   }
 }

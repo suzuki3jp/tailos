@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { basicAuth } from "hono/basic-auth";
+import { operatorAuth } from "./operator.ts";
 import { jsx } from "hono/jsx";
 import type { Bindings } from "../internal.ts";
 import { defaultCodexConnection, type ConnectionStatus } from "./device.ts";
@@ -74,37 +74,18 @@ type ConnectEnv = {
 };
 
 export const connectRoutes = new Hono<ConnectEnv>();
+connectRoutes.use("*", operatorAuth);
 connectRoutes.use("*", async (c, next) => {
-  const token = c.env?.MEGURI_OPERATOR_TOKEN;
-  if (!token || !c.env.CREDENTIAL_ENCRYPTION_KEY || !c.env.CREDENTIALS)
-    return c.notFound();
+  const bindings = c.env.CREDENTIALS;
+  if (!c.env.CREDENTIAL_ENCRYPTION_KEY || !bindings) return c.notFound();
 
-  const url = new URL(c.req.url);
-  const local =
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "[::1]";
-  if (url.protocol !== "https:" && !local) return c.notFound();
-
-  c.header("Cache-Control", "private, no-store");
   c.header(
     "Content-Security-Policy",
     "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
   c.header("Referrer-Policy", "no-referrer");
-  if (c.req.method === "POST" && c.req.header("Origin") !== url.origin) {
-    return c.text("Forbidden", 403);
-  }
-
-  return basicAuth({ username: "meguri", password: token, realm: "Meguri" })(
-    c,
-    async () => {
-      const bindings = c.env.CREDENTIALS;
-      if (!bindings) return;
-      c.set("broker", bindings.getByName(defaultCodexConnection));
-      await next();
-    },
-  );
+  c.set("broker", bindings.getByName(defaultCodexConnection));
+  await next();
 });
 
 connectRoutes.get("/", async (c) => {

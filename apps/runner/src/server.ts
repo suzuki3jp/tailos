@@ -10,6 +10,7 @@ import {
 import * as v from "valibot";
 import { fakeAgent, type AgentAdapter } from "./agent.ts";
 import { codexAgent } from "./codex-agent.ts";
+import { runInGitWorkspace } from "./git-workspace.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 
@@ -47,11 +48,17 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
   }
   const signal = AbortSignal.timeout(remaining);
   try {
-    const reply = await agent.run(job.input, signal);
+    const input = job.input;
+    const result =
+      input.engine === "codex" && input.checkout
+        ? await runInGitWorkspace(input.checkout, signal, (cwd) =>
+            agent.run(input, signal, cwd),
+          )
+        : { reply: await agent.run(input, signal) };
     signal.throwIfAborted();
     job.state = v.parse(runnerStatusSchema, {
       status: "succeeded",
-      reply,
+      ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
     });
   } catch {

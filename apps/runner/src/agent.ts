@@ -1,7 +1,7 @@
 import type { RunnerJob } from "@meguri/core/runner";
 
 export interface AgentAdapter {
-  run(job: RunnerJob, signal: AbortSignal): Promise<string>;
+  run(job: RunnerJob, signal: AbortSignal, cwd?: string): Promise<string>;
 }
 
 export const fakeAgent: AgentAdapter = {

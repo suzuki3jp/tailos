@@ -1,14 +1,17 @@
 import { Hono } from "hono";
+import { githubWebhook } from "./github/webhook.ts";
 import { connectRoutes } from "./auth/connect.ts";
 import { refreshRoutes } from "./auth/refresh.ts";
 import { smokeAuth, type Bindings } from "./internal.ts";
 import { runRoutes } from "./runs.ts";
-import { sessionRoutes } from "./sessions.ts";
+import { operatorSessions, sessionRoutes } from "./sessions.ts";
 import { triggerRoutes } from "./triggers.ts";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route("/connect", connectRoutes);
+app.route("/operator/sessions", operatorSessions);
+app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
 app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/_internal/runs", runRoutes);

@@ -32,7 +32,14 @@ triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
     concurrencyKey: JSON.stringify(["internal.smoke", target]),
     prompt,
     executionContext: JSON.stringify({ version: 1, engine: "fake" }),
-    timeoutMs: 60_000,
+    timeoutMs: 5 * 60_000,
   });
+  if (admission.disposition === "started" && c.env.RUNNER) {
+    await c.env.RUNNER.getByName(admission.runId)
+      .schedule(admission.runId)
+      .catch(() => {
+        // The committed D1 row remains due for the scheduled recovery sweep.
+      });
+  }
   return c.json(admission);
 });

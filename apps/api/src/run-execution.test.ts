@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RunnerJob } from "@meguri/core/runner";
 import { createTestDb } from "./db/testing.ts";
-import { executeRun } from "./run-execution.ts";
+import { advanceRun, type RunnerDriver } from "./run-execution.ts";
 import { admitTrigger } from "./trigger-admission.ts";
+
+const unexpectedPoll = async () => {
+  throw new Error("Unexpected poll");
+};
 
 const request = {
   source: "test",
@@ -33,13 +37,11 @@ test("claims a run once and stores the agent reply with its terminal result", as
     return { status: "succeeded" as const, reply: "All done", events: [] };
   };
 
-  const statuses = await Promise.all([
-    executeRun(db, runId, run),
-    executeRun(db, runId, run),
-  ]);
-  assert.ok(statuses.includes("succeeded"));
-  assert.equal(dispatched, 1);
-  assert.equal(await executeRun(db, runId, run), "succeeded");
+  const driver = { start: run, poll: unexpectedPoll };
+  assert.deepEqual(await advanceRun(db, runId, driver), {
+    status: "succeeded",
+  });
+  assert.equal(await advanceRun(db, runId, driver), undefined);
   assert.equal(dispatched, 1);
 
   const messages = await db
@@ -77,10 +79,15 @@ test("records an expired or invalid run without starting a runner", async (t) =>
   ]) {
     let started = false;
     assert.equal(
-      await executeRun(db, runId, async () => {
-        started = true;
-        return { status: "succeeded", reply: "unexpected", events: [] };
-      }),
+      (
+        await advanceRun(db, runId, {
+          async start() {
+            started = true;
+            return { status: "succeeded", reply: "unexpected", events: [] };
+          },
+          poll: unexpectedPoll,
+        })
+      )?.status,
       "failed",
     );
     assert.equal(started, false);
@@ -103,11 +110,16 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     .run();
 
   assert.equal(
-    await executeRun(db, runId, async () => ({
-      status: "succeeded",
-      reply: "Unstored reply",
-      events: [],
-    })),
+    (
+      await advanceRun(db, runId, {
+        start: async () => ({
+          status: "succeeded",
+          reply: "Unstored reply",
+          events: [],
+        }),
+        poll: unexpectedPoll,
+      })
+    )?.status,
     "failed",
   );
   assert.deepEqual(
@@ -128,6 +140,72 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
   );
 });
 
+test("polls the existing job after a lost start response without submitting it again", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  let started = 0;
+  const driver: RunnerDriver = {
+    async start() {
+      started++;
+      throw new Error("The acknowledgement was lost");
+    },
+    async poll(id) {
+      assert.equal(id, runId);
+      return { status: "succeeded", reply: "Recovered", events: [] };
+    },
+  };
+
+  const first = await advanceRun(db, runId, driver);
+  assert.ok(first?.status === "running");
+  assert.equal(
+    await db
+      .prepare("SELECT next_action_at FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("next_action_at"),
+    first.nextActionAt,
+  );
+  assert.deepEqual(await advanceRun(db, runId, driver), {
+    status: "succeeded",
+  });
+  assert.equal(started, 1);
+  assert.equal(
+    await db
+      .prepare("SELECT next_action_at FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("next_action_at"),
+    null,
+  );
+});
+
+test("ends a run whose container disappeared without creating a replacement", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  await db
+    .prepare("UPDATE runs SET status = 'running' WHERE id = ?")
+    .bind(runId)
+    .run();
+
+  let started = false;
+  const driver: RunnerDriver = {
+    async start() {
+      started = true;
+      return { status: "running" };
+    },
+    async poll() {
+      return { status: "failed", errorCode: "runner_lost" };
+    },
+  };
+  assert.deepEqual(await advanceRun(db, runId, driver), { status: "failed" });
+  assert.equal(started, false);
+  assert.equal(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+    "runner_lost",
+  );
+});
+
 test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, request);
@@ -140,16 +218,21 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
     },
   };
   assert.equal(
-    await executeRun(
-      db,
-      runId,
-      async () => ({
-        status: "succeeded",
-        reply: "Unstored",
-        events: [],
-      }),
-      artifacts,
-    ),
+    (
+      await advanceRun(
+        db,
+        runId,
+        {
+          start: async () => ({
+            status: "succeeded",
+            reply: "Unstored",
+            events: [],
+          }),
+          poll: unexpectedPoll,
+        },
+        artifacts,
+      )
+    )?.status,
     "failed",
   );
   assert.equal(

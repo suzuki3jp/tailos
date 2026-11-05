@@ -27,8 +27,11 @@ runRoutes.post("/:id/start", async (c) => {
 
   const runner = c.env.RUNNER;
   if (!runner) return c.json({ error: "runner_unavailable" }, 503);
-  const status = await runner.getByName(run.id).execute(run.id);
-  return c.json({ runId: run.id, status });
+  if (run.status === "queued" || run.status === "running") {
+    await runner.getByName(run.id).schedule(run.id);
+    return c.json({ runId: run.id, status: run.status }, 202);
+  }
+  return c.json({ runId: run.id, status: run.status });
 });
 
 runRoutes.get("/:id/artifacts/:file", async (c) => {

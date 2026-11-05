@@ -90,3 +90,23 @@ test("cancels an active adapter at the job deadline", async (t) => {
     errorCode: "deadline_exceeded",
   });
 });
+
+test("reports out-of-contract replies as agent failures", async (t) => {
+  const origin = await listen(t, {
+    async run() {
+      return "";
+    },
+  });
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Reply",
+    deadlineAt: Date.now() + 60_000,
+  };
+  assert.equal((await sendJob(origin, job)).status, 202);
+  assert.deepEqual(await (await fetch(`${origin}/job/${job.runId}`)).json(), {
+    status: "failed",
+    errorCode: "agent_failed",
+  });
+});

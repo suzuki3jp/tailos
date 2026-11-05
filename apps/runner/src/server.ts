@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import {
   runnerJobSchema,
+  runnerStatusSchema,
   type RunnerJob,
   type RunnerStatus,
 } from "@meguri/core/runner";
@@ -44,7 +45,7 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
   try {
     const reply = await agent.run(job.input, signal);
     signal.throwIfAborted();
-    job.state = { status: "succeeded", reply };
+    job.state = v.parse(runnerStatusSchema, { status: "succeeded", reply });
   } catch {
     job.state = {
       status: "failed",

@@ -42,13 +42,7 @@ export async function executeRun(
     )
     .bind(runId)
     .first<RunInput>();
-  if (!run) {
-    const stored = await db
-      .prepare("SELECT status FROM runs WHERE id = ?")
-      .bind(runId)
-      .first<{ status: RunStatus }>();
-    return stored?.status;
-  }
+  if (!run) return readRunStatus(db, runId);
 
   const message = await db
     .prepare("SELECT body FROM session_messages WHERE id = ?")
@@ -82,14 +76,11 @@ export async function executeRun(
     outcome = { status: "failed", errorCode: "deadline_exceeded" };
   }
   if (outcome.status === "failed") {
-    await db
-      .prepare(
-        "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ? WHERE id = ? AND status = 'running'",
-      )
-      .bind(outcome.errorCode, finishedAt, runId)
-      .run();
-  } else {
-    await db.batch([
+    return failRun(db, runId, outcome.errorCode, finishedAt);
+  }
+
+  try {
+    const [, update] = await db.batch([
       db
         .prepare(
           `INSERT INTO session_messages (id, session_id, seq, author_kind, body, run_id, created_at)
@@ -108,6 +99,32 @@ export async function executeRun(
           runId,
         ),
     ]);
+    if (update?.meta.changes === 1) return "succeeded";
+  } catch {
+    return failRun(db, runId, "persistence_failed", finishedAt);
   }
-  return outcome.status;
+  return readRunStatus(db, runId);
+}
+
+async function readRunStatus(db: D1Database, runId: string) {
+  const stored = await db
+    .prepare("SELECT status FROM runs WHERE id = ?")
+    .bind(runId)
+    .first<{ status: RunStatus }>();
+  return stored?.status;
+}
+
+async function failRun(
+  db: D1Database,
+  runId: string,
+  code: string,
+  finishedAt: number,
+) {
+  const failed = await db
+    .prepare(
+      "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ? WHERE id = ? AND status = 'running' RETURNING status",
+    )
+    .bind(code, finishedAt, runId)
+    .first<{ status: "failed" }>();
+  return failed?.status ?? readRunStatus(db, runId);
 }

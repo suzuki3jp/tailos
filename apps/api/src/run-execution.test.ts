@@ -93,3 +93,36 @@ test("records an expired or invalid run without starting a runner", async (t) =>
     );
   }
 });
+
+test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
+  const db = await createTestDb(t);
+  const { runId, sessionId } = await admitTrigger(db, request);
+  await db
+    .prepare(`CREATE TRIGGER reject_agent_reply BEFORE INSERT ON session_messages
+    WHEN NEW.author_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'test failure'); END`)
+    .run();
+
+  assert.equal(
+    await executeRun(db, runId, async () => ({
+      status: "succeeded",
+      reply: "Unstored reply",
+    })),
+    "failed",
+  );
+  assert.deepEqual(
+    await db
+      .prepare("SELECT status, error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first(),
+    { status: "failed", error_code: "persistence_failed" },
+  );
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS count FROM session_messages WHERE session_id = ?",
+      )
+      .bind(sessionId)
+      .first("count"),
+    1,
+  );
+});

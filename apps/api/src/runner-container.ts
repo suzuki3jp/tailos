@@ -1,10 +1,24 @@
+import { hashRunLease, matchRunLease, newRunLease } from "./auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "./internal.ts";
-import { advanceRun, type RunnerDriver } from "./run-execution.ts";
+import {
+  advanceRun,
+  type RunnerDriver,
+  type RunRequest,
+} from "./run-execution.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
+
+type RefreshLease = {
+  digest: string;
+  runId: string;
+  connectionId: string;
+  connectionVersion: string;
+  expiresAt: number;
+  lastRefreshAt: number;
+};
 
 export class RunnerContainer extends DurableObject<Bindings> {
   async checkHealth(): Promise<boolean> {
@@ -40,15 +54,20 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return;
     }
 
+    await this.ctx.storage.delete("refreshLease");
     if (this.ctx.container?.running) await this.ctx.container.destroy();
   }
 
-  private async startRunner(deadlineAt: number) {
+  private async startRunner(deadlineAt: number, enableInternet = false) {
     const container = this.ctx.container;
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
 
-    container.start({ image, instance: "lite", enableInternet: false });
+    container.start({
+      image,
+      instance: enableInternet ? "standard-1" : "lite",
+      enableInternet,
+    });
     await container.setInactivityTimeout(
       Math.max(30_000, deadlineAt - Date.now() + 30_000),
     );
@@ -80,8 +99,74 @@ export class RunnerContainer extends DurableObject<Bindings> {
     throw new Error("Runner readiness check timed out");
   }
 
-  private async submitJob(job: RunnerJob) {
-    const port = await this.startRunner(job.deadlineAt);
+  async refreshAccess(runId: string, bearer: string, accessVersion: string) {
+    const digest = await hashRunLease(bearer);
+    const active = await this.env.DB.prepare(
+      "SELECT 1 AS active FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?",
+    )
+      .bind(runId, Date.now())
+      .first();
+    if (!active) return null;
+
+    const lease = await this.ctx.storage.transaction(async (storage) => {
+      const current = await storage.get<RefreshLease>("refreshLease");
+      const now = Date.now();
+      if (
+        !current ||
+        current.runId !== runId ||
+        current.expiresAt <= now ||
+        !matchRunLease(digest, current.digest) ||
+        now - current.lastRefreshAt < 5_000
+      )
+        return null;
+      await storage.put("refreshLease", { ...current, lastRefreshAt: now });
+      return current;
+    });
+    if (!lease) return null;
+
+    return this.env.CREDENTIALS?.getByName(lease.connectionId).issueAccess({
+      accessVersion,
+      connectionVersion: lease.connectionVersion,
+    });
+  }
+
+  private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
+    const { runId, prompt, deadlineAt, context } = request;
+    const base = { version: 1 as const, runId, prompt, deadlineAt };
+    if (context.engine === "fake") return { ...base, engine: "fake" };
+
+    const origin = this.env.MEGURI_PUBLIC_ORIGIN;
+    if (!origin || !this.env.CREDENTIALS) return null;
+    const url = new URL(origin);
+    if (url.protocol !== "https:" || url.origin !== origin) return null;
+
+    const access = await this.env.CREDENTIALS.getByName(
+      context.connectionId,
+    ).issueAccess();
+    if (!access) return null;
+    const bearer = newRunLease();
+    await this.ctx.storage.put("refreshLease", {
+      digest: await hashRunLease(bearer),
+      runId,
+      connectionId: context.connectionId,
+      connectionVersion: access.connectionVersion,
+      expiresAt: deadlineAt,
+      lastRefreshAt: 0,
+    } satisfies RefreshLease);
+
+    return {
+      ...base,
+      engine: "codex",
+      access,
+      refresh: { url: origin + `/_runner/runs/${runId}/credentials`, bearer },
+    };
+  }
+
+  private async submitJob(request: RunRequest) {
+    const job = await this.prepareJob(request).catch(() => null);
+    if (!job)
+      return { status: "failed", errorCode: "provider_unavailable" } as const;
+    const port = await this.startRunner(job.deadlineAt, job.engine === "codex");
     const response = await port.fetch("http://runner/job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

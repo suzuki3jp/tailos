@@ -13,6 +13,7 @@ const identifier = v.pipe(
 const triggerInput = v.strictObject({
   deliveryId: identifier,
   target: identifier,
+  engine: v.optional(v.picklist(["fake", "codex"]), "fake"),
   prompt: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(4000)),
 });
 
@@ -23,7 +24,7 @@ triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
   const parsed = v.safeParse(triggerInput, body);
   if (!parsed.success) return c.json({ error: "invalid_input" }, 400);
 
-  const { deliveryId, target, prompt } = parsed.output;
+  const { deliveryId, target, prompt, engine } = parsed.output;
   const admission = await admitTrigger(c.env.DB, {
     source: "internal.smoke",
     idempotencyKey: deliveryId,
@@ -31,7 +32,11 @@ triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
     target: JSON.stringify({ version: 1, kind: "smoke", target }),
     concurrencyKey: JSON.stringify(["internal.smoke", target]),
     prompt,
-    executionContext: JSON.stringify({ version: 1, engine: "fake" }),
+    executionContext: JSON.stringify(
+      engine === "codex"
+        ? { version: 1, engine, connectionId: "codex/default" }
+        : { version: 1, engine },
+    ),
     timeoutMs: 5 * 60_000,
   });
   if (admission.disposition === "started" && c.env.RUNNER) {

@@ -26,6 +26,9 @@ test("protects the device code and requires a same-origin POST to change connect
           };
           return true;
         },
+        async issueAccess() {
+          return null;
+        },
         async disconnect() {
           status = { state: "disconnected" };
         },

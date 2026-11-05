@@ -4,11 +4,15 @@ import { once } from "node:events";
 import { test, type TestContext } from "node:test";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import type { AgentAdapter } from "./agent.ts";
+import { fakeAgent, type AgentAdapter } from "./agent.ts";
+import { codexAgent } from "./codex-agent.ts";
 import { createRunnerServer } from "./server.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
-  const server = createRunnerServer(agent);
+  const server = createRunnerServer({
+    fake: agent ?? fakeAgent,
+    codex: codexAgent,
+  });
   t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

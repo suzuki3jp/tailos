@@ -15,6 +15,7 @@ export type Bindings = {
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
   MEGURI_TEST_TOKEN?: string;
   MEGURI_OPERATOR_TOKEN?: string;
+  MEGURI_PUBLIC_ORIGIN?: string;
   CREDENTIAL_ENCRYPTION_KEY?: string;
   CREDENTIALS?: { getByName(name: string): ConnectionControl };
 };

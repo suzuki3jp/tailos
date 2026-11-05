@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RunnerJob } from "@meguri/core/runner";
 import { createTestDb } from "./db/testing.ts";
-import { advanceRun, type RunnerDriver } from "./run-execution.ts";
+import {
+  advanceRun,
+  type RunnerDriver,
+  type RunRequest,
+} from "./run-execution.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 
 const unexpectedPoll = async () => {
@@ -23,7 +26,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, request);
   let dispatched = 0;
-  const run = async (job: RunnerJob) => {
+  const run = async (job: RunRequest) => {
     dispatched++;
     assert.equal(job.prompt, request.prompt);
     assert.equal(job.runId, runId);

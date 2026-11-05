@@ -1,4 +1,5 @@
 FROM node:22-bookworm-slim
+RUN npm install --global --ignore-scripts @openai/codex@0.166.0
 WORKDIR /app
 COPY --chown=node:node dist/runner.mjs ./runner.mjs
 USER node

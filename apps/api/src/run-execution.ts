@@ -2,7 +2,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import {
   executionContextSchema,
   type RunnerEvent,
-  type RunnerJob,
+  type ExecutionContext,
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
@@ -21,13 +21,21 @@ type RunOutcome =
       errorCode:
         | "runner_unavailable"
         | "runner_lost"
+        | "provider_unavailable"
         | "invalid_execution_context"
         | "artifact_write_failed";
       events?: RunnerEvent[];
     };
 
+export type RunRequest = {
+  runId: string;
+  prompt: string;
+  deadlineAt: number;
+  context: ExecutionContext;
+};
+
 export type RunnerDriver = {
-  start(job: RunnerJob): Promise<RunnerStatus | RunOutcome>;
+  start(job: RunRequest): Promise<RunnerStatus | RunOutcome>;
   poll(runId: string): Promise<RunnerStatus | RunOutcome>;
 };
 
@@ -124,9 +132,8 @@ async function dispatchNewRun(
   }
   return driver
     .start({
-      version: 1,
       runId,
-      engine: context.output.engine,
+      context: context.output,
       prompt: message.body,
       deadlineAt: run.deadlineAt,
     })

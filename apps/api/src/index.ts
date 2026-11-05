@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { connectRoutes } from "./auth/connect.ts";
+import { refreshRoutes } from "./auth/refresh.ts";
 import { smokeAuth, type Bindings } from "./internal.ts";
 import { runRoutes } from "./runs.ts";
 import { sessionRoutes } from "./sessions.ts";
@@ -8,6 +9,7 @@ import { triggerRoutes } from "./triggers.ts";
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route("/connect", connectRoutes);
+app.route("/_runner/runs", refreshRoutes);
 app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);

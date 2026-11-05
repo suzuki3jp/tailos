@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
-    "deploy": "pnpm --filter @meguri/runner run build && node --experimental-strip-types scripts/deploy.mjs",
+    "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts' 'scripts/*.test.mjs'",
     "typecheck": "tsc --noEmit"

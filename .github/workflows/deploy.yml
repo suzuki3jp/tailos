@@ -28,6 +28,8 @@ jobs:
         with:
           cache: true
       - run: pnpm install --frozen-lockfile
+      - name: Build Runner bundle
+        run: pnpm --filter @meguri/runner run build
       - name: Deploy to Cloudflare
         run: pnpm --filter @meguri/api run deploy
         env:

@@ -1,18 +1,12 @@
-import type { D1Database } from "@cloudflare/workers-types";
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
-import { bearerAuth } from "hono/bearer-auth";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import { sessionMessages, sessions } from "./db/schema.ts";
 
-export type Bindings = {
-  DB: D1Database;
-  MEGURI_TEST_TOKEN?: string;
-};
+import { smokeAuth, smokeOwnerId, type Bindings } from "./internal.ts";
 
-const owner = "internal-smoke";
 const sessionInput = v.strictObject({
   messages: v.pipe(
     v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(4000))),
@@ -23,11 +17,7 @@ const sessionInput = v.strictObject({
 
 export const sessionRoutes = new Hono<{ Bindings: Bindings }>();
 
-sessionRoutes.use("*", async (c, next) => {
-  const token = c.env?.MEGURI_TEST_TOKEN;
-  if (!token) return c.notFound();
-  return bearerAuth<{ Bindings: Bindings }>({ token })(c, next);
-});
+sessionRoutes.use("*", smokeAuth);
 
 sessionRoutes.post("/", bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
   const body: unknown = await c.req.json().catch(() => null);
@@ -46,7 +36,7 @@ sessionRoutes.post("/", bodyLimit({ maxSize: 128 * 1024 }), async (c) => {
     createdAt: now,
   }));
   await db.batch([
-    db.insert(sessions).values({ id, ownerId: owner, createdAt: now }),
+    db.insert(sessions).values({ id, ownerId: smokeOwnerId, createdAt: now }),
     ...messages.map((message) => db.insert(sessionMessages).values(message)),
   ]);
   return c.json({ id }, 201);
@@ -58,7 +48,7 @@ sessionRoutes.get("/:id", async (c) => {
   const [session] = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.id, id), eq(sessions.ownerId, owner)));
+    .where(and(eq(sessions.id, id), eq(sessions.ownerId, smokeOwnerId)));
   if (!session) return c.notFound();
 
   const messages = await db

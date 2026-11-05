@@ -22,6 +22,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         return await this.runJob(job);
       } finally {
         await this.ctx.container?.destroy().catch(() => {
+          // oxlint-disable-next-line no-console -- Record cleanup failures without job data.
           console.warn(
             "Runner cleanup failed; inactivity timeout remains in effect",
           );

@@ -119,22 +119,22 @@ GitHub では専用の権限主体として GitHub App を使う。App の秘密
 
 `pnpm dev` で Wrangler を起動し、その段階で使うリソースをローカルで動かす。D1 を導入した段階でローカルマイグレーションを加え、Runner を導入した段階でバンドルと Docker イメージのビルドを加える。Wrangler は Worker・DO・D1・R2 をローカルで動かし、Runner は実際の Docker コンテナで動かす。日常の開発ではテスト用の実行要求と固定応答の Agent Adapter を使う。
 
-最小構成では、Wrangler `4.157.0` で Worker → DO → Docker の HTTP 疎通、ローカル R2 への読み書き、再起動後の DO ストレージの保持を確認済み。本実装で D1 を含む一連の動作はフェーズ 1 で検証する。 [Cloudflare Containers のローカル開発](https://developers.cloudflare.com/containers/guides/local-dev/)
+事前検証では Wrangler `4.157.0` を使い、Worker → DO → Docker の HTTP 疎通、ローカル R2 への読み書き、再起動後の DO ストレージの保持を確認した。本実装では `apps/api/package.json` に固定した Wrangler でフェーズごとの動作を検証する。 [Cloudflare Containers のローカル開発](https://developers.cloudflare.com/containers/guides/local-dev/)
 
-D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。デプロイは GitHub Actions が担当し、Cloudflare の GitHub Integration は使用しない。本番ドメインは `meguri.suzuki3.jp`。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
+D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` に反映された変更を Cloudflare にデプロイする。本番ドメインは `meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
 
 ## 実装フェーズ
 
 ### フェーズ 1 のデプロイ単位
 
-1A から順に積み上げる。各単位は、その時点の `main` を GitHub Actions から Cloudflare の検証環境へデプロイし、追加した動作を確認できるところまでで完了とする。検証用の操作は認証で保護する。1D 以降は、コンテナを制御する DO を持つ Worker と Runner イメージを同じリリースとして扱い、DO 経由の HTTP 疎通まで確認する。 [Cloudflare Containers のデプロイ](https://developers.cloudflare.com/containers/guides/deploy/)
+1A から順に、単独でレビューとデプロイができる変更として積み上げる。各 PR では CI とローカルで追加した動作を検証する。本番デプロイは `main` への反映で実行する。検証用の操作は認証で保護する。1D 以降は、コンテナを制御する DO を持つ Worker と Runner イメージを同じリリースとして扱い、DO 経由の HTTP 疎通まで確認する。 [Cloudflare Containers のデプロイ](https://developers.cloudflare.com/containers/guides/deploy/)
 
 | 単位 | デプロイする変更 | 完了条件 |
 | --- | --- | --- |
-| 1A. API の起動 | `apps/api` に Hono の `/health`、Wrangler 設定、検証環境へ手動デプロイする GitHub Actions ワークフローを追加する | ローカルの `pnpm dev` と Cloudflare の検証 URL の両方で `/health` が応答する |
-| 1B. Session と会話履歴 | Drizzle で外部キーを含む D1 の4テーブルを一緒に作る。検証用に Session とメッセージの保存・照会を追加する | ローカルと検証環境で、Project やリポジトリを持たない Session にメッセージを保存し、順番に読み出せる |
+| 1A. API の起動 | `apps/api` に Hono の `/health` と Wrangler 設定を追加し、`main` の更新でデプロイする GitHub Actions ワークフローを用意する | `pnpm dev` で `/health` が応答し、Wrangler の dry run で Worker をビルドできる |
+| 1B. Session と会話履歴 | Drizzle で外部キーを含む D1 の4テーブルを一緒に作る。検証用に Session とメッセージの保存・照会を追加する | ローカル D1 で、Project やリポジトリを持たない Session にメッセージを保存し、順番に読み出せる |
 | 1C. 起動イベントの受付 | テスト用イベントから Session、最初の依頼、Run、起点イベントを一括で作る | 同じ配送の再送では同じ Session と Run が返る。進行中の別配送は既存 Run に合流し、完了後の新しいイベントは新規 Session を作る |
-| 1D. コンテナの疎通 | 最小の Node Runner、Dockerfile、コンテナを起動する DO を追加する。Runner の `/health` に内部 HTTP でアクセスする | ローカルの Docker と Cloudflare の両方で、Worker → DO → Runner の応答を確認できる。疎通確認後にコンテナを停止する |
+| 1D. コンテナの疎通 | 最小の Node Runner、Dockerfile、コンテナを起動する DO を追加する。Runner の `/health` に内部 HTTP でアクセスする | ローカルの Docker で Worker → DO → Runner の応答を確認できる。疎通確認後にコンテナを停止する |
 | 1E. 固定ジョブの実行 | `packages/core` にジョブと結果の契約を置き、Runner に固定応答の Agent Adapter を追加する。Session の依頼から Run を実行する | Run が `queued` → `running` → `succeeded` と進み、同じ Session から返答と Run の結果を確認できる。締切を超えた場合は実行を終了し、失敗理由を確認できる |
 | 1F. ログと成果物 | `runId` に紐づく Runner のイベント、ログ、成果物を R2 に保存する | Session から成功・失敗それぞれの Run をたどり、ログや保存した成果物を取得できる |
 | 1G. 中断からの復旧 | DO のアラームと `next_action_at` を使った再試行・拾い直しを追加する | 起動要求や応答が途中で失われても、既存コンテナを確認し、同じ Run を続行するか失敗として確定できる |

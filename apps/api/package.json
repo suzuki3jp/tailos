@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local",
-    "deploy:staging": "wrangler deploy --env staging",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "deploy": "wrangler deploy",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

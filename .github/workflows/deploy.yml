@@ -1,13 +1,14 @@
-name: Deploy staging API
+name: Deploy API
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: meguri-api-staging
+  group: meguri-api-production
 
 env:
   HUSKY: "0"
@@ -16,7 +17,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: staging
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,8 +28,8 @@ jobs:
         with:
           cache: true
       - run: pnpm install --frozen-lockfile
-      - name: Deploy to Cloudflare staging
-        run: pnpm --filter @meguri/api deploy:staging
+      - name: Deploy to Cloudflare
+        run: pnpm --filter @meguri/api run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}

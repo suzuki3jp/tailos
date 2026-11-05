@@ -2,12 +2,6 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "meguri-api",
   "main": "src/index.ts",
-  "compatibility_date": "2026-10-20",
-  "workers_dev": false,
-  "env": {
-    "staging": {
-      "name": "meguri-api-staging",
-      "workers_dev": true,
-    },
-  },
+  "compatibility_date": "2026-10-06",
+  "workers_dev": true,
 }

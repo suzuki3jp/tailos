@@ -6,6 +6,7 @@ import app from "./index.ts";
 import type { Bindings } from "./internal.ts";
 import { rescheduleDueRuns } from "./run-scheduler.ts";
 
+export { CredentialBroker } from "./auth/credential-broker.ts";
 export { RunnerContainer } from "./runner-container.ts";
 
 export default {

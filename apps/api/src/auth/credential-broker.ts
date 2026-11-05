@@ -1,7 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "../internal.ts";
-import { CodexDeviceAuth } from "./codex-device.ts";
-import type { ConnectionStatus, DeviceChallenge } from "./device.ts";
+import { CodexDeviceAuth, type CodexCredentials } from "./codex-device.ts";
+import {
+  TransientDevicePollError,
+  type DeviceAuthAdapter,
+  type ConnectionStatus,
+  type DeviceChallenge,
+} from "./device.ts";
 import { seal, unseal, type Sealed } from "./sealed-store.ts";
 import * as v from "valibot";
 
@@ -17,7 +22,8 @@ const pendingSchema = v.strictObject({
 });
 
 export class CredentialBroker extends DurableObject<Bindings> {
-  private readonly adapter = new CodexDeviceAuth();
+  protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
+    new CodexDeviceAuth();
 
   private get key() {
     const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
@@ -35,6 +41,7 @@ export class CredentialBroker extends DurableObject<Bindings> {
   }
 
   async status(): Promise<ConnectionStatus> {
+    if (await this.ctx.storage.get("connection")) return { state: "connected" };
     const pending = await this.readPending();
     if (pending) {
       if (Date.now() >= pending.expiresAt) return { state: "expired" };
@@ -52,7 +59,11 @@ export class CredentialBroker extends DurableObject<Bindings> {
 
   async begin(): Promise<boolean> {
     return this.ctx.blockConcurrencyWhile(async () => {
-      const existing = await this.readPending();
+      if (await this.ctx.storage.get("connection")) return false;
+      const existing = await this.readPending().catch(async () => {
+        await this.finish("failed");
+        return null;
+      });
       if (existing && existing.expiresAt > Date.now()) {
         if ((await this.ctx.storage.getAlarm()) === null)
           await this.ctx.storage.setAlarm(Date.now() + existing.intervalMs);
@@ -86,7 +97,10 @@ export class CredentialBroker extends DurableObject<Bindings> {
 
   async alarm(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
-      const pending = await this.readPending();
+      const pending = await this.readPending().catch(async () => {
+        await this.finish("failed");
+        return null;
+      });
       if (!pending) return;
       if (Date.now() >= pending.expiresAt) {
         await this.finish("expired");
@@ -96,8 +110,14 @@ export class CredentialBroker extends DurableObject<Bindings> {
       let credentials;
       try {
         credentials = await this.adapter.complete(pending);
-      } catch {
-        await this.finish("failed");
+      } catch (error) {
+        if (error instanceof TransientDevicePollError) {
+          await this.ctx.storage.setAlarm(
+            Math.min(pending.expiresAt, Date.now() + pending.intervalMs * 2),
+          );
+        } else {
+          await this.finish("failed");
+        }
         return;
       }
 

@@ -1,6 +1,10 @@
 import { createRemoteJWKSet, customFetch, decodeJwt, jwtVerify } from "jose";
 import * as v from "valibot";
-import type { DeviceAuthAdapter, DeviceChallenge } from "./device.ts";
+import {
+  TransientDevicePollError,
+  type DeviceAuthAdapter,
+  type DeviceChallenge,
+} from "./device.ts";
 
 const issuer = "https://auth.openai.com";
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -77,8 +81,12 @@ export class CodexDeviceAuth implements DeviceAuthAdapter<CodexCredentials> {
     const response = await this.post("/api/accounts/deviceauth/token", {
       device_auth_id: challenge.id,
       user_code: challenge.userCode,
+    }).catch(() => {
+      throw new TransientDevicePollError();
     });
     if (response.status === 403 || response.status === 404) return null;
+    if (response.status === 429 || response.status >= 500)
+      throw new TransientDevicePollError();
     if (!response.ok) throw new Error("Device authorization failed");
     const data = v.parse(exchangeSchema, await response.json());
 

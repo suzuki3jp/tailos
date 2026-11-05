@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { codexAccessSchema } from "@meguri/core/runner";
+import * as v from "valibot";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
-test("the Durable Object polls, completes, rejects reconnects and clears its alarm", async (t) => {
+async function createBroker(t: TestContext) {
   const bundled = await build({
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
       contents: `
+        import { ReauthenticationRequired } from "./codex-device.ts";
         import { CredentialBroker } from "./credential-broker.ts";
         import { TransientDevicePollError } from "./device.ts";
 
         export class TestBroker extends CredentialBroker {
           decision = "pending";
+          rotations = 0;
           adapter = {
             begin: async () => {
               if (this.decision === "failure") throw new Error("provider rejected start");
@@ -27,10 +31,22 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
             },
             complete: async () => {
               if (this.decision === "transient") throw new TransientDevicePollError();
-              return this.decision === "approved" ? {
+              return this.decision.startsWith("approved") ? {
                 refreshToken: "secret-refresh",
                 accessToken: "secret-access",
+                idToken: "secret-id",
+                accountId: "test-account",
+                expiresAt: Date.now() + (this.decision === "approved-expired" ? -1 : 900000),
               } : null;
+            },
+            refresh: async (previous) => {
+              if (this.decision === "revoked") throw new ReauthenticationRequired();
+              this.rotations++;
+              return {
+                ...previous,
+                accessToken: "rotated-access-" + this.rotations,
+                expiresAt: Date.now() + 900000,
+              };
             },
           };
           async tick(decision) {
@@ -82,7 +98,7 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   );
   t.after(() => worker.dispose());
 
-  const rpc = async (action: string, decision?: string) => {
+  return async (action: string, decision?: unknown) => {
     const response = await worker.dispatchFetch("http://worker", {
       method: "POST",
       body: JSON.stringify({ action, decision }),
@@ -90,7 +106,10 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
     assert.equal(response.status, 200, await response.clone().text());
     return response.json();
   };
+}
 
+test("the Durable Object polls, completes, rejects reconnects and clears its alarm", async (t) => {
+  const rpc = await createBroker(t);
   assert.equal(await rpc("begin"), true);
   assert.equal(await rpc("begin"), true);
   assert.deepEqual(await rpc("tick", "pending"), {
@@ -119,4 +138,47 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   assert.equal(await rpc("begin"), true);
   assert.deepEqual(await rpc("tick", "pending"), { state: "expired" });
   assert.deepEqual(await rpc("stored"), { alarm: null });
+});
+
+test("serializes access rotation and invalidates a revoked connection", async (t) => {
+  const rpc = await createBroker(t);
+  assert.equal(await rpc("begin"), true);
+  assert.deepEqual(await rpc("tick", "approved-expired"), {
+    state: "connected",
+  });
+
+  const initial = v.parse(codexAccessSchema, await rpc("issueAccess"));
+  assert.equal(initial.accessToken, "rotated-access-1");
+  assert.deepEqual(await rpc("issueAccess"), initial);
+  assert.equal(
+    await rpc("issueAccess", {
+      connectionVersion: crypto.randomUUID(),
+      accessVersion: initial.accessVersion,
+    }),
+    null,
+  );
+
+  const rejected = {
+    connectionVersion: initial.connectionVersion,
+    accessVersion: initial.accessVersion,
+  };
+  const [leftResponse, right] = await Promise.all([
+    rpc("issueAccess", rejected),
+    rpc("issueAccess", rejected),
+  ]);
+  const left = v.parse(codexAccessSchema, leftResponse);
+  assert.deepEqual(left, right);
+  assert.equal(left.accessToken, "rotated-access-2");
+  assert.notEqual(left.accessVersion, initial.accessVersion);
+
+  await rpc("setDecision", "revoked");
+  assert.equal(
+    await rpc("issueAccess", {
+      connectionVersion: left.connectionVersion,
+      accessVersion: left.accessVersion,
+    }),
+    null,
+  );
+  assert.deepEqual(await rpc("status"), { state: "failed" });
+  assert.equal(await rpc("issueAccess"), null);
 });

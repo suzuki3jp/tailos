@@ -60,7 +60,10 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
     env,
   );
   assert.equal(detail.status, 200);
-  const { messages } = await detail.json();
+  const data = await detail.json();
+  assert.ok(data && typeof data === "object" && "messages" in data);
+  const { messages } = data;
+  assert.ok(Array.isArray(messages));
   assert.equal(messages[0].body, "Implement the request");
 
   await db

@@ -42,12 +42,25 @@ test("a configured operator can create and read a standalone session in message 
 
   const response = await app.request(path, payload, env);
   assert.equal(response.status, 201);
-  const { id } = await response.json();
-  assert.equal(typeof id, "string");
+  const created = await response.json();
+  assert.ok(created && typeof created === "object" && "id" in created);
+  const { id } = created;
+  assert.ok(typeof id === "string");
 
   const detail = await app.request(`${path}/${id}`, { headers }, env);
   assert.equal(detail.status, 200);
-  const { session, messages } = await detail.json();
+  const data = await detail.json();
+  assert.ok(
+    data && typeof data === "object" && "session" in data && "messages" in data,
+  );
+  const { session, messages } = data;
+  assert.ok(
+    session &&
+      typeof session === "object" &&
+      "projectId" in session &&
+      "target" in session,
+  );
+  assert.ok(Array.isArray(messages));
   assert.equal(session.projectId, null);
   assert.equal(session.target, null);
   assert.deepEqual(

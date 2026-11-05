@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler d1 migrations apply DB --local && wrangler dev --local",
-    "deploy": "node scripts/deploy.mjs",
-    "db:generate": "drizzle-kit generate --name initial",
+    "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
+    "deploy": "pnpm --filter @meguri/runner run build && node scripts/deploy.mjs",
+    "db:generate": "drizzle-kit generate",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },

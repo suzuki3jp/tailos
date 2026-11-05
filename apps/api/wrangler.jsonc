@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "meguri-api",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-10-06",
   "workers_dev": true,
   "d1_databases": [
@@ -9,6 +9,24 @@
       "binding": "DB",
       "database_name": "meguri",
       "database_id": "00000000-0000-0000-0000-000000000000",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "RUNNER", "class_name": "RunnerContainer" }],
+  },
+  "migrations": [
+    { "tag": "runner-v1", "new_sqlite_classes": ["RunnerContainer"] },
+  ],
+  "containers": [
+    {
+      "class_name": "RunnerContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "runner": {
+          "dockerfile": "../runner/Dockerfile",
+          "build_context": "../runner",
+        },
+      },
     },
   ],
 }

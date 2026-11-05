@@ -8,3 +8,24 @@ test("the Worker serves the health endpoint", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "ok" });
 });
+
+test("runner smoke does not allocate a container without a configured bearer token", async () => {
+  const request = { method: "POST" };
+  const path = "/_internal/runner/health";
+  assert.equal((await app.request(path, request)).status, 404);
+  assert.equal(
+    (await app.request(path, request, { MEGURI_TEST_TOKEN: "test-token" }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await app.request(
+        path,
+        { ...request, headers: { Authorization: "Bearer test-token" } },
+        { MEGURI_TEST_TOKEN: "test-token" },
+      )
+    ).status,
+    503,
+  );
+});

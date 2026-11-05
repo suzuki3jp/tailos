@@ -36,7 +36,7 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
       "-c",
       "sandbox_workspace_write.exclude_tmpdir_env_var=true",
       "-c",
-      `projects.${JSON.stringify(workspace)}.trust_level="untrusted"`,
+      `projects={${JSON.stringify(workspace)}={trust_level="untrusted"}}`,
     ],
     {
       cwd: directory,

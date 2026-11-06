@@ -14,17 +14,19 @@ export type Bindings = {
   RUN_ARTIFACTS?: RunArtifactsBucket;
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
   MEGURI_TEST_TOKEN?: string;
-  MEGURI_OPERATOR_TOKEN?: string;
-  MEGURI_PUBLIC_ORIGIN?: string;
   PROJECTS?: string;
   MEGURI_GH_APP_ID?: string;
   MEGURI_GH_APP_PRIVATE_KEY?: string;
   MEGURI_GH_WEBHOOK_SECRET?: string;
   CREDENTIAL_ENCRYPTION_KEY?: string;
   CREDENTIALS?: { getByName(name: string): ConnectionControl };
+  MEGURI_PUBLIC_ORIGIN?: string;
+  BETTER_AUTH_SECRET?: string;
+  MEGURI_GITHUB_OAUTH_CLIENT_ID?: string;
+  MEGURI_GITHUB_OAUTH_CLIENT_SECRET?: string;
+  MEGURI_OPERATOR_GITHUB_ID?: string;
 };
 
-export const operatorOwnerId = "meguri-operator";
 export const smokeOwnerId = "internal-smoke";
 
 export const smokeAuth = createMiddleware<{ Bindings: Bindings }>(

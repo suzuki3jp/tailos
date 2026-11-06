@@ -1,25 +1,30 @@
-import { basicAuth } from "hono/basic-auth";
 import { createMiddleware } from "hono/factory";
 import type { Bindings } from "../internal.ts";
+import { getOperatorSession } from "./login.ts";
 
-export const operatorAuth = createMiddleware<{ Bindings: Bindings }>(
-  async (c, next) => {
-    const token = c.env?.MEGURI_OPERATOR_TOKEN;
-    if (!token) return c.notFound();
+export type OperatorEnv = {
+  Bindings: Bindings;
+  Variables: { operatorUserId: string };
+};
 
-    const url = new URL(c.req.url);
-    const local =
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "[::1]";
-    if (url.protocol !== "https:" && !local) return c.notFound();
+export const operatorAuth = createMiddleware<OperatorEnv>(async (c, next) => {
+  const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
+  if (
+    !origin ||
+    !c.env.BETTER_AUTH_SECRET ||
+    new URL(c.req.url).origin !== origin
+  )
+    return c.notFound();
 
-    c.header("Cache-Control", "private, no-store");
-    if (c.req.method === "POST" && c.req.header("Origin") !== url.origin)
-      return c.text("Forbidden", 403);
-    return basicAuth({ username: "meguri", password: token, realm: "Meguri" })(
-      c,
-      next,
-    );
-  },
-);
+  c.header("Cache-Control", "private, no-store");
+  if (c.req.method === "POST" && c.req.header("Origin") !== origin)
+    return c.text("Forbidden", 403);
+  const session = await getOperatorSession(c.env, c.req.raw.headers);
+  if (!session) {
+    return c.req.method === "GET"
+      ? c.redirect("/login", 303)
+      : c.text("Unauthorized", 401);
+  }
+  c.set("operatorUserId", session.user.id);
+  return next();
+});

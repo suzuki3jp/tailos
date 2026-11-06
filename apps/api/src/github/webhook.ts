@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import type { ExecutionContext } from "@meguri/core/runner";
-import { operatorOwnerId, type Bindings } from "../internal.ts";
+import { codexConnectionId } from "../auth/device.ts";
+import { findOperatorUserId } from "../auth/login.ts";
+import type { Bindings } from "../internal.ts";
 import { admitTrigger } from "../trigger-admission.ts";
 
 const id = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
@@ -129,10 +131,13 @@ githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
   if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery))
     return c.json({ error: "missing_delivery_id" }, 400);
 
+  const ownerId = await findOperatorUserId(c.env);
+  if (!ownerId) return c.json({ error: "operator_not_initialized" }, 503);
+
   const executionContext = {
     version: 1,
     engine: "codex",
-    connectionId: "codex/default",
+    connectionId: codexConnectionId(ownerId),
     repository: {
       repository: target.repository,
       repositoryId: target.repositoryId,
@@ -153,7 +158,7 @@ githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
   const result = await admitTrigger(c.env.DB, {
     source: "github.issue-label",
     idempotencyKey: delivery,
-    ownerId: operatorOwnerId,
+    ownerId,
     projectId: target.id,
     target: JSON.stringify({
       version: 1,

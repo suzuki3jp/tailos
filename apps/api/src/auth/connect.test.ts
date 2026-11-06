@@ -1,50 +1,56 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
+import { createTestDb } from "../db/testing.ts";
+import { createTestOperator, testLoginBindings } from "./testing.ts";
 import app from "../index.ts";
 import type { ConnectionStatus } from "./device.ts";
 
-test("protects the device code and requires a same-origin POST to change connection state", async () => {
-  const origin = "https://meguri.example";
+test("protects the device code and requires a same-origin POST to change connection state", async (t) => {
+  const login = testLoginBindings(await createTestDb(t));
+  const { id, cookie } = await createTestOperator(login);
+  const origin = login.MEGURI_PUBLIC_ORIGIN;
   const path = origin + "/connect";
-  const auth = "Basic " + btoa("meguri:operator-token");
   let status: ConnectionStatus = { state: "disconnected" };
   let starts = 0;
   const env = {
-    MEGURI_OPERATOR_TOKEN: "operator-token",
+    ...login,
     CREDENTIAL_ENCRYPTION_KEY: "test-key",
     CREDENTIALS: {
-      getByName: () => ({
-        async status() {
-          return status;
-        },
-        async begin() {
-          starts++;
-          status = {
-            state: "pending",
-            userCode: "MY<CODE",
-            verificationUrl: "https://auth.openai.com/codex/device",
-          };
-          return true;
-        },
-        async issueAccess() {
-          return null;
-        },
-        async disconnect() {
-          status = { state: "disconnected" };
-        },
-      }),
+      getByName: (name: string) => {
+        assert.equal(name, `codex/${id}`);
+        return {
+          async status() {
+            return status;
+          },
+          async begin() {
+            starts++;
+            status = {
+              state: "pending",
+              userCode: "MY<CODE",
+              verificationUrl: "https://auth.openai.com/codex/device",
+            };
+            return true;
+          },
+          async issueAccess() {
+            return null;
+          },
+          async disconnect() {
+            status = { state: "disconnected" };
+          },
+        };
+      },
     },
   };
 
   assert.equal((await app.request(path)).status, 404);
-  assert.equal((await app.request(path, undefined, env)).status, 401);
+  assert.equal((await app.request(path, undefined, env)).status, 303);
   assert.equal(
     (
       await app.request(
         path + "/start",
         {
           method: "POST",
-          headers: { Authorization: auth, Origin: "https://another.example" },
+          headers: { Cookie: cookie, Origin: "https://another.example" },
         },
         env,
       )
@@ -53,7 +59,7 @@ test("protects the device code and requires a same-origin POST to change connect
   );
   assert.equal(starts, 0);
 
-  const headers = { Authorization: auth, Origin: origin };
+  const headers = { Cookie: cookie, Origin: origin };
   const response = await app.request(
     path + "/start",
     { method: "POST", headers },

@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import { operatorAuth } from "./auth/operator.ts";
+import { operatorAuth, type OperatorEnv } from "./auth/operator.ts";
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
@@ -7,12 +7,7 @@ import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import { runs, sessionMessages, sessions } from "./db/schema.ts";
 
-import {
-  operatorOwnerId,
-  smokeAuth,
-  smokeOwnerId,
-  type Bindings,
-} from "./internal.ts";
+import { smokeAuth, smokeOwnerId, type Bindings } from "./internal.ts";
 
 const sessionInput = v.strictObject({
   messages: v.pipe(
@@ -80,13 +75,13 @@ sessionRoutes.get("/:id", async (c) => {
   return detail ? c.json(detail) : c.notFound();
 });
 
-export const operatorSessions = new Hono<{ Bindings: Bindings }>();
+export const operatorSessions = new Hono<OperatorEnv>();
 operatorSessions.use("*", operatorAuth);
 operatorSessions.get("/:id", async (c) => {
   const detail = await readSession(
     c.env.DB,
     c.req.param("id"),
-    operatorOwnerId,
+    c.var.operatorUserId,
   );
   return detail ? c.json(detail) : c.notFound();
 });

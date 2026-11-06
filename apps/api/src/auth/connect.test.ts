@@ -57,6 +57,11 @@ test("protects the device code and requires a same-origin POST to change connect
     ).status,
     403,
   );
+  const unauthenticated = { method: "POST", headers: { Origin: origin } };
+  assert.equal(
+    (await app.request(path + "/start", unauthenticated, env)).status,
+    401,
+  );
   assert.equal(starts, 0);
 
   const headers = { Cookie: cookie, Origin: origin };
@@ -72,6 +77,11 @@ test("protects the device code and requires a same-origin POST to change connect
   assert.equal(pending.status, 200);
   assert.equal(pending.headers.get("Cache-Control"), "private, no-store");
   assert.match(await pending.text(), /MY&lt;CODE/);
+  assert.equal(
+    (await app.request(path + "/disconnect", unauthenticated, env)).status,
+    401,
+  );
+  assert.equal(status.state, "pending");
   assert.equal(
     (await app.request(path + "/disconnect", { method: "POST", headers }, env))
       .status,

@@ -1,5 +1,7 @@
+import { stageRunPublication } from "../d1/run-publication.ts";
 import {
   pendingPublication,
+  publicationRecoveryMs,
   type PendingPublication,
 } from "../../application/runs/publication.ts";
 import { GitHubApp } from "../github/app.ts";
@@ -153,6 +155,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
       accessVersion,
       connectionVersion: lease.connectionVersion,
     });
+  }
+
+  async stagePublication(
+    runId: string,
+    bearer: string,
+    work: PendingPublication,
+  ) {
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (
+      !lease ||
+      lease.runId !== runId ||
+      lease.expiresAt <= Date.now() ||
+      !matchRunLease(await hashRunLease(bearer), lease.digest)
+    )
+      return false;
+    return stageRunPublication(this.env.DB, runId, work);
   }
 
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
@@ -346,13 +364,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       events: status.events,
       ...status.publication,
     };
-    await this.env.DB.prepare(
-      `UPDATE runs SET step_state = json_set(coalesce(step_state, '{}'), '$.pendingPublication', json(?))
-       WHERE id = ? AND status = 'running'`,
-    )
-      .bind(JSON.stringify(pendingWork), runId)
-      .run();
-    return this.publish(runId, target, deadlineAt, pendingWork);
+    // An older Runner may report a pushed commit without a checkpoint.
+    if (!(await stageRunPublication(this.env.DB, runId, pendingWork)))
+      return { status: "failed", errorCode: "repository_unavailable" } as const;
+    return { status: "running" } as const;
   }
 
   private async publish(
@@ -367,11 +382,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
         status: "failed",
         errorCode: "publication_unconfirmed",
       } as const;
-    const url = await github.publish(target, runId, work, deadlineAt);
+    const url = await github.publish(
+      target,
+      runId,
+      work,
+      deadlineAt + publicationRecoveryMs,
+    );
     if (!url)
       return {
         status: "failed",
-        errorCode: "deadline_exceeded",
+        errorCode: "publication_unconfirmed",
         events: work.events,
       } as const;
     return {

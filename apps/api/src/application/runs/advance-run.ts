@@ -6,7 +6,11 @@ import {
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
-import { pendingPublication } from "./publication.ts";
+import {
+  pendingPublication,
+  publicationRecoveryMs,
+  type PendingPublication,
+} from "./publication.ts";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunInput = {
@@ -87,8 +91,8 @@ export async function advanceRun(
     parseJson(run.executionContext),
   );
   let outcome: RunnerStatus | RunOutcome;
-  const reconciling = !claimed && Boolean(pendingPublication(run.stepState));
-  if (run.deadlineAt <= Date.now() && !reconciling) {
+  let pending = claimed ? null : pendingPublication(run.stepState);
+  if (claimed && run.deadlineAt <= Date.now()) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (!context.success) {
     outcome = { status: "failed", errorCode: "invalid_execution_context" };
@@ -97,20 +101,25 @@ export async function advanceRun(
   } else {
     outcome = await driver
       .poll(runId, context.output, run.deadlineAt, run.stepState)
-      .catch(() =>
-        reconciling && run.deadlineAt <= Date.now()
-          ? {
-              status: "failed" as const,
-              errorCode: "publication_unconfirmed" as const,
-            }
-          : { status: "running" as const },
-      );
+      .catch(() => ({ status: "running" as const }));
   }
 
-  if (outcome.status === "running" && run.deadlineAt > Date.now()) {
-    const nextActionAt = Math.min(run.deadlineAt, Date.now() + 1_500);
-    await store.schedule(runId, nextActionAt);
-    return { status: "running", nextActionAt };
+  if (
+    !pending &&
+    !claimed &&
+    (outcome.status !== "running" || Date.now() >= run.deadlineAt)
+  ) {
+    // The Runner can checkpoint, then lose its response or container during this poll.
+    pending = pendingPublication((await store.load(runId))?.stepState ?? null);
+    if (pending) outcome = { status: "running" };
+  }
+  const recoveryDeadline = run.deadlineAt + publicationRecoveryMs;
+  const pollDeadline = pending ? recoveryDeadline : run.deadlineAt;
+  if (outcome.status === "running" && pollDeadline > Date.now()) {
+    return scheduleNext(store, runId, pollDeadline);
+  }
+  if (outcome.status === "running" && pending) {
+    outcome = { status: "failed", errorCode: "publication_unconfirmed" };
   }
 
   const status = await storeOutcome(
@@ -118,9 +127,21 @@ export async function advanceRun(
     runId,
     run.deadlineAt,
     outcome,
+    pending,
     writeArtifacts,
   );
+  if (status === "running") return scheduleNext(store, runId, recoveryDeadline);
   return status === "succeeded" || status === "failed" ? { status } : undefined;
+}
+
+async function scheduleNext(
+  store: RunStore,
+  runId: string,
+  deadlineAt: number,
+): Promise<RunProgress> {
+  const nextActionAt = Math.min(deadlineAt, Date.now() + 1_500);
+  await store.schedule(runId, nextActionAt);
+  return { status: "running", nextActionAt };
 }
 
 async function dispatchNewRun(
@@ -149,6 +170,7 @@ async function storeOutcome(
   runId: string,
   deadlineAt: number,
   result: RunnerStatus | RunOutcome,
+  pending: PendingPublication | null,
   writeArtifacts?: WriteRunArtifacts,
 ) {
   let outcome =
@@ -168,7 +190,17 @@ async function storeOutcome(
   const unconfirmed =
     outcome.status === "failed" &&
     outcome.errorCode === "publication_unconfirmed";
-  if (finishedAt >= deadlineAt && !published && !unconfirmed) {
+  const terminalEvent =
+    outcome.status === "succeeded" ? "job_succeeded" : "job_failed";
+  const finishedBeforeDeadline = outcome.events?.some(
+    (event) => event.type === terminalEvent && event.at < deadlineAt,
+  );
+  if (
+    finishedAt >= deadlineAt &&
+    !finishedBeforeDeadline &&
+    !published &&
+    !unconfirmed
+  ) {
     outcome = {
       status: "failed",
       errorCode: "deadline_exceeded",
@@ -183,12 +215,21 @@ async function storeOutcome(
           : { status: outcome.status };
       await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
     } catch {
-      if (!published)
+      if (outcome.status === "succeeded" && !published)
         outcome = { status: "failed", errorCode: "artifact_write_failed" };
     }
   }
   if (outcome.status === "failed") {
-    return failRun(store, runId, outcome.errorCode, finishedAt);
+    const result =
+      pending && outcome.errorCode === "publication_unconfirmed"
+        ? JSON.stringify({
+            version: 1,
+            kind: "publication_unconfirmed",
+            branch: pending.branch,
+            sha: pending.sha,
+          })
+        : null;
+    return failRun(store, runId, outcome.errorCode, finishedAt, result);
   }
 
   const storedResult = JSON.stringify({
@@ -201,6 +242,9 @@ async function storeOutcome(
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))
       return "succeeded";
   } catch {
+    if (published && Date.now() < deadlineAt + publicationRecoveryMs) {
+      return "running";
+    }
     return failRun(
       store,
       runId,

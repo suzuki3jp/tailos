@@ -15,6 +15,11 @@ export async function runInGitWorkspace(
   signal: AbortSignal,
   work: (cwd: string) => Promise<string>,
   remote = `https://github.com/${checkout.repository}.git`,
+  beforePush?: (work: {
+    branch: string;
+    sha: string;
+    reply: string;
+  }) => Promise<void>,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
   const metadata = await mkdtemp(
     join(process.env.MEGURI_GIT_STATE_DIR ?? tmpdir(), "meguri-git-"),
@@ -121,6 +126,8 @@ export async function runInGitWorkspace(
     ]);
     if (!changedPaths) return { reply, publication: { kind: "no_changes" } };
     const sha = await git(["rev-parse", "HEAD"]);
+    await beforePush?.({ branch: checkout.branch, sha, reply });
+    signal.throwIfAborted();
     await git(
       ["push", "--quiet", remote, `${sha}:refs/heads/${checkout.branch}`],
       true,

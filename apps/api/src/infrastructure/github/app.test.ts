@@ -121,13 +121,11 @@ test("reuses the pull request after a lost response and never publishes a differ
   );
 
   await expect(
-    github.publish(target, runId, { kind: "pushed", branch: "main", sha }),
+    github.publish(target, runId, { branch: "main", sha }),
   ).rejects.toThrow(/Unexpected work branch/);
-  await expect(
-    github.publish(target, runId, { kind: "pushed", branch, sha }),
-  ).rejects.toThrow(/Response lost/);
-  expect(
-    await github.publish(target, runId, { kind: "pushed", branch, sha }),
-  ).toBe(pullUrl);
+  await expect(github.publish(target, runId, { branch, sha })).rejects.toThrow(
+    /Response lost/,
+  );
+  expect(await github.publish(target, runId, { branch, sha })).toBe(pullUrl);
   expect(created).toBe(1);
 });

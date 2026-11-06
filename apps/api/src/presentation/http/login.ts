@@ -35,9 +35,9 @@ export function createLoginRoutes(
     const signedIn = await getOperatorSession(c.env, c.req.raw.headers, auth);
     c.header(
       "Content-Security-Policy",
-      "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      `default-src 'none'; form-action 'self'${signedIn ? "" : " https://github.com"}; base-uri 'none'; frame-ancestors 'none'`,
     );
-    c.header("Referrer-Policy", "no-referrer");
+    c.header("Referrer-Policy", "same-origin");
     const body = jsx(
       "main",
       null,

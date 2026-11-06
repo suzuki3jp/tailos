@@ -86,6 +86,19 @@ test("GitHub login authenticates the configured account and persists only the Me
     );
 
   expect((await app.request(origin + "/login")).status).toBe(404);
+  const page = await request("/login");
+  expect(page.headers.get("Referrer-Policy")).toBe("same-origin");
+  expect(page.headers.get("Content-Security-Policy")).toContain(
+    "form-action 'self' https://github.com;",
+  );
+  expect(
+    (
+      await request("/login", {
+        method: "POST",
+        headers: { Origin: "null" },
+      })
+    ).status,
+  ).toBe(403);
   expect(
     (
       await request("/login", {
@@ -111,6 +124,12 @@ test("GitHub login authenticates the configured account and persists only the Me
   expect(granted.headers.get("Location")).toBe("/login");
   expect(granted.headers.get("Cache-Control")).toBe("private, no-store");
   const sessionCookie = cookieHeader(granted);
+  const signedInPage = await request("/login", {
+    headers: { Cookie: sessionCookie },
+  });
+  expect(signedInPage.headers.get("Content-Security-Policy")).toContain(
+    "form-action 'self';",
+  );
   assert(
     granted.headers
       .getSetCookie()

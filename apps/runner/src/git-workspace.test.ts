@@ -49,6 +49,7 @@ test("pushes changes to the assigned branch without changing the base ref or sto
   const remote = pathToFileURL(repository).href;
   const signal = AbortSignal.timeout(15_000);
 
+  let stagedSha: string | undefined;
   const result = await runInGitWorkspace(
     checkout,
     signal,
@@ -70,9 +71,18 @@ test("pushes changes to the assigned branch without changing the base ref or sto
       return "Edited README";
     },
     remote,
+    async ({ branch: stagedBranch, sha, reply }) => {
+      expect(stagedBranch).toBe(branch);
+      stagedSha = sha;
+      expect(reply).toBe("Edited README");
+      expect(() =>
+        git(repository, "show-ref", "--verify", `refs/heads/${branch}`),
+      ).toThrow();
+    },
   );
   expect(result.reply).toBe("Edited README");
   assert(result.publication.kind === "pushed");
+  expect(stagedSha).toBe(result.publication.sha);
   expect(git(repository, "rev-parse", "refs/heads/main")).toBe(baseSha);
   expect(git(repository, "rev-parse", `refs/heads/${branch}`)).toBe(
     result.publication.sha,

@@ -242,7 +242,7 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
   ).toBe(1);
 });
 
-test("reconciles a published pull request after the deadline without restarting the runner", async (t) => {
+test("reconciles a late publication checkpoint and retries saving the published reply", async (t) => {
   const db = await createTestDb(t);
   const { runId } = await admitTrigger(db, {
     ...request,
@@ -269,19 +269,28 @@ test("reconciles a published pull request after the deadline without restarting 
     events: [],
   };
   await db
-    .prepare("UPDATE runs SET status = 'running', step_state = ? WHERE id = ?")
-    .bind(
-      JSON.stringify({ version: 1, pendingPublication: publication }),
-      runId,
-    )
+    .prepare("UPDATE runs SET status = 'running' WHERE id = ?")
+    .bind(runId)
     .run();
-  const result = await advanceRun(db, runId, {
+  let polls = 0;
+  const driver: RunnerDriver = {
     async start() {
       throw new Error("must not restart");
     },
     async poll(id, _context, deadline, stepState) {
       expect(id).toBe(runId);
       assert(deadline < Date.now());
+      if (++polls === 1) {
+        expect(stepState).toBe(null);
+        await db
+          .prepare("UPDATE runs SET step_state = ? WHERE id = ?")
+          .bind(
+            JSON.stringify({ version: 1, pendingPublication: publication }),
+            runId,
+          )
+          .run();
+        throw new Error("The response was lost");
+      }
       expect(stepState ?? "").toMatch(/pendingPublication/);
       return {
         status: "succeeded",
@@ -295,12 +304,56 @@ test("reconciles a published pull request after the deadline without restarting 
         },
       };
     },
+  };
+  expect(await advanceRun(db, runId, driver)).toMatchObject({
+    status: "running",
   });
-  expect(result).toStrictEqual({ status: "succeeded" });
+
+  await db
+    .prepare(`CREATE TRIGGER reject_agent_reply BEFORE INSERT ON session_messages
+    WHEN NEW.author_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'test failure'); END`)
+    .run();
+  expect(await advanceRun(db, runId, driver)).toMatchObject({
+    status: "running",
+  });
+  await db.prepare("DROP TRIGGER reject_agent_reply").run();
+  expect(await advanceRun(db, runId, driver)).toStrictEqual({
+    status: "succeeded",
+  });
+  expect(
+    await db
+      .prepare("SELECT body FROM session_messages WHERE run_id = ?")
+      .bind(runId)
+      .first("body"),
+  ).toBe(publication.reply);
   const stored = await db
     .prepare("SELECT result, step_state FROM runs WHERE id = ?")
     .bind(runId)
     .first();
   expect(String(stored?.result)).toMatch(/pull\/5/);
   expect(stored?.step_state).toBe('{"version":1}');
+});
+
+test("recovers a completed job when the next alarm arrives after its deadline", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const deadline = Date.now() - 1;
+  await db
+    .prepare("UPDATE runs SET status = 'running', deadline_at = ? WHERE id = ?")
+    .bind(deadline, runId)
+    .run();
+
+  const result = await advanceRun(db, runId, {
+    async start() {
+      throw new Error("must not restart");
+    },
+    async poll() {
+      return {
+        status: "succeeded",
+        reply: "Finished in time",
+        events: [{ type: "job_succeeded", at: deadline - 1 }],
+      };
+    },
+  });
+  expect(result).toStrictEqual({ status: "succeeded" });
 });

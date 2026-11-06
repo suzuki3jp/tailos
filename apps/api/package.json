@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy",
-    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

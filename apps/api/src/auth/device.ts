@@ -13,7 +13,9 @@ export interface DeviceAuthAdapter<Credentials> {
   complete(challenge: DeviceChallenge): Promise<Credentials | null>;
 }
 
-export const defaultCodexConnection = "codex/default";
+export function codexConnectionId(userId: string) {
+  return `codex/${userId}`;
+}
 
 export type ConnectionStatus =
   | { state: "disconnected" | "connected" | "expired" | "failed" }

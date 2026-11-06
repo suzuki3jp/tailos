@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -80,7 +80,7 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
       },
     }),
   );
-  t.after(() => worker.dispose());
+  t.onTestFinished(() => worker.dispose());
 
   const rpc = async (action: string, decision?: string) => {
     const response = await worker.dispatchFetch("http://worker", {

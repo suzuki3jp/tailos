@@ -1,28 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { createTestDb } from "../../infrastructure/d1/testing.ts";
 import app from "../../bootstrap/http.ts";
 
 test("a configured operator can create and read a standalone session in message order", async (t) => {
-  const worker = new Miniflare(
-    convertV4MiniflareOptions({
-      modules: true,
-      script: "export default { fetch: () => new Response(null) }",
-      compatibilityDate: "2026-10-06",
-      d1Databases: ["DB"],
-    }),
-  );
-  t.onTestFinished(() => worker.dispose());
-  const db = await worker.getD1Database("DB");
-  const migration = await readFile(
-    new URL("../../../migrations/0000_initial.sql", import.meta.url),
-    "utf8",
-  );
-  await db.batch(
-    migration
-      .split("--> statement-breakpoint")
-      .map((statement) => db.prepare(statement)),
-  );
+  const db = await createTestDb(t);
 
   const token = "local-test-credential";
   const headers = {

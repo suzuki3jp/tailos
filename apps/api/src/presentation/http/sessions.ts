@@ -2,11 +2,12 @@ import {
   createSession,
   type SessionStore,
 } from "../../application/sessions/create-session.ts";
-import type { Bindings } from "../../bindings.ts";
-import { smokeAuth, smokeOwnerId } from "./smoke-auth.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
+
+import { smokeAuth, smokeOwnerId } from "./smoke-auth.ts";
+import { type Bindings } from "../../bindings.ts";
 
 const sessionInput = v.strictObject({
   messages: v.pipe(
@@ -20,6 +21,7 @@ export function createSessionRoutes<Detail>(
   store: (env: Bindings) => SessionStore<Detail>,
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
+
   sessionRoutes.use("*", smokeAuth);
 
   sessionRoutes.post("/", bodyLimit({ maxSize: 128 * 1024 }), async (c) => {

@@ -5,6 +5,7 @@
 ## Cloudflare
 
 - D1 の `meguri` と R2 の `meguri-run-artifacts` は、対象アカウントに同名のものがあれば再利用する。新しい R2 バケットは非公開で作成する。
+- 初回以降に新規作成の警告が出た場合は、対象アカウントと Wrangler のバインディング名を確認する。既存リソースの名前や対象アカウントが変わると、デプロイ先が空のリソースに切り替わることがある。
 - Cloudflare API トークンには、対象アカウントの Workers と Containers を更新できる権限、`D1 Write`、`Workers R2 Storage Read` と `Workers R2 Storage Write`、`suzuki3.jp` の Worker ルートを設定できる権限を付ける。
 - `meguri.suzuki3.jp` が prototype の Worker に紐づいている場合は、本実装をデプロイする前に古いカスタムドメインの紐付けを解除する。
 

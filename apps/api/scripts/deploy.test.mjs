@@ -73,6 +73,7 @@ test("provisions resources before migrating and deploying, then removes runtime 
     MEGURI_TEST_CAPTURE: capture,
     CLOUDFLARE_ACCOUNT_ID: "test-account",
     CLOUDFLARE_API_TOKEN: "test-token",
+    GITHUB_ACTIONS: "true",
     MEGURI_PROJECTS: "[]",
     MEGURI_OPERATOR_TOKEN: "test-operator",
     CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
@@ -85,6 +86,8 @@ test("provisions resources before migrating and deploying, then removes runtime 
     });
   const result = runDeploy();
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /::warning::Created an empty D1 database/);
+  assert.match(result.stdout, /::warning::Created an empty R2 bucket/);
   const readCalls = () =>
     readFileSync(capture, "utf8").trim().split("\n").map(JSON.parse);
   const calls = readCalls();
@@ -125,6 +128,7 @@ test("provisions resources before migrating and deploying, then removes runtime 
 
   const redeployed = runDeploy();
   assert.equal(redeployed.status, 0, redeployed.stderr);
+  assert.doesNotMatch(redeployed.stdout, /::warning::/);
   const repeated = readCalls().slice(calls.length);
   assert.deepEqual(
     repeated.map(({ command }) => command),

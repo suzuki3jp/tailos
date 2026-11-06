@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, test, vi } from "vitest";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 import { ensureD1Database, ensureR2Bucket } from "./provision.mjs";
 
 const database = {
@@ -61,26 +65,28 @@ const found = () =>
 const missing = () =>
   Response.json({ errors: [{ code: 10006 }] }, { status: 404 });
 
-test("reuses the exact R2 bucket name in the configured jurisdiction", async (t) => {
-  t.mock.method(globalThis, "fetch", (url, { headers, redirect }) => {
-    assert.equal(
-      url,
-      "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts",
-    );
-    assert.equal(headers.Authorization, "Bearer test-token");
-    assert.equal(headers["cf-r2-jurisdiction"], "eu");
-    assert.equal(redirect, "error");
-    return Promise.resolve(found());
-  });
+test("reuses the exact R2 bucket name in the configured jurisdiction", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(
+    (url, { headers, redirect }) => {
+      assert.equal(
+        url,
+        "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts",
+      );
+      assert.equal(headers.Authorization, "Bearer test-token");
+      assert.equal(headers["cf-r2-jurisdiction"], "eu");
+      assert.equal(redirect, "error");
+      return Promise.resolve(found());
+    },
+  );
   await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, () => {
     assert.fail("Existing bucket must be reused");
   });
 });
 
 for (const concurrent of [false, true]) {
-  test(`accepts ${concurrent ? "a concurrent" : "the first"} R2 creation`, async (t) => {
+  test(`accepts ${concurrent ? "a concurrent" : "the first"} R2 creation`, async () => {
     let created = false;
-    t.mock.method(globalThis, "fetch", () =>
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(created ? found() : missing()),
     );
     await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, (args) => {
@@ -101,8 +107,8 @@ for (const concurrent of [false, true]) {
 }
 
 for (const status of [403, 404, 500]) {
-  test(`does not create an R2 bucket after an unexpected HTTP ${status}`, async (t) => {
-    t.mock.method(globalThis, "fetch", () =>
+  test(`does not create an R2 bucket after an unexpected HTTP ${status}`, async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(Response.json({ errors: [{ code: 1000 }] }, { status })),
     );
     await assert.rejects(

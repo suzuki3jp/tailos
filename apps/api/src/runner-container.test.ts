@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { test } from "node:test";
+import { test, vi } from "vitest";
 
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -18,7 +18,10 @@ const { RunnerContainer } = await import("./runner-container.ts").finally(() =>
 );
 
 test("a failed container cleanup preserves the runner health result", async (t) => {
-  const warn = t.mock.method(console, "warn", () => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  t.onTestFinished(() => {
+    warn.mockRestore();
+  });
   const ctx = {
     container: {
       images: { runner: "runner-image" },
@@ -40,5 +43,5 @@ test("a failed container cleanup preserves the runner health result", async (t) 
   );
 
   assert.equal(await runner.checkHealth(), true);
-  assert.equal(warn.mock.callCount(), 1);
+  assert.equal(warn.mock.calls.length, 1);
 });

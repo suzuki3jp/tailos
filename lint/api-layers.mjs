@@ -19,6 +19,7 @@
  * The rule checks imports, re-exports, and dynamic imports. For example,
  * importing a D1 adapter directly from a route is an error. Tests and
  * their testing.ts fixtures can cross layers to exercise real adapters.
+ * Production modules cannot import those test files or fixtures.
  */
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,7 @@ const layers = new Set([
 ]);
 const sdk =
   /^(?:@cloudflare\/|cloudflare:|drizzle-orm(?:\/|$)|@better-auth\/|better-auth(?:\/|$)|jose(?:\/|$))/;
+const testModule = /(?:\.test\.[cm]?[jt]sx?|[/\\]testing\.ts)$/;
 const applicationPackage = /^(?:@meguri\/core(?:\/|$)|valibot$)/;
 
 function area(path) {
@@ -57,11 +59,7 @@ export default {
       create(context) {
         const filename = resolve(context.filename);
         const from = area(filename);
-        if (
-          !from ||
-          /(?:\.test\.[cm]?[jt]sx?|[/\\]testing\.ts)$/.test(filename)
-        )
-          return {};
+        if (!from || testModule.test(filename)) return {};
 
         function report(node, message) {
           context.report({ node, message });
@@ -75,10 +73,17 @@ export default {
               report(node, "Use a static import path in API layers.");
             return;
           }
-          if (from === "bootstrap") return;
-
           if (specifier.startsWith(".")) {
-            const to = area(resolve(dirname(filename), specifier));
+            const target = resolve(dirname(filename), specifier);
+            if (testModule.test(target)) {
+              report(
+                node,
+                `Production API modules cannot import test modules (${specifier}).`,
+              );
+              return;
+            }
+            if (from === "bootstrap") return;
+            const to = area(target);
             if (
               to === "bindings" &&
               typeOnly &&

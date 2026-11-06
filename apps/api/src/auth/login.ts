@@ -43,6 +43,7 @@ export function createLoginAuth(env: Bindings) {
     }),
     advanced: { database: { generateId: "uuid" } },
     telemetry: { enabled: false },
+    session: { disableSessionRefresh: true },
     socialProviders: {
       github: {
         clientId,
@@ -95,8 +96,11 @@ export async function findOperatorUserId(env: Bindings) {
   return account?.userId ?? null;
 }
 
-export async function getOperatorSession(env: Bindings, headers: Headers) {
-  const auth = createLoginAuth(env);
+export async function getOperatorSession(
+  env: Bindings,
+  headers: Headers,
+  auth = createLoginAuth(env),
+) {
   if (!auth) return null;
   const session = await auth.api.getSession({ headers });
   if (!session || session.user.id !== (await findOperatorUserId(env)))
@@ -110,16 +114,17 @@ const loginOrigin = createMiddleware<{ Bindings: Bindings }>(
   async (c, next) => {
     const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
     if (!origin || new URL(c.req.url).origin !== origin) return c.notFound();
-    c.header("Cache-Control", "private, no-store");
     if (c.req.method === "POST" && c.req.header("Origin") !== origin)
       return c.text("Forbidden", 403);
-    return next();
+    await next();
+    c.header("Cache-Control", "private, no-store");
   },
 );
 
 loginRoutes.get(loginPath, loginOrigin, async (c) => {
-  if (!c.env.BETTER_AUTH_SECRET) return c.notFound();
-  const signedIn = await getOperatorSession(c.env, c.req.raw.headers);
+  const auth = createLoginAuth(c.env);
+  if (!auth) return c.notFound();
+  const signedIn = await getOperatorSession(c.env, c.req.raw.headers, auth);
   c.header(
     "Content-Security-Policy",
     "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",

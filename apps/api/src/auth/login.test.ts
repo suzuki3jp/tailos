@@ -65,6 +65,7 @@ test("GitHub login authenticates the configured account and persists only the Me
       headers: { Origin: origin },
     });
     assert.equal(response.status, 303, await response.clone().text());
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store");
     const url = new URL(response.headers.get("Location") ?? "");
     assert.equal(url.origin, "https://github.com");
     assert.equal(url.searchParams.get("redirect_uri"), callback);
@@ -108,6 +109,7 @@ test("GitHub login authenticates the configured account and persists only the Me
   const login = await start();
   const granted = await finish(login);
   assert.equal(granted.headers.get("Location"), "/login");
+  assert.equal(granted.headers.get("Cache-Control"), "private, no-store");
   const sessionCookie = cookieHeader(granted);
   assert.ok(
     granted.headers
@@ -149,6 +151,7 @@ test("GitHub login authenticates the configured account and persists only the Me
     headers: { Origin: origin, Cookie: sessionCookie },
   });
   assert.equal(logout.status, 303);
+  assert.equal(logout.headers.get("Cache-Control"), "private, no-store");
   assert.equal(
     await auth.api.getSession({
       headers: new Headers({ Cookie: sessionCookie }),

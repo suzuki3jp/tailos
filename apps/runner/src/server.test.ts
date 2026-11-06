@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { test, type TestContext } from "node:test";
+import { test, type TestContext } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
 import type { AgentAdapter } from "./agent.ts";
 import { createRunnerServer } from "./server.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
   const server = createRunnerServer(agent);
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  t.onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
 

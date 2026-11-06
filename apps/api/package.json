@@ -7,7 +7,7 @@
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "pnpm --filter @meguri/runner run build && node scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
-    "test": "node --experimental-strip-types --test 'src/**/*.test.ts' 'scripts/*.test.mjs'",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

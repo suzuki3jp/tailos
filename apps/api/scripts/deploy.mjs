@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -92,6 +93,21 @@ config.vars = {
   MEGURI_GH_APP_ID: appId,
   PROJECTS: JSON.stringify(checkedProjects.output),
 };
+
+// Build before migrating. The build does not need any deployment credentials.
+const build = spawnSync(
+  "pnpm",
+  ["--filter", "@meguri/runner", "run", "build"],
+  {
+    env: { PATH: env.PATH },
+    stdio: "inherit",
+  },
+);
+if (build.error || build.status !== 0) {
+  throw new Error("Runner bundle build failed before migration.", {
+    cause: build.error,
+  });
+}
 
 const path = `wrangler.deploy.${randomUUID()}.jsonc`;
 const secretDir = mkdtempSync(join(tmpdir(), "meguri-deploy-"));

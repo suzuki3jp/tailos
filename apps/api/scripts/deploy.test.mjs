@@ -55,6 +55,21 @@ function setup(t) {
   `,
   );
   chmodSync(wrangler, 0o700);
+  const pnpm = join(cwd, "pnpm");
+  writeFileSync(
+    pnpm,
+    `#!/usr/bin/env node
+    const fs = require("node:fs");
+    fs.appendFileSync("capture.ndjson", JSON.stringify({
+      command: process.argv.slice(2),
+      secretInEnvironment: Object.keys(process.env).some((name) =>
+        /^(CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|MEGURI_GITHUB_OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY|MEGURI_GH_APP_PRIVATE_KEY|MEGURI_GH_WEBHOOK_SECRET)$/.test(name),
+      ),
+    }) + "\\n");
+    if (fs.existsSync("fail-build")) process.exit(1);
+    `,
+  );
+  chmodSync(pnpm, 0o700);
 
   const fetchStub = join(cwd, "fetch.mjs");
   writeFileSync(
@@ -150,6 +165,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(calls.map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
     "look up R2",
+    ["--filter", "@meguri/runner", "run", "build"],
     ["d1", "migrations", "apply", "DB", "--remote"],
     [
       "deploy",
@@ -158,7 +174,8 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
       calls.at(-1).runtime.path,
     ],
   ]);
-  const [migration, published] = calls.slice(-2);
+  const [build, migration, published] = calls.slice(-3);
+  expect(build.secretInEnvironment).toBe(false);
   expect(migration.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.workers_dev).toBe(false);
@@ -202,4 +219,21 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(misconfigured.status).not.toBe(0);
   expect(misconfigured.stderr).toMatch(/GitHub projects require/);
   expect(readCalls().length).toBe(calls.length);
+});
+
+test("deploy never migrates when the Runner cannot build", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  for (const marker of ["database", "bucket", "fail-build"]) {
+    writeFileSync(join(cwd, marker), "");
+  }
+  const result = runDeploy();
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain(
+    "Runner bundle build failed before migration",
+  );
+  expect(readCalls().map(({ command }) => command)).toStrictEqual([
+    "d1 list --json",
+    "look up R2",
+    ["--filter", "@meguri/runner", "run", "build"],
+  ]);
 });

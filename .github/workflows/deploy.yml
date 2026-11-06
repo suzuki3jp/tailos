@@ -52,9 +52,6 @@ jobs:
           cache: true
       - run: pnpm install --frozen-lockfile
         if: steps.revision.outputs.deploy == 'true'
-      - name: Build Runner bundle
-        if: steps.revision.outputs.deploy == 'true'
-        run: pnpm --filter @meguri/runner run build
       - name: Deploy to Cloudflare
         if: steps.revision.outputs.deploy == 'true'
         run: pnpm --filter @meguri/api run deploy

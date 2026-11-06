@@ -55,6 +55,11 @@ export function ensureD1Database(name, wrangler) {
     throw new Error(
       `Wrangler created D1 database "${name}", but it was not found.`,
     );
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.log(
+      "::warning::Created an empty D1 database. Verify the deployment account and database name if this was unexpected.",
+    );
+  }
   return created;
 }
 

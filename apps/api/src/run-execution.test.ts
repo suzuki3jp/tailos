@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
 import { createTestDb } from "./db/testing.ts";
 import { executeRun } from "./run-execution.ts";

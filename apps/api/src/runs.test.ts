@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { createTestBindings } from "./db/testing.ts";
 import app from "./index.ts";
 import { smokeOwnerId } from "./internal.ts";

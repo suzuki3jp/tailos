@@ -5,13 +5,13 @@ import { loginRoutes } from "./auth/login.ts";
 import { refreshRoutes } from "./auth/refresh.ts";
 import { smokeAuth, type Bindings } from "./internal.ts";
 import { runRoutes } from "./runs.ts";
-import { operatorSessions, sessionRoutes } from "./sessions.ts";
+import { userSessionRoutes, sessionRoutes } from "./sessions.ts";
 import { triggerRoutes } from "./triggers.ts";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route("/connect", connectRoutes);
-app.route("/operator/sessions", operatorSessions);
+app.route("/sessions", userSessionRoutes);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
 app.route("/", loginRoutes);

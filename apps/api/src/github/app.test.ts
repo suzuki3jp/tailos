@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { test } from "node:test";
+import { test } from "vitest";
 import { GitHubApp, workBranchFor } from "./app.ts";
 
 const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })

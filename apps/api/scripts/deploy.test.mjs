@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 const deploy = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
@@ -23,7 +23,7 @@ const sourceConfig = new URL("../wrangler.jsonc", import.meta.url);
 
 function setup(t) {
   const cwd = mkdtempSync(join(tmpdir(), "meguri-test-deploy-"));
-  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  t.onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
   copyFileSync(sourceConfig, join(cwd, "wrangler.jsonc"));
   const wrangler = join(cwd, "wrangler");
   const capture = join(cwd, "capture.ndjson");

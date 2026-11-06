@@ -3,13 +3,13 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vitest";
 import { pathToFileURL } from "node:url";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
 test("pushes changes to the assigned branch without changing the base ref or storing credentials", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "meguri-git-test-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const repository = join(directory, "remote.git");
   const seed = join(directory, "seed");
   const git = (cwd: string, ...args: string[]) =>

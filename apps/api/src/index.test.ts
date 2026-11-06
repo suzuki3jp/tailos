@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import app from "./index.ts";
 
 test("the Worker serves the health endpoint", async () => {

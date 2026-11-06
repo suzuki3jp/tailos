@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test, type TestContext } from "node:test";
+import { test, type TestContext } from "vitest";
 import { fileURLToPath } from "node:url";
 import { codexAccessSchema } from "@meguri/core/runner";
 import * as v from "valibot";
@@ -96,7 +96,7 @@ async function createBroker(t: TestContext) {
       },
     }),
   );
-  t.after(() => worker.dispose());
+  t.onTestFinished(() => worker.dispose());
 
   return async (action: string, decision?: unknown) => {
     const response = await worker.dispatchFetch("http://worker", {

@@ -1,7 +1,6 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import { createTestDb } from "./db/testing.ts";
-import app from "./index.ts";
+import { expect, test } from "vitest";
+import { createTestDb } from "../../infrastructure/d1/testing.ts";
+import app from "../../bootstrap/http.ts";
 
 test("concurrent events coalesce, while redelivery stays bound after completion", async (t) => {
   const db = await createTestDb(t);
@@ -25,7 +24,7 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
       },
       env,
     );
-    assert.equal(response.status, 200);
+    expect(response.status).toBe(200);
     return response.json() as Promise<{
       sessionId: string;
       runId: string;
@@ -38,10 +37,10 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
     send("two"),
     send("one"),
   ]);
-  assert.equal(first.runId, second.runId);
-  assert.equal(first.sessionId, second.sessionId);
-  assert.deepEqual(duplicate, first);
-  assert.deepEqual([first.disposition, second.disposition].sort(), [
+  expect(first.runId).toBe(second.runId);
+  expect(first.sessionId).toBe(second.sessionId);
+  expect(duplicate).toStrictEqual(first);
+  expect([first.disposition, second.disposition].sort()).toStrictEqual([
     "coalesced",
     "started",
   ]);
@@ -53,24 +52,29 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
     (SELECT count(*) FROM runs) AS runs,
     (SELECT count(*) FROM trigger_events) AS events`)
     .first();
-  assert.deepEqual(counts, { sessions: 1, messages: 1, runs: 1, events: 2 });
+  expect(counts).toStrictEqual({
+    sessions: 1,
+    messages: 1,
+    runs: 1,
+    events: 2,
+  });
   const detail = await app.request(
     `/_internal/sessions/${first.sessionId}`,
     { headers },
     env,
   );
-  assert.equal(detail.status, 200);
+  expect(detail.status).toBe(200);
   const { messages } = await detail.json();
-  assert.equal(messages[0].body, "Implement the request");
+  expect(messages[0].body).toBe("Implement the request");
 
   await db
     .prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
     .bind(first.runId)
     .run();
-  assert.deepEqual(await send("one"), first);
+  expect(await send("one")).toStrictEqual(first);
   const next = await send("three");
-  assert.notEqual(next.runId, first.runId);
-  assert.notEqual(next.sessionId, first.sessionId);
-  assert.equal(next.disposition, "started");
-  assert.deepEqual(await send("two", "changed-target"), second);
+  expect(next.runId).not.toBe(first.runId);
+  expect(next.sessionId).not.toBe(first.sessionId);
+  expect(next.disposition).toBe("started");
+  expect(await send("two", "changed-target")).toStrictEqual(second);
 });

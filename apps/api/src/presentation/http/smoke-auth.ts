@@ -1,11 +1,6 @@
-import type { D1Database } from "@cloudflare/workers-types";
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
-
-export type Bindings = {
-  DB: D1Database;
-  MEGURI_TEST_TOKEN?: string;
-};
+import type { Bindings } from "../../bindings.ts";
 
 export const smokeOwnerId = "internal-smoke";
 

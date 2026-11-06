@@ -1,7 +1,6 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import { createTestDb } from "./db/testing.ts";
-import app from "./index.ts";
+import { assert, expect, test } from "vitest";
+import { createTestDb } from "../../infrastructure/d1/testing.ts";
+import app from "../../bootstrap/http.ts";
 
 test("a configured operator can create and read a standalone session in message order", async (t) => {
   const db = await createTestDb(t);
@@ -19,8 +18,8 @@ test("a configured operator can create and read a standalone session in message 
     body: JSON.stringify({ messages: ["First", "Second"] }),
   };
 
-  assert.equal((await app.request(path, payload, { DB: db })).status, 404);
-  assert.equal(
+  expect((await app.request(path, payload, { DB: db })).status).toBe(404);
+  expect(
     (
       await app.request(
         path,
@@ -28,52 +27,47 @@ test("a configured operator can create and read a standalone session in message 
         env,
       )
     ).status,
-    401,
-  );
-  assert.equal(
+  ).toBe(401);
+  expect(
     (await app.request(path, { ...payload, body: '{"messages":[]}' }, env))
       .status,
-    400,
-  );
-  assert.equal(
+  ).toBe(400);
+  expect(
     await db.prepare("SELECT COUNT(*) AS count FROM sessions").first("count"),
-    0,
-  );
+  ).toBe(0);
 
   const response = await app.request(path, payload, env);
-  assert.equal(response.status, 201);
+  expect(response.status).toBe(201);
   const created = await response.json();
-  assert.ok(created && typeof created === "object" && "id" in created);
+  assert(created && typeof created === "object" && "id" in created);
   const { id } = created;
-  assert.ok(typeof id === "string");
+  assert(typeof id === "string");
 
   const detail = await app.request(`${path}/${id}`, { headers }, env);
-  assert.equal(detail.status, 200);
+  expect(detail.status).toBe(200);
   const data = await detail.json();
-  assert.ok(
+  assert(
     data && typeof data === "object" && "session" in data && "messages" in data,
   );
   const { session, messages } = data;
-  assert.ok(
+  assert(
     session &&
       typeof session === "object" &&
       "projectId" in session &&
       "target" in session,
   );
-  assert.ok(Array.isArray(messages));
-  assert.equal(session.projectId, null);
-  assert.equal(session.target, null);
-  assert.deepEqual(
+  assert(Array.isArray(messages));
+  expect(session.projectId).toBe(null);
+  expect(session.target).toBe(null);
+  expect(
     messages.map((message: { body: string }) => message.body),
-    ["First", "Second"],
-  );
+  ).toStrictEqual(["First", "Second"]);
 
   await db
     .prepare("INSERT INTO sessions (id, owner_id, created_at) VALUES (?, ?, ?)")
     .bind("outside", "another-owner", 0)
     .run();
-  assert.equal(
-    (await app.request(`${path}/outside`, { headers }, env)).status,
+  expect((await app.request(`${path}/outside`, { headers }, env)).status).toBe(
     404,
   );
 });

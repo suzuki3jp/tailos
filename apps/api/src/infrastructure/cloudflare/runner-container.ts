@@ -5,8 +5,8 @@ import {
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
-import type { Bindings } from "./internal.ts";
-import { executeRun } from "./run-execution.ts";
+import type { Bindings } from "../../bindings.ts";
+import { executeRun } from "../d1/run-execution.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 

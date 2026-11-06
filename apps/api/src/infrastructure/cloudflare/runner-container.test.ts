@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { RunnerContainer } from "./runner-container.ts";
 
@@ -34,6 +33,6 @@ test("a failed container cleanup preserves the runner health result", async (t) 
     {} as ConstructorParameters<typeof RunnerContainer>[1],
   );
 
-  assert.equal(await runner.checkHealth(), true);
-  assert.equal(warn.mock.calls.length, 1);
+  expect(await runner.checkHealth()).toBe(true);
+  expect(warn.mock.calls.length).toBe(1);
 });

@@ -1,10 +1,9 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import { createTestBindings } from "./db/testing.ts";
-import app from "./index.ts";
-import { smokeOwnerId } from "./internal.ts";
-import { executeRun } from "./run-execution.ts";
-import { admitTrigger } from "./trigger-admission.ts";
+import { expect, test } from "vitest";
+import { createTestBindings } from "../../infrastructure/d1/testing.ts";
+import app from "../../bootstrap/http.ts";
+import { smokeOwnerId } from "./smoke-auth.ts";
+import { executeRun } from "../../infrastructure/d1/run-execution.ts";
+import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
 
 const trigger = {
   source: "test",
@@ -59,40 +58,37 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
   const path = (id: string, file: string) =>
     `/_internal/runs/${id}/artifacts/${file}`;
   const headers = { Authorization: "Bearer local-smoke" };
-  assert.equal(
+  expect(
     (await app.request(path(runId, "result.json"), undefined, env)).status,
-    401,
-  );
-  assert.equal(
+  ).toBe(401);
+  expect(
     (await app.request(path(outside.runId, "result.json"), { headers }, env))
       .status,
-    404,
-  );
-  assert.equal(
+  ).toBe(404);
+  expect(
     (await app.request(path(runId, "execution.json"), { headers }, env)).status,
-    404,
-  );
+  ).toBe(404);
 
   const events = await app.request(
     path(runId, "events.ndjson"),
     { headers },
     env,
   );
-  assert.equal(events.status, 200);
-  assert.equal(events.headers.get("Cache-Control"), "private, no-store");
+  expect(events.status).toBe(200);
+  expect(events.headers.get("Cache-Control")).toBe("private, no-store");
   const log = await events.text();
-  assert.match(log, /job_succeeded/);
-  assert.doesNotMatch(log, /private-/);
+  expect(log).toMatch(/job_succeeded/);
+  expect(log).not.toMatch(/private-/);
 
   for (const [id, expected] of [
     [runId, { status: "succeeded" }],
     [failed.runId, { status: "failed", errorCode: "agent_failed" }],
   ] as const) {
     const result = await app.request(path(id, "result.json"), { headers }, env);
-    assert.equal(result.status, 200);
+    expect(result.status).toBe(200);
     const body = await result.text();
-    assert.doesNotMatch(body, /private-/);
-    assert.deepEqual(JSON.parse(body).result, expected);
+    expect(body).not.toMatch(/private-/);
+    expect(JSON.parse(body).result).toStrictEqual(expected);
   }
 });
 
@@ -124,8 +120,8 @@ test("an unreadable artifact returns a fixed error without exposing its contents
     },
     env,
   );
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: "artifact_unreadable" });
+  expect(response.status).toBe(502);
+  expect(await response.json()).toStrictEqual({ error: "artifact_unreadable" });
 });
 
 test("the public artifact result reflects D1 if persisting the agent reply fails", async (t) => {
@@ -154,9 +150,9 @@ test("the public artifact result reflects D1 if persisting the agent reply fails
     },
     env,
   );
-  assert.equal(response.status, 200);
+  expect(response.status).toBe(200);
   const artifact = JSON.parse(await response.text());
-  assert.deepEqual(artifact.result, {
+  expect(artifact.result).toStrictEqual({
     status: "failed",
     errorCode: "persistence_failed",
   });

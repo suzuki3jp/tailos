@@ -1,9 +1,8 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { assert, expect, test } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
-import { createTestDb } from "./db/testing.ts";
-import { executeRun } from "./run-execution.ts";
-import { admitTrigger } from "./trigger-admission.ts";
+import { createTestDb } from "../../infrastructure/d1/testing.ts";
+import { executeRun } from "../../infrastructure/d1/run-execution.ts";
+import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
 
 const request = {
   source: "test",
@@ -21,15 +20,14 @@ test("claims a run once and stores the agent reply with its terminal result", as
   let dispatched = 0;
   const run = async (job: RunnerJob) => {
     dispatched++;
-    assert.equal(job.prompt, request.prompt);
-    assert.equal(job.runId, runId);
-    assert.equal(
+    expect(job.prompt).toBe(request.prompt);
+    expect(job.runId).toBe(runId);
+    expect(
       await db
         .prepare("SELECT status FROM runs WHERE id = ?")
         .bind(runId)
         .first("status"),
-      "running",
-    );
+    ).toBe("running");
     return { status: "succeeded" as const, reply: "All done", events: [] };
   };
 
@@ -37,10 +35,10 @@ test("claims a run once and stores the agent reply with its terminal result", as
     executeRun(db, runId, run),
     executeRun(db, runId, run),
   ]);
-  assert.ok(statuses.includes("succeeded"));
-  assert.equal(dispatched, 1);
-  assert.equal(await executeRun(db, runId, run), "succeeded");
-  assert.equal(dispatched, 1);
+  assert(statuses.includes("succeeded"));
+  expect(dispatched).toBe(1);
+  expect(await executeRun(db, runId, run)).toBe("succeeded");
+  expect(dispatched).toBe(1);
 
   const messages = await db
     .prepare(
@@ -48,7 +46,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
     )
     .bind(sessionId)
     .all();
-  assert.deepEqual(messages.results, [
+  expect(messages.results).toStrictEqual([
     { seq: 1, author_kind: "automation", body: "Fix the issue", run_id: null },
     { seq: 2, author_kind: "agent", body: "All done", run_id: runId },
   ]);
@@ -56,7 +54,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
     .prepare("SELECT status, result FROM runs WHERE id = ?")
     .bind(runId)
     .first();
-  assert.deepEqual(record, {
+  expect(record).toStrictEqual({
     status: "succeeded",
     result: '{"version":1,"kind":"completed"}',
   });
@@ -76,21 +74,19 @@ test("records an expired or invalid run without starting a runner", async (t) =>
     [invalid.runId, "invalid_execution_context"],
   ]) {
     let started = false;
-    assert.equal(
+    expect(
       await executeRun(db, runId, async () => {
         started = true;
         return { status: "succeeded", reply: "unexpected", events: [] };
       }),
-      "failed",
-    );
-    assert.equal(started, false);
-    assert.equal(
+    ).toBe("failed");
+    expect(started).toBe(false);
+    expect(
       await db
         .prepare("SELECT error_code FROM runs WHERE id = ?")
         .bind(runId)
         .first("error_code"),
-      errorCode,
-    );
+    ).toBe(errorCode);
   }
 });
 
@@ -102,30 +98,27 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     WHEN NEW.author_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'test failure'); END`)
     .run();
 
-  assert.equal(
+  expect(
     await executeRun(db, runId, async () => ({
       status: "succeeded",
       reply: "Unstored reply",
       events: [],
     })),
-    "failed",
-  );
-  assert.deepEqual(
+  ).toBe("failed");
+  expect(
     await db
       .prepare("SELECT status, error_code FROM runs WHERE id = ?")
       .bind(runId)
       .first(),
-    { status: "failed", error_code: "persistence_failed" },
-  );
-  assert.equal(
+  ).toStrictEqual({ status: "failed", error_code: "persistence_failed" });
+  expect(
     await db
       .prepare(
         "SELECT count(*) AS count FROM session_messages WHERE session_id = ?",
       )
       .bind(sessionId)
       .first("count"),
-    1,
-  );
+  ).toBe(1);
 });
 
 test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
@@ -139,7 +132,7 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
       throw new Error("R2 unavailable");
     },
   };
-  assert.equal(
+  expect(
     await executeRun(
       db,
       runId,
@@ -150,22 +143,19 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
       }),
       artifacts,
     ),
-    "failed",
-  );
-  assert.equal(
+  ).toBe("failed");
+  expect(
     await db
       .prepare("SELECT error_code FROM runs WHERE id = ?")
       .bind(runId)
       .first("error_code"),
-    "artifact_write_failed",
-  );
-  assert.equal(
+  ).toBe("artifact_write_failed");
+  expect(
     await db
       .prepare(
         "SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?",
       )
       .bind(sessionId)
       .first("count"),
-    1,
-  );
+  ).toBe(1);
 });

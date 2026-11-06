@@ -1,24 +1,22 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import app from "./index.ts";
+import { expect, test } from "vitest";
+import app from "./http.ts";
 
 test("the Worker serves the health endpoint", async () => {
   const response = await app.request("/health");
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: "ok" });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toStrictEqual({ status: "ok" });
 });
 
 test("runner smoke does not allocate a container without a configured bearer token", async () => {
   const request = { method: "POST" };
   const path = "/_internal/runner/health";
-  assert.equal((await app.request(path, request)).status, 404);
-  assert.equal(
+  expect((await app.request(path, request)).status).toBe(404);
+  expect(
     (await app.request(path, request, { MEGURI_TEST_TOKEN: "test-token" }))
       .status,
-    401,
-  );
-  assert.equal(
+  ).toBe(401);
+  expect(
     (
       await app.request(
         path,
@@ -26,6 +24,5 @@ test("runner smoke does not allocate a container without a configured bearer tok
         { MEGURI_TEST_TOKEN: "test-token" },
       )
     ).status,
-    503,
-  );
+  ).toBe(503);
 });

@@ -5,7 +5,6 @@ import type { RunnerJob } from "@meguri/core/runner";
 import { createCodexAgent } from "./codex-agent.ts";
 
 const script = `
-  const assert = require("node:assert/strict");
   const { createInterface } = require("node:readline");
   const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
   createInterface({ input: process.stdin }).on("line", (line) => {
@@ -13,23 +12,27 @@ const script = `
     const reply = (result) => send({ id: request.id, result });
     if (request.method === "initialize") reply({});
     if (request.method === "account/login/start") {
-      assert.equal(request.params.type, "chatgptAuthTokens");
-      assert.equal(request.params.accessToken, "old-access");
-      assert.equal(request.params.refreshToken, undefined);
+      if (
+        request.params.type !== "chatgptAuthTokens" ||
+        request.params.accessToken !== "old-access" ||
+        request.params.refreshToken !== undefined
+      ) throw new Error("Unexpected ChatGPT login payload");
       reply({});
     }
     if (request.method === "thread/start") {
-      assert.equal(request.params.ephemeral, true);
+      if (request.params.ephemeral !== true) throw new Error("Expected an ephemeral thread");
       reply({ thread: { id: "test-thread" } });
     }
     if (request.method === "turn/start") {
-      assert.equal(request.params.input[0].text, "Answer the prompt");
+      if (request.params.input[0].text !== "Answer the prompt") throw new Error("Unexpected turn input");
       reply({});
       send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
     }
     if (request.id === "refresh") {
-      assert.equal(request.result.accessToken, "new-access");
-      assert.equal(request.result.chatgptAccountId, "account-id");
+      if (
+        request.result.accessToken !== "new-access" ||
+        request.result.chatgptAccountId !== "account-id"
+      ) throw new Error("Unexpected credential refresh response");
       send({ method: "item/completed", params: {
         threadId: "test-thread",
         item: { type: "agentMessage", text: "Reply containing new-access" },

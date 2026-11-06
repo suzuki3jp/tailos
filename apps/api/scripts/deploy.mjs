@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeParse } from "valibot";
 import { readLoginConfig } from "./login-config.mjs";
-import { projectsSchema } from "../src/github/projects.ts";
+import { projectsSchema } from "../src/application/triggers/projects.ts";
 import {
   findD1Database,
   hasR2Bucket,

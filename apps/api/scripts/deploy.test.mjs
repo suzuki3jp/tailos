@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -11,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "vitest";
+import { assert, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 const deploy = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
@@ -60,11 +59,10 @@ function setup(t) {
   const fetchStub = join(cwd, "fetch.mjs");
   writeFileSync(
     fetchStub,
-    `import assert from "node:assert/strict";
-    import { appendFileSync, existsSync } from "node:fs";
+    `import { appendFileSync, existsSync } from "node:fs";
     globalThis.fetch = async (url, { headers }) => {
-      assert.equal(url, "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts");
-      assert.equal(headers.Authorization, "Bearer test-token");
+      if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts") throw new Error("Unexpected R2 lookup URL");
+      if (headers.Authorization !== "Bearer test-token") throw new Error("Unexpected R2 authorization");
       appendFileSync(process.env.MEGURI_TEST_CAPTURE, JSON.stringify({ command: "look up R2" }) + "\\n");
       return existsSync("bucket")
         ? Response.json({ success: true, result: { name: "meguri-run-artifacts" } })
@@ -103,49 +101,43 @@ test("deploy stops before creation or migration when either resource is missing"
   const { cwd, runDeploy, readCalls } = setup(t);
 
   const missingDatabase = runDeploy();
-  assert.notEqual(missingDatabase.status, 0);
-  assert.match(missingDatabase.stderr, /D1 database "meguri" is missing/);
-  assert.match(missingDatabase.stderr, /Provision Cloudflare resources/);
-  assert.deepEqual(
-    readCalls().map(({ command }) => command),
-    ["d1 list --json"],
-  );
+  expect(missingDatabase.status).not.toBe(0);
+  expect(missingDatabase.stderr).toMatch(/D1 database "meguri" is missing/);
+  expect(missingDatabase.stderr).toMatch(/Provision Cloudflare resources/);
+  expect(readCalls().map(({ command }) => command)).toStrictEqual([
+    "d1 list --json",
+  ]);
 
   writeFileSync(join(cwd, "database"), "");
   const missingBucket = runDeploy();
-  assert.notEqual(missingBucket.status, 0);
-  assert.match(
-    missingBucket.stderr,
+  expect(missingBucket.status).not.toBe(0);
+  expect(missingBucket.stderr).toMatch(
     /R2 bucket "meguri-run-artifacts" is missing/,
   );
-  assert.match(missingBucket.stderr, /Provision Cloudflare resources/);
-  assert.deepEqual(
+  expect(missingBucket.stderr).toMatch(/Provision Cloudflare resources/);
+  expect(
     readCalls()
       .slice(1)
       .map(({ command }) => command),
-    ["d1 list --json", "look up R2"],
-  );
+  ).toStrictEqual(["d1 list --json", "look up R2"]);
 });
 
 test("manual provisioning creates only missing resources and is safe to repeat", (t) => {
   const { runProvision, readCalls } = setup(t);
 
   const first = runProvision();
-  assert.equal(first.status, 0, first.stderr);
+  expect(first.status, first.stderr).toBe(0);
   const second = runProvision();
-  assert.equal(second.status, 0, second.stderr);
-  assert.deepEqual(
-    readCalls().map(({ command }) => command),
-    [
-      "d1 list --json",
-      "d1 create meguri --no-update-config",
-      "d1 list --json",
-      "look up R2",
-      "r2 bucket create meguri-run-artifacts --no-update-config",
-      "d1 list --json",
-      "look up R2",
-    ],
-  );
+  expect(second.status, second.stderr).toBe(0);
+  expect(readCalls().map(({ command }) => command)).toStrictEqual([
+    "d1 list --json",
+    "d1 create meguri --no-update-config",
+    "d1 list --json",
+    "look up R2",
+    "r2 bucket create meguri-run-artifacts --no-update-config",
+    "d1 list --json",
+    "look up R2",
+  ]);
 });
 
 test("deploy uses existing resources and removes temporary runtime secrets", (t) => {
@@ -153,66 +145,61 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   writeFileSync(join(cwd, "database"), "");
   writeFileSync(join(cwd, "bucket"), "");
   const result = runDeploy();
-  assert.equal(result.status, 0, result.stderr);
+  assert(result.status === 0);
   const calls = readCalls();
-  assert.deepEqual(
-    calls.map(({ command }) => command),
+  expect(calls.map(({ command }) => command)).toStrictEqual([
+    "d1 list --json",
+    "look up R2",
+    ["d1", "migrations", "apply", "DB", "--remote"],
     [
-      "d1 list --json",
-      "look up R2",
-      ["d1", "migrations", "apply", "DB", "--remote"],
-      [
-        "deploy",
-        "--no-experimental-provision",
-        "--secrets-file",
-        calls.at(-1).runtime.path,
-      ],
+      "deploy",
+      "--no-experimental-provision",
+      "--secrets-file",
+      calls.at(-1).runtime.path,
     ],
-  );
+  ]);
   const [migration, published] = calls.slice(-2);
-  assert.equal(migration.config.d1_databases[0].database_id, id);
-  assert.equal(published.config.d1_databases[0].database_id, id);
-  assert.equal(published.config.workers_dev, false);
-  assert.deepEqual(published.config.routes, [
+  expect(migration.config.d1_databases[0].database_id).toBe(id);
+  expect(published.config.d1_databases[0].database_id).toBe(id);
+  expect(published.config.workers_dev).toBe(false);
+  expect(published.config.routes).toStrictEqual([
     { pattern: "meguri.suzuki3.jp", custom_domain: true },
   ]);
-  assert.equal(
-    published.config.vars.MEGURI_PUBLIC_ORIGIN,
+  expect(published.config.vars.MEGURI_PUBLIC_ORIGIN).toBe(
     "https://meguri.suzuki3.jp",
   );
-  assert.equal(published.config.vars.MEGURI_OPERATOR_GITHUB_ID, "123");
-  assert.equal(
-    published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_ID,
+  expect(published.config.vars.MEGURI_OPERATOR_GITHUB_ID).toBe("123");
+  expect(published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_ID).toBe(
     "test-client",
   );
-  assert.equal(published.config.vars.BETTER_AUTH_SECRET, undefined);
-  assert.equal(
-    published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_SECRET,
+  expect(published.config.vars.BETTER_AUTH_SECRET).toBe(undefined);
+  expect(published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_SECRET).toBe(
     undefined,
   );
-  assert.equal(migration.secretInEnvironment, false);
-  assert.equal(migration.runtime, false);
-  assert.equal(published.secretInEnvironment, false);
-  assert.deepEqual(published.runtime.names, [
+  expect(migration.secretInEnvironment).toBe(false);
+  expect(migration.runtime).toBe(false);
+  expect(published.secretInEnvironment).toBe(false);
+  expect(published.runtime.names).toStrictEqual([
     "BETTER_AUTH_SECRET",
     "CREDENTIAL_ENCRYPTION_KEY",
     "MEGURI_GITHUB_OAUTH_CLIENT_SECRET",
   ]);
-  assert.equal(published.runtime.privateMode, true);
-  assert.throws(() => readFileSync(published.runtime.path), { code: "ENOENT" });
-  assert.equal(
-    readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),
-    false,
+  expect(published.runtime.privateMode).toBe(true);
+  expect(() => readFileSync(published.runtime.path)).toThrow(
+    expect.objectContaining({ code: "ENOENT" }),
   );
+  expect(
+    readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),
+  ).toBe(false);
 
   const missingLoginSecret = runDeploy({
     MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "",
   });
-  assert.notEqual(missingLoginSecret.status, 0);
-  assert.match(missingLoginSecret.stderr, /GitHub login requires/);
+  expect(missingLoginSecret.status).not.toBe(0);
+  expect(missingLoginSecret.stderr).toMatch(/GitHub login requires/);
 
   const misconfigured = runDeploy({ MEGURI_PROJECTS: "[{}]" });
-  assert.notEqual(misconfigured.status, 0);
-  assert.match(misconfigured.stderr, /GitHub projects require/);
-  assert.equal(readCalls().length, calls.length);
+  expect(misconfigured.status).not.toBe(0);
+  expect(misconfigured.stderr).toMatch(/GitHub projects require/);
+  expect(readCalls().length).toBe(calls.length);
 });

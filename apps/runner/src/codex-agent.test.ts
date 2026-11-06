@@ -1,7 +1,6 @@
-import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
 import { createCodexAgent } from "./codex-agent.ts";
 
@@ -68,13 +67,10 @@ test("executes a Codex turn and replaces access tokens without exposing them in 
         stdio: ["pipe", "pipe", "ignore"],
       }),
     async (url, init) => {
-      assert.equal(String(url), job.refresh.url);
+      expect(String(url)).toBe(job.refresh.url);
       const headers = new Headers(init?.headers);
-      assert.equal(
-        headers.get("Authorization"),
-        "Bearer " + job.refresh.bearer,
-      );
-      assert.equal(headers.get("X-Meguri-Access-Version"), accessVersion);
+      expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
+      expect(headers.get("X-Meguri-Access-Version")).toBe(accessVersion);
       return Response.json({
         ...job.access,
         accessToken: "new-access",
@@ -83,8 +79,7 @@ test("executes a Codex turn and replaces access tokens without exposing them in 
     },
   );
 
-  assert.equal(
-    await agent.run(job, AbortSignal.timeout(10_000)),
+  expect(await agent.run(job, AbortSignal.timeout(10_000))).toBe(
     "Reply containing [REDACTED]",
   );
 });

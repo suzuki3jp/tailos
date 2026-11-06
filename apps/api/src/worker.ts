@@ -1,13 +1,14 @@
+import { listDueRunIds } from "./infrastructure/d1/run-recovery.ts";
 import type {
   ExecutionContext,
   ScheduledController,
 } from "@cloudflare/workers-types";
-import app from "./index.ts";
-import type { Bindings } from "./internal.ts";
-import { rescheduleDueRuns } from "./run-scheduler.ts";
+import app from "./bootstrap/http.ts";
+import type { Bindings } from "./bindings.ts";
+import { rescheduleDueRuns } from "./application/runs/recovery.ts";
 
-export { CredentialBroker } from "./auth/credential-broker.ts";
-export { RunnerContainer } from "./runner-container.ts";
+export { CredentialBroker } from "./infrastructure/cloudflare/credential-broker.ts";
+export { RunnerContainer } from "./infrastructure/cloudflare/runner-container.ts";
 
 export default {
   fetch: app.fetch,
@@ -19,7 +20,10 @@ export default {
     const runner = env.RUNNER;
     if (!runner) throw new Error("Missing runner binding");
     ctx.waitUntil(
-      rescheduleDueRuns(env.DB, (id) => runner.getByName(id).schedule(id)),
+      rescheduleDueRuns(
+        (now) => listDueRunIds(env.DB, now),
+        (id) => runner.getByName(id).schedule(id),
+      ),
     );
   },
 };

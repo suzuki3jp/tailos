@@ -1,34 +1,57 @@
 name: Deploy API
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 permissions:
   contents: read
-
-concurrency:
-  group: meguri-api-production
 
 env:
   HUSKY: "0"
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'
+    environment: production
+    concurrency:
+      group: meguri-api-production
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Check the current main revision
+        id: revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$current_sha" == "$TESTED_SHA" ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v7
+        if: steps.revision.outputs.deploy == 'true'
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - uses: actions/setup-node@v7
+        if: steps.revision.outputs.deploy == 'true'
         with:
           node-version: 22
       - uses: pnpm/action-setup@v6
+        if: steps.revision.outputs.deploy == 'true'
         with:
           cache: true
       - run: pnpm install --frozen-lockfile
+        if: steps.revision.outputs.deploy == 'true'
       - name: Deploy to Cloudflare
+        if: steps.revision.outputs.deploy == 'true'
         run: pnpm --filter @meguri/api run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

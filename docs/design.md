@@ -121,7 +121,7 @@ GitHub では専用の権限主体として GitHub App を使う。App の秘密
 
 事前検証では Wrangler `4.157.0` を使い、Worker → DO → Docker の HTTP 疎通、ローカル R2 への読み書き、再起動後の DO ストレージの保持を確認した。本実装では `apps/api/package.json` に固定した Wrangler でフェーズごとの動作を検証する。 [Cloudflare Containers のローカル開発](https://developers.cloudflare.com/containers/guides/local-dev/)
 
-D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` に反映された変更を Cloudflare にデプロイする。本番ドメインは `meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
+D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` の push に対する CI が成功した後、検証したコミットを `production` 環境から Cloudflare にデプロイする。本番ドメインは `meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
 
 ## 実装フェーズ
 

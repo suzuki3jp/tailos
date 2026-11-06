@@ -20,6 +20,7 @@ jobs:
     environment: production
     concurrency:
       group: meguri-api-production
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

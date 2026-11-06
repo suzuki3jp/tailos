@@ -55,6 +55,11 @@ export function ensureD1Database(name, wrangler) {
     throw new Error(
       `Wrangler created D1 database "${name}", but it was not found.`,
     );
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.log(
+      "::warning::Created an empty D1 database. Verify the deployment account and database name if this was unexpected.",
+    );
+  }
   return created;
 }
 
@@ -95,6 +100,12 @@ export async function ensureR2Bucket(bucket, env, wrangler) {
   try {
     wrangler(create);
   } catch (error) {
-    if (!(await exists())) throw error;
+    if (await exists()) return;
+    throw error;
+  }
+  if (process.env.GITHUB_ACTIONS === "true") {
+    console.log(
+      "::warning::Created an empty R2 bucket. Verify the deployment account and bucket name if this was unexpected.",
+    );
   }
 }

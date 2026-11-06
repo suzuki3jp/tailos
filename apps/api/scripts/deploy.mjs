@@ -1,36 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { parse } from "jsonc-parser";
-import { ensureD1Database, runWrangler } from "./provision.mjs";
+import { rmSync, writeFileSync } from "node:fs";
+import {
+  findD1Database,
+  readResourceConfig,
+  requireCloudflareCredentials,
+  runWrangler,
+} from "./provision.mjs";
 
 const env = process.env;
-if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+requireCloudflareCredentials(env);
+const { config, database } = readResourceConfig();
+const wrangler = (args, capture) => runWrangler(args, env, capture);
+const id = findD1Database(database.database_name, wrangler);
+if (!id) {
   throw new Error(
-    "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to deploy.",
+    `D1 database "${database.database_name}" is missing. Verify the account and name, then run Provision Cloudflare resources if it needs to be created.`,
   );
 }
-
-const configErrors = [];
-const config = parse(readFileSync("wrangler.jsonc", "utf8"), configErrors, {
-  allowTrailingComma: true,
-});
-if (configErrors.length || !Array.isArray(config?.d1_databases)) {
-  throw new Error("Invalid Wrangler configuration.");
-}
-const database = config.d1_databases.find(
-  (binding) => binding.binding === "DB",
-);
-if (typeof database?.database_name !== "string" || !database.database_name) {
-  throw new Error("The DB binding must specify a database_name.");
-}
-const wrangler = (args, capture) => runWrangler(args, env, capture);
-database.database_id = ensureD1Database(database.database_name, wrangler);
+database.database_id = id;
 
 const path = `wrangler.deploy.${randomUUID()}.jsonc`;
 writeFileSync(path, JSON.stringify(config), { flag: "wx" });
 try {
   wrangler(["d1", "migrations", "apply", "DB", "--remote", "--config", path]);
-  wrangler(["deploy", "--config", path]);
+  wrangler(["deploy", "--no-experimental-provision", "--config", path]);
 } finally {
   rmSync(path, { force: true });
 }

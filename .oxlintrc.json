@@ -7,7 +7,8 @@
     "no-console": "error",
     "typescript/no-non-null-asserted-optional-chain": "warn",
     "typescript/no-this-alias": "off",
-    "unicorn/no-empty-file": "off"
+    "unicorn/no-empty-file": "off",
+    "meguri/api-layers": "error"
   },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -16,5 +17,6 @@
     "**/.wrangler/**",
     "**/temp/**",
     ".claude/worktrees/**"
-  ]
+  ],
+  "jsPlugins": ["./lint/api-layers.mjs"]
 }

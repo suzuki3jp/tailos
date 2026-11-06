@@ -57,3 +57,44 @@ export function ensureD1Database(name, wrangler) {
     );
   return created;
 }
+
+export async function ensureR2Bucket(bucket, env, wrangler) {
+  const name = bucket.bucket_name;
+  const account = encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
+  const url = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/${encodeURIComponent(name)}`;
+  const headers = { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` };
+  const create = ["r2", "bucket", "create", name, "--no-update-config"];
+  if (bucket.jurisdiction) {
+    headers["cf-r2-jurisdiction"] = bucket.jurisdiction;
+    create.push("--jurisdiction", bucket.jurisdiction);
+  }
+
+  const exists = async () => {
+    const response = await fetch(url, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (response.ok && body?.success === true && body.result?.name === name) {
+      return true;
+    }
+    if (
+      response.status === 404 &&
+      Array.isArray(body?.errors) &&
+      body.errors.some((error) => error?.code === 10006)
+    ) {
+      return false;
+    }
+    throw new Error(
+      `Could not look up R2 bucket "${name}" (HTTP ${response.status}).`,
+    );
+  };
+
+  if (await exists()) return;
+  try {
+    wrangler(create);
+  } catch (error) {
+    if (!(await exists())) throw error;
+  }
+}

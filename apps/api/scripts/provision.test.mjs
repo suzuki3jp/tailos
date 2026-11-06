@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ensureD1Database } from "./provision.mjs";
+import { ensureD1Database, ensureR2Bucket } from "./provision.mjs";
 
 const database = {
   name: "meguri",
@@ -50,3 +50,64 @@ test("does not create a database after a failed lookup", () => {
     /Cloudflare denied lookup/,
   );
 });
+
+const bucket = { bucket_name: "meguri-run-artifacts" };
+const env = {
+  CLOUDFLARE_ACCOUNT_ID: "test-account",
+  CLOUDFLARE_API_TOKEN: "test-token",
+};
+const found = () =>
+  Response.json({ success: true, result: { name: bucket.bucket_name } });
+const missing = () =>
+  Response.json({ errors: [{ code: 10006 }] }, { status: 404 });
+
+test("reuses the exact R2 bucket name in the configured jurisdiction", async (t) => {
+  t.mock.method(globalThis, "fetch", (url, { headers, redirect }) => {
+    assert.equal(
+      url,
+      "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts",
+    );
+    assert.equal(headers.Authorization, "Bearer test-token");
+    assert.equal(headers["cf-r2-jurisdiction"], "eu");
+    assert.equal(redirect, "error");
+    return Promise.resolve(found());
+  });
+  await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, () => {
+    assert.fail("Existing bucket must be reused");
+  });
+});
+
+for (const concurrent of [false, true]) {
+  test(`accepts ${concurrent ? "a concurrent" : "the first"} R2 creation`, async (t) => {
+    let created = false;
+    t.mock.method(globalThis, "fetch", () =>
+      Promise.resolve(created ? found() : missing()),
+    );
+    await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, (args) => {
+      assert.deepEqual(args, [
+        "r2",
+        "bucket",
+        "create",
+        bucket.bucket_name,
+        "--no-update-config",
+        "--jurisdiction",
+        "eu",
+      ]);
+      created = true;
+      if (concurrent) throw new Error("Already exists");
+    });
+    assert.equal(created, true);
+  });
+}
+
+for (const status of [403, 404, 500]) {
+  test(`does not create an R2 bucket after an unexpected HTTP ${status}`, async (t) => {
+    t.mock.method(globalThis, "fetch", () =>
+      Promise.resolve(Response.json({ errors: [{ code: 1000 }] }, { status })),
+    );
+    await assert.rejects(
+      ensureR2Bucket(bucket, env, () => assert.fail("Unexpected creation")),
+      /Could not look up R2 bucket/,
+    );
+  });
+}

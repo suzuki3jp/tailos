@@ -1,9 +1,8 @@
-import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "vitest";
+import { assert, expect, test } from "vitest";
 import { pathToFileURL } from "node:url";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
@@ -54,12 +53,11 @@ test("pushes changes to the assigned branch without changing the base ref or sto
     checkout,
     signal,
     async (cwd) => {
-      assert.equal(await readFile(join(cwd, "README.md"), "utf8"), "base\n");
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
       const pointer = await readFile(join(cwd, ".git"), "utf8");
-      assert.match(pointer, /^gitdir: /);
+      expect(pointer).toMatch(/^gitdir: /);
       const metadata = pointer.slice("gitdir: ".length).trim();
-      assert.doesNotMatch(
-        await readFile(join(metadata, "config"), "utf8"),
+      expect(await readFile(join(metadata, "config"), "utf8")).not.toMatch(
         /secret-repo-token/,
       );
       await rm(join(cwd, ".git"));
@@ -73,15 +71,14 @@ test("pushes changes to the assigned branch without changing the base ref or sto
     },
     remote,
   );
-  assert.equal(result.reply, "Edited README");
-  assert.equal(result.publication.kind, "pushed");
-  assert.equal(git(repository, "rev-parse", "refs/heads/main"), baseSha);
-  assert.equal(
-    git(repository, "rev-parse", `refs/heads/${branch}`),
+  expect(result.reply).toBe("Edited README");
+  assert(result.publication.kind === "pushed");
+  expect(git(repository, "rev-parse", "refs/heads/main")).toBe(baseSha);
+  expect(git(repository, "rev-parse", `refs/heads/${branch}`)).toBe(
     result.publication.sha,
   );
-  assert.equal(git(repository, "show", `${branch}:README.md`), "changed");
-  await assert.rejects(
+  expect(git(repository, "show", `${branch}:README.md`)).toBe("changed");
+  await expect(
     runInGitWorkspace(
       checkout,
       signal,
@@ -96,11 +93,9 @@ test("pushes changes to the assigned branch without changing the base ref or sto
       },
       remote,
     ),
-    /Git metadata configuration changed/,
-  );
-  assert.deepEqual(
+  ).rejects.toThrow(/Git metadata configuration changed/);
+  expect(
     (await runInGitWorkspace(checkout, signal, async () => "No work", remote))
       .publication,
-    { kind: "no_changes" },
-  );
+  ).toStrictEqual({ kind: "no_changes" });
 });

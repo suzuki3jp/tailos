@@ -21,7 +21,7 @@
  * their testing.ts fixtures can cross layers to exercise real adapters.
  * Production modules cannot import those test files or fixtures.
  */
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sourceRoot = fileURLToPath(new URL("../apps/api/src/", import.meta.url));
@@ -33,7 +33,7 @@ const layers = new Set([
 ]);
 const sdk =
   /^(?:@cloudflare\/|cloudflare:|drizzle-orm(?:\/|$)|@better-auth\/|better-auth(?:\/|$)|jose(?:\/|$))/;
-const testModule = /(?:\.test\.[cm]?[jt]sx?|[/\\]testing\.ts)$/;
+const testModule = /(?:\.test|[/\\]testing)(?:\.[cm]?[jt]sx?)?$/;
 const applicationPackage = /^(?:@meguri\/core(?:\/|$)|valibot$)/;
 
 function area(path) {
@@ -73,7 +73,7 @@ export default {
               report(node, "Use a static import path in API layers.");
             return;
           }
-          if (specifier.startsWith(".")) {
+          if (specifier.startsWith(".") || isAbsolute(specifier)) {
             const target = resolve(dirname(filename), specifier);
             if (testModule.test(target)) {
               report(

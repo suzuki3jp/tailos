@@ -7,7 +7,7 @@
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "node scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate --name initial",
-    "test": "node --experimental-strip-types --test 'src/**/*.test.ts' 'scripts/*.test.mjs'",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

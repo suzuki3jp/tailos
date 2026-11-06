@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { test } from "node:test";
+import { test } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import app from "./index.ts";
 
@@ -13,7 +13,7 @@ test("a configured operator can create and read a standalone session in message 
       d1Databases: ["DB"],
     }),
   );
-  t.after(() => worker.dispose());
+  t.onTestFinished(() => worker.dispose());
   const db = await worker.getD1Database("DB");
   const migration = await readFile(
     new URL("../migrations/0000_initial.sql", import.meta.url),

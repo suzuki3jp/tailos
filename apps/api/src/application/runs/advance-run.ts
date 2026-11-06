@@ -57,7 +57,7 @@ export async function advanceRun(
   if (!run) return undefined;
 
   let outcome: RunnerStatus | RunOutcome;
-  if (run.deadlineAt <= Date.now()) {
+  if (claimed && run.deadlineAt <= Date.now()) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (claimed) {
     outcome = await dispatchNewRun(store, runId, run, driver);
@@ -125,7 +125,12 @@ async function storeOutcome(
       : result;
 
   const finishedAt = Date.now();
-  if (finishedAt >= deadlineAt) {
+  const terminalEvent =
+    outcome.status === "succeeded" ? "job_succeeded" : "job_failed";
+  const finishedBeforeDeadline = outcome.events?.some(
+    (event) => event.type === terminalEvent && event.at < deadlineAt,
+  );
+  if (finishedAt >= deadlineAt && !finishedBeforeDeadline) {
     outcome = {
       status: "failed",
       errorCode: "deadline_exceeded",
@@ -140,7 +145,8 @@ async function storeOutcome(
           : { status: outcome.status };
       await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
     } catch {
-      outcome = { status: "failed", errorCode: "artifact_write_failed" };
+      if (outcome.status === "succeeded")
+        outcome = { status: "failed", errorCode: "artifact_write_failed" };
     }
   }
   if (outcome.status === "failed") {

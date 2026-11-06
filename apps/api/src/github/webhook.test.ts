@@ -104,7 +104,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
     await db.prepare("SELECT count(*) AS count FROM runs").first("count"),
     1,
   );
-  const path = `https://meguri.example/operator/sessions/${data.sessionId}`;
+  const path = `https://meguri.example/sessions/${data.sessionId}`;
   assert.equal((await app.request(path, undefined, env)).status, 303);
   const view = await app.request(
     path,
@@ -120,7 +120,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
     .bind("other-session", crypto.randomUUID(), Date.now())
     .run();
   const another = await app.request(
-    "https://meguri.example/operator/sessions/other-session",
+    "https://meguri.example/sessions/other-session",
     { headers: { Cookie: operator.cookie } },
     env,
   );

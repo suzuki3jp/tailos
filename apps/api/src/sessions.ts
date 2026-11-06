@@ -75,9 +75,9 @@ sessionRoutes.get("/:id", async (c) => {
   return detail ? c.json(detail) : c.notFound();
 });
 
-export const operatorSessions = new Hono<OperatorEnv>();
-operatorSessions.use("*", operatorAuth);
-operatorSessions.get("/:id", async (c) => {
+export const userSessionRoutes = new Hono<OperatorEnv>();
+userSessionRoutes.use("*", operatorAuth);
+userSessionRoutes.get("/:id", async (c) => {
   const detail = await readSession(
     c.env.DB,
     c.req.param("id"),

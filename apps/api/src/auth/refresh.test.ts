@@ -15,7 +15,7 @@ test("a refresh request reaches the run's lease verifier only for active runs", 
     timeoutMs: 60_000,
     prompt: "Test",
     executionContext:
-      '{"version":1,"engine":"codex","connectionId":"codex/default"}',
+      '{"version":1,"engine":"codex","connectionId":"codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c"}',
   });
   const bearer = newRunLease();
   const accessVersion = crypto.randomUUID();

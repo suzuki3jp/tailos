@@ -5,7 +5,10 @@ export const executionContextSchema = v.variant("engine", [
   v.strictObject({
     version: v.literal(1),
     engine: v.literal("codex"),
-    connectionId: v.literal("codex/default"),
+    connectionId: v.pipe(
+      v.string(),
+      v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+    ),
   }),
 ]);
 

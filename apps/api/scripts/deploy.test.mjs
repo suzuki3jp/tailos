@@ -51,7 +51,7 @@ function setup(t) {
       privateMode: (fs.statSync(secretsPath).mode & 511) === 384,
     };
     record({
-      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.MEGURI_OPERATOR_TOKEN),
+      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.BETTER_AUTH_SECRET || process.env.MEGURI_GITHUB_OAUTH_CLIENT_SECRET || process.env.CREDENTIAL_ENCRYPTION_KEY),
     });
   `,
   );
@@ -86,7 +86,10 @@ function setup(t) {
   const runDeploy = (overrides = {}) =>
     run(deploy, {
       MEGURI_PROJECTS: "[]",
-      MEGURI_OPERATOR_TOKEN: "test-operator",
+      MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
+      MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
+      MEGURI_OPERATOR_GITHUB_ID: "123",
+      BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
       CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
       ...overrides,
     });
@@ -177,10 +180,21 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
     published.config.vars.MEGURI_PUBLIC_ORIGIN,
     "https://meguri.suzuki3.jp",
   );
+  assert.equal(published.config.vars.MEGURI_OPERATOR_GITHUB_ID, "123");
+  assert.equal(
+    published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_ID,
+    "test-client",
+  );
+  assert.equal(published.config.vars.BETTER_AUTH_SECRET, undefined);
+  assert.equal(
+    published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_SECRET,
+    undefined,
+  );
   assert.equal(published.secretInEnvironment, false);
   assert.deepEqual(published.runtime.names, [
+    "BETTER_AUTH_SECRET",
     "CREDENTIAL_ENCRYPTION_KEY",
-    "MEGURI_OPERATOR_TOKEN",
+    "MEGURI_GITHUB_OAUTH_CLIENT_SECRET",
   ]);
   assert.equal(published.runtime.privateMode, true);
   assert.throws(() => readFileSync(published.runtime.path), { code: "ENOENT" });
@@ -188,6 +202,12 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
     readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),
     false,
   );
+
+  const missingLoginSecret = runDeploy({
+    MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "",
+  });
+  assert.notEqual(missingLoginSecret.status, 0);
+  assert.match(missingLoginSecret.stderr, /GitHub login requires/);
 
   const misconfigured = runDeploy({ MEGURI_PROJECTS: "[{}]" });
   assert.notEqual(misconfigured.status, 0);

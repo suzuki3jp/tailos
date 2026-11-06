@@ -264,7 +264,7 @@ test("reconciles a published pull request after the deadline without restarting 
     executionContext: JSON.stringify({
       version: 1,
       engine: "codex",
-      connectionId: "codex/default",
+      connectionId: "codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
       repository: {
         repository: "owner/private",
         repositoryId: 42,

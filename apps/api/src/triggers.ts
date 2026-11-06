@@ -1,3 +1,5 @@
+import { codexConnectionId } from "./auth/device.ts";
+import { findOperatorUserId } from "./auth/login.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
@@ -25,6 +27,11 @@ triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
   if (!parsed.success) return c.json({ error: "invalid_input" }, 400);
 
   const { deliveryId, target, prompt, engine } = parsed.output;
+  const operatorId =
+    engine === "codex" ? await findOperatorUserId(c.env) : null;
+  if (engine === "codex" && !operatorId)
+    return c.json({ error: "operator_not_initialized" }, 503);
+
   const admission = await admitTrigger(c.env.DB, {
     source: "internal.smoke",
     idempotencyKey: deliveryId,
@@ -33,8 +40,8 @@ triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
     concurrencyKey: JSON.stringify(["internal.smoke", target]),
     prompt,
     executionContext: JSON.stringify(
-      engine === "codex"
-        ? { version: 1, engine, connectionId: "codex/default" }
+      operatorId
+        ? { version: 1, engine, connectionId: codexConnectionId(operatorId) }
         : { version: 1, engine },
     ),
     timeoutMs: 5 * 60_000,

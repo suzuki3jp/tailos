@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { githubWebhook } from "./github/webhook.ts";
 import { connectRoutes } from "./auth/connect.ts";
+import { loginRoutes } from "./auth/login.ts";
 import { refreshRoutes } from "./auth/refresh.ts";
 import { smokeAuth, type Bindings } from "./internal.ts";
 import { runRoutes } from "./runs.ts";
@@ -13,6 +14,7 @@ app.route("/connect", connectRoutes);
 app.route("/operator/sessions", operatorSessions);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
+app.route("/", loginRoutes);
 app.get("/health", (c) => c.json({ status: "ok", service: "meguri-api" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);

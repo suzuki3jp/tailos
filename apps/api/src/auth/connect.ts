@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { operatorAuth } from "./operator.ts";
+import { operatorAuth, type OperatorEnv } from "./operator.ts";
 import { jsx } from "hono/jsx";
 import type { Bindings } from "../internal.ts";
-import { defaultCodexConnection, type ConnectionStatus } from "./device.ts";
+import { codexConnectionId, type ConnectionStatus } from "./device.ts";
 
 const path = "/connect";
 const messages = {
@@ -68,7 +68,7 @@ function page(status: ConnectionStatus) {
 
 type ConnectEnv = {
   Bindings: Bindings;
-  Variables: {
+  Variables: OperatorEnv["Variables"] & {
     broker: ReturnType<NonNullable<Bindings["CREDENTIALS"]>["getByName"]>;
   };
 };
@@ -84,7 +84,7 @@ connectRoutes.use("*", async (c, next) => {
     "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
   c.header("Referrer-Policy", "no-referrer");
-  c.set("broker", bindings.getByName(defaultCodexConnection));
+  c.set("broker", bindings.getByName(codexConnectionId(c.var.operatorUserId)));
   await next();
 });
 

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeParse } from "valibot";
+import { readLoginConfig } from "./login-config.mjs";
 import { projectsSchema } from "../src/github/projects.ts";
 import {
   findD1Database,
@@ -15,19 +16,22 @@ import {
 const origin = "https://meguri.suzuki3.jp";
 const domain = new URL(origin).hostname;
 const runtimeSecrets = [
-  "MEGURI_OPERATOR_TOKEN",
   "CREDENTIAL_ENCRYPTION_KEY",
   "MEGURI_GH_APP_PRIVATE_KEY",
   "MEGURI_GH_WEBHOOK_SECRET",
 ];
 
 const env = { ...process.env };
-const secrets = Object.fromEntries(
-  runtimeSecrets
-    .filter((name) => Boolean(env[name]))
-    .map((name) => [name, env[name]]),
-);
-for (const name of runtimeSecrets) delete env[name];
+const login = readLoginConfig(env, origin);
+const secrets = {
+  ...login.secrets,
+  ...Object.fromEntries(
+    runtimeSecrets
+      .filter((name) => Boolean(env[name]))
+      .map((name) => [name, env[name]]),
+  ),
+};
+for (const name of Object.keys(secrets)) delete env[name];
 requireCloudflareCredentials(env);
 
 let projects;
@@ -42,18 +46,11 @@ const appId = env.MEGURI_GH_APP_ID ?? "";
 if (
   projects.length &&
   (!/^\d+$/.test(appId) ||
-    Object.keys(secrets).length !== runtimeSecrets.length)
+    !runtimeSecrets.every((name) => Boolean(secrets[name])) ||
+    !login.vars.MEGURI_OPERATOR_GITHUB_ID)
 ) {
   throw new Error(
-    "GitHub projects require MEGURI_GH_APP_ID and all four runtime secrets.",
-  );
-}
-if (
-  Boolean(secrets.MEGURI_OPERATOR_TOKEN) !==
-  Boolean(secrets.CREDENTIAL_ENCRYPTION_KEY)
-) {
-  throw new Error(
-    "Set MEGURI_OPERATOR_TOKEN and CREDENTIAL_ENCRYPTION_KEY together.",
+    "GitHub projects require GitHub login, MEGURI_GH_APP_ID, GitHub App secrets, and CREDENTIAL_ENCRYPTION_KEY.",
   );
 }
 if (
@@ -90,6 +87,7 @@ config.workers_dev = false;
 config.routes = [{ pattern: domain, custom_domain: true }];
 config.vars = {
   ...config.vars,
+  ...login.vars,
   MEGURI_PUBLIC_ORIGIN: origin,
   MEGURI_GH_APP_ID: appId,
   PROJECTS: JSON.stringify(checkedProjects.output),

@@ -66,7 +66,10 @@ jobs:
           MEGURI_GH_APP_PRIVATE_KEY: ${{ secrets.MEGURI_GH_APP_PRIVATE_KEY }}
           MEGURI_GH_WEBHOOK_SECRET: ${{ secrets.MEGURI_GH_WEBHOOK_SECRET }}
           CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
-          MEGURI_OPERATOR_TOKEN: ${{ secrets.MEGURI_OPERATOR_TOKEN }}
+          MEGURI_GITHUB_OAUTH_CLIENT_ID: ${{ vars.MEGURI_GITHUB_OAUTH_CLIENT_ID }}
+          MEGURI_OPERATOR_GITHUB_ID: ${{ vars.MEGURI_OPERATOR_GITHUB_ID }}
+          MEGURI_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.MEGURI_GITHUB_OAUTH_CLIENT_SECRET }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
       - name: Verify the deployed Worker
         if: steps.revision.outputs.deploy == 'true'
         shell: bash

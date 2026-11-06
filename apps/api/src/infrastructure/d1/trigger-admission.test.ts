@@ -1,6 +1,5 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import { createTestDb } from "./db/testing.ts";
+import { expect, test } from "vitest";
+import { createTestDb } from "./testing.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 
 test("admission rolls back its writes if the origin event cannot be stored", async (t) => {
@@ -9,7 +8,7 @@ test("admission rolls back its writes if the origin event cannot be stored", asy
     .prepare(`CREATE TRIGGER reject_delivery BEFORE INSERT ON trigger_events
     BEGIN SELECT RAISE(ABORT, 'test failure'); END`)
     .run();
-  await assert.rejects(
+  await expect(
     admitTrigger(db, {
       source: "test",
       idempotencyKey: "delivery",
@@ -19,10 +18,8 @@ test("admission rolls back its writes if the origin event cannot be stored", asy
       executionContext: "{}",
       timeoutMs: 60_000,
     }),
-    /test failure/,
-  );
-  assert.equal(
+  ).rejects.toThrow(/test failure/);
+  expect(
     await db.prepare("SELECT count(*) AS count FROM sessions").first("count"),
-    0,
-  );
+  ).toBe(0);
 });

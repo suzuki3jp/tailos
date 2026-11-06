@@ -7,7 +7,7 @@
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "pnpm --filter @meguri/runner run build && node scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
-    "test": "vitest run",
+    "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 import { ensureD1Database } from "./provision.mjs";
 
 const database = {
@@ -8,24 +7,23 @@ const database = {
 };
 
 test("reuses the exact D1 database name", () => {
-  assert.equal(
+  expect(
     ensureD1Database(database.name, (args, capture) => {
-      assert.deepEqual(args, ["d1", "list", "--json"]);
-      assert.equal(capture, true);
+      expect(args).toStrictEqual(["d1", "list", "--json"]);
+      expect(capture).toBe(true);
       return JSON.stringify([{ ...database, name: "meguri-dev" }, database]);
     }),
-    database.uuid,
-  );
+  ).toBe(database.uuid);
 });
 
 for (const concurrent of [false, true]) {
   test(`resolves the UUID after ${concurrent ? "a concurrent" : "the first"} D1 creation`, () => {
     let created = false;
-    assert.equal(
+    expect(
       ensureD1Database(database.name, (args) => {
         if (args[1] === "list")
           return JSON.stringify(created ? [database] : []);
-        assert.deepEqual(args, [
+        expect(args).toStrictEqual([
           "d1",
           "create",
           database.name,
@@ -34,19 +32,16 @@ for (const concurrent of [false, true]) {
         created = true;
         if (concurrent) throw new Error("Already exists");
       }),
-      database.uuid,
-    );
-    assert.equal(created, true);
+    ).toBe(database.uuid);
+    expect(created).toBe(true);
   });
 }
 
 test("does not create a database after a failed lookup", () => {
-  assert.throws(
-    () =>
-      ensureD1Database(database.name, (args) => {
-        assert.deepEqual(args, ["d1", "list", "--json"]);
-        throw new Error("Cloudflare denied lookup");
-      }),
-    /Cloudflare denied lookup/,
-  );
+  expect(() =>
+    ensureD1Database(database.name, (args) => {
+      expect(args).toStrictEqual(["d1", "list", "--json"]);
+      throw new Error("Cloudflare denied lookup");
+    }),
+  ).toThrow(/Cloudflare denied lookup/);
 });

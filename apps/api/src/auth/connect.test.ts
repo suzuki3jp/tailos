@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import app from "../index.ts";
 import type { ConnectionStatus } from "./device.ts";
 

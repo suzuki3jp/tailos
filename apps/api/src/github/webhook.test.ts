@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { test } from "node:test";
+import { test } from "vitest";
 import { createTestDb } from "../db/testing.ts";
 import app from "../index.ts";
 

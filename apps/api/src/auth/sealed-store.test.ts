@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { seal, unseal } from "./sealed-store.ts";
 
 test("seals credentials to their intended connection and rejects a different key", async () => {

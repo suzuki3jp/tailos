@@ -75,6 +75,10 @@ test("protects the device code and requires a same-origin POST to change connect
   expect(starts).toBe(1);
   const pending = await app.request(path, { headers }, env);
   expect(pending.status).toBe(200);
+  expect(pending.headers.get("Referrer-Policy")).toBe("same-origin");
+  expect(pending.headers.get("Content-Security-Policy")).toContain(
+    "form-action 'self';",
+  );
   expect(pending.headers.get("Cache-Control")).toBe("private, no-store");
   expect(await pending.text()).toMatch(/MY&lt;CODE/);
   expect(

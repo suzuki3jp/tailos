@@ -19,8 +19,12 @@ test("reschedules overdue work after the original alarm request was lost", async
   const queued = await create("lost-notification");
   const running = await create("lost-alarm");
   const completed = await create("completed");
+  const legacy = await create("legacy");
   const future = await create("future");
   await db.batch([
+    db
+      .prepare("UPDATE runs SET next_action_at = NULL WHERE id = ?")
+      .bind(legacy.runId),
     db
       .prepare("UPDATE runs SET status = 'running' WHERE id = ?")
       .bind(running.runId),
@@ -42,7 +46,7 @@ test("reschedules overdue work after the original alarm request was lost", async
       },
     ),
   ).rejects.toThrow(/could not be scheduled/);
-  expect(scheduled).toStrictEqual([running.runId]);
+  expect(scheduled.sort()).toStrictEqual([running.runId, legacy.runId].sort());
 
   const retried: string[] = [];
   await rescheduleDueRuns(
@@ -51,5 +55,7 @@ test("reschedules overdue work after the original alarm request was lost", async
       retried.push(id);
     },
   );
-  expect(retried.sort()).toStrictEqual([queued.runId, running.runId].sort());
+  expect(retried.sort()).toStrictEqual(
+    [queued.runId, running.runId, legacy.runId].sort(),
+  );
 });

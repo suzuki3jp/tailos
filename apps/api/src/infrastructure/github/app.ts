@@ -1,10 +1,6 @@
 import { createPrivateKey } from "node:crypto";
 import { importPKCS8, SignJWT } from "jose";
-import {
-  gitSha,
-  type RepositoryTarget,
-  type RunnerPublication,
-} from "@meguri/core/runner";
+import { gitSha, type RepositoryTarget } from "@meguri/core/runner";
 import * as v from "valibot";
 
 const repoSchema = v.object({ id: v.number(), default_branch: v.string() });
@@ -181,7 +177,7 @@ export class GitHubApp {
   async publish(
     target: RepositoryTarget,
     runId: string,
-    publication: Extract<RunnerPublication, { kind: "pushed" }>,
+    publication: { branch: string; sha: string },
     deadlineAt = Infinity,
   ) {
     const branch = workBranchFor(target, runId);

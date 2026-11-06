@@ -36,16 +36,21 @@ export function createTriggerRoutes(
     if (engine === "codex" && !operatorId)
       return c.json({ error: "operator_not_initialized" }, 503);
 
+    const connectionId = operatorId ? codexConnectionId(operatorId) : null;
     const admission = await admit(c.env)({
       source: "internal.smoke",
       idempotencyKey: deliveryId,
       ownerId: smokeOwnerId,
       target: JSON.stringify({ version: 1, kind: "smoke", target }),
-      concurrencyKey: JSON.stringify(["internal.smoke", target]),
+      concurrencyKey: JSON.stringify(
+        connectionId
+          ? ["internal.smoke", target, engine, connectionId]
+          : ["internal.smoke", target],
+      ),
       prompt,
       executionContext: JSON.stringify(
-        operatorId
-          ? { version: 1, engine, connectionId: codexConnectionId(operatorId) }
+        connectionId
+          ? { version: 1, engine, connectionId }
           : { version: 1, engine },
       ),
       timeoutMs: 5 * 60_000,

@@ -1,19 +1,6 @@
-import type {
-  D1Database,
-  DurableObjectNamespace,
-} from "@cloudflare/workers-types";
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
-
-import type { RunArtifactsBucket } from "./run-artifacts.ts";
-import type { RunnerContainer } from "./runner-container.ts";
-
-export type Bindings = {
-  DB: D1Database;
-  RUN_ARTIFACTS?: RunArtifactsBucket;
-  RUNNER?: DurableObjectNamespace<RunnerContainer>;
-  MEGURI_TEST_TOKEN?: string;
-};
+import type { Bindings } from "../../bindings.ts";
 
 export const smokeOwnerId = "internal-smoke";
 

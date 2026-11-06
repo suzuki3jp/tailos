@@ -1,10 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 
-export async function rescheduleDueRuns(
-  db: D1Database,
-  schedule: (runId: string) => Promise<void>,
-) {
-  const now = Date.now();
+export async function listDueRunIds(db: D1Database, now: number) {
   const due = await db
     .prepare(
       `SELECT id FROM runs WHERE status IN ('queued', 'running')
@@ -13,11 +9,5 @@ export async function rescheduleDueRuns(
     )
     .bind(now, now)
     .all<{ id: string }>();
-
-  const results = await Promise.allSettled(
-    due.results.map(({ id }) => schedule(id)),
-  );
-  if (results.some((result) => result.status === "rejected")) {
-    throw new Error("Some due runs could not be scheduled");
-  }
+  return due.results.map(({ id }) => id);
 }

@@ -1,8 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import type { Bindings } from "./internal.ts";
-import { advanceRun, type RunnerDriver } from "./run-execution.ts";
+import type { Bindings } from "../../bindings.ts";
+import { advanceRun } from "../d1/run-execution.ts";
+import { type RunnerDriver } from "../../application/runs/advance-run.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 

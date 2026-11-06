@@ -1,3 +1,4 @@
+import type { TerminalResult } from "../../application/runs/artifacts.ts";
 import { runnerEventSchema, type RunnerEvent } from "@meguri/core/runner";
 import * as v from "valibot";
 
@@ -5,10 +6,6 @@ export type RunArtifactsBucket = {
   get(key: string): Promise<{ text(): Promise<string> } | null>;
   put(key: string, contents: string): Promise<unknown>;
 };
-
-export type TerminalResult =
-  | { status: "succeeded" }
-  | { status: "failed"; errorCode: string };
 
 type ArtifactRecord = {
   version: 1;

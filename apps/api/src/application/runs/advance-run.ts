@@ -1,4 +1,4 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { WriteRunArtifacts } from "./artifacts.ts";
 import {
   executionContextSchema,
   type RunnerEvent,
@@ -6,10 +6,9 @@ import {
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
-import { writeRunArtifacts, type RunArtifactsBucket } from "./run-artifacts.ts";
 
-type RunStatus = "queued" | "running" | "succeeded" | "failed";
-type RunInput = {
+export type RunStatus = "queued" | "running" | "succeeded" | "failed";
+export type RunInput = {
   messageId: string;
   executionContext: string;
   deadlineAt: number;
@@ -46,38 +45,22 @@ function parseJson(json: string): unknown {
 }
 
 export async function advanceRun(
-  db: D1Database,
+  store: RunStore,
   runId: string,
   driver: RunnerDriver,
-  artifacts?: RunArtifactsBucket,
+  writeArtifacts?: WriteRunArtifacts,
 ): Promise<RunProgress | undefined> {
   // A claimed run can have reached the agent even if the caller never got an
   // acknowledgement. Every later tick polls the same container.
-  const claimed = await db
-    .prepare(
-      `UPDATE runs SET status = 'running', next_action_at = ?
-     WHERE id = ? AND status = 'queued'
-     RETURNING start_message_id AS messageId, execution_context AS executionContext,
-               deadline_at AS deadlineAt`,
-    )
-    .bind(Date.now(), runId)
-    .first<RunInput>();
-  const run =
-    claimed ??
-    (await db
-      .prepare(
-        `SELECT start_message_id AS messageId, execution_context AS executionContext,
-            deadline_at AS deadlineAt FROM runs WHERE id = ? AND status = 'running'`,
-      )
-      .bind(runId)
-      .first<RunInput>());
+  const claimed = await store.claim(runId, Date.now());
+  const run = claimed ?? (await store.load(runId));
   if (!run) return undefined;
 
   let outcome: RunnerStatus | RunOutcome;
   if (run.deadlineAt <= Date.now()) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (claimed) {
-    outcome = await dispatchNewRun(db, runId, run, driver);
+    outcome = await dispatchNewRun(store, runId, run, driver);
   } else {
     outcome = await driver
       .poll(runId)
@@ -86,35 +69,27 @@ export async function advanceRun(
 
   if (outcome.status === "running" && run.deadlineAt > Date.now()) {
     const nextActionAt = Math.min(run.deadlineAt, Date.now() + 1_500);
-    await db
-      .prepare(
-        "UPDATE runs SET next_action_at = ? WHERE id = ? AND status = 'running'",
-      )
-      .bind(nextActionAt, runId)
-      .run();
+    await store.schedule(runId, nextActionAt);
     return { status: "running", nextActionAt };
   }
 
   const status = await storeOutcome(
-    db,
+    store,
     runId,
     run.deadlineAt,
     outcome,
-    artifacts,
+    writeArtifacts,
   );
   return status === "succeeded" || status === "failed" ? { status } : undefined;
 }
 
 async function dispatchNewRun(
-  db: D1Database,
+  store: RunStore,
   runId: string,
   run: RunInput,
   driver: RunnerDriver,
 ): Promise<RunnerStatus | RunOutcome> {
-  const message = await db
-    .prepare("SELECT body FROM session_messages WHERE id = ?")
-    .bind(run.messageId)
-    .first<{ body: string }>();
+  const message = await store.readMessage(run.messageId);
   const context = v.safeParse(
     executionContextSchema,
     parseJson(run.executionContext),
@@ -134,11 +109,11 @@ async function dispatchNewRun(
 }
 
 async function storeOutcome(
-  db: D1Database,
+  store: RunStore,
   runId: string,
   deadlineAt: number,
   result: RunnerStatus | RunOutcome,
-  artifacts?: RunArtifactsBucket,
+  writeArtifacts?: WriteRunArtifacts,
 ) {
   let outcome =
     result.status === "running"
@@ -157,73 +132,61 @@ async function storeOutcome(
       events: outcome.events ?? [],
     };
   }
-  if (artifacts) {
+  if (writeArtifacts) {
     try {
       const result =
         outcome.status === "failed"
           ? { status: outcome.status, errorCode: outcome.errorCode }
           : { status: outcome.status };
-      await writeRunArtifacts(
-        artifacts,
-        runId,
-        finishedAt,
-        result,
-        outcome.events ?? [],
-      );
+      await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
     } catch {
       outcome = { status: "failed", errorCode: "artifact_write_failed" };
     }
   }
   if (outcome.status === "failed") {
-    return failRun(db, runId, outcome.errorCode, finishedAt);
+    return failRun(store, runId, outcome.errorCode, finishedAt);
   }
 
   try {
-    const [, update] = await db.batch([
-      db
-        .prepare(
-          `INSERT INTO session_messages (id, session_id, seq, author_kind, body, run_id, created_at)
-         SELECT ?, session_id, (SELECT coalesce(max(seq), 0) + 1 FROM session_messages
-                               WHERE session_id = runs.session_id),
-                'agent', ?, id, ? FROM runs WHERE id = ? AND status = 'running'`,
-        )
-        .bind(crypto.randomUUID(), outcome.reply, finishedAt, runId),
-      db
-        .prepare(
-          "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running'",
-        )
-        .bind(
-          JSON.stringify({ version: 1, kind: "completed" }),
-          finishedAt,
-          runId,
-        ),
-    ]);
-    if (update?.meta.changes === 1) return "succeeded";
+    if (
+      await store.complete(
+        runId,
+        outcome.reply,
+        JSON.stringify({ version: 1, kind: "completed" }),
+        finishedAt,
+      )
+    )
+      return "succeeded";
   } catch {
-    return failRun(db, runId, "persistence_failed", finishedAt);
+    return failRun(store, runId, "persistence_failed", finishedAt);
   }
-  return readRunStatus(db, runId);
+  return store.readStatus(runId);
 }
 
-async function readRunStatus(db: D1Database, runId: string) {
-  const stored = await db
-    .prepare("SELECT status FROM runs WHERE id = ?")
-    .bind(runId)
-    .first<{ status: RunStatus }>();
-  return stored?.status;
-}
+export type RunStore = {
+  claim(runId: string, now: number): Promise<RunInput | null>;
+  load(runId: string): Promise<RunInput | null>;
+  schedule(runId: string, nextActionAt: number): Promise<void>;
+  readMessage(messageId: string): Promise<{ body: string } | null>;
+  complete(
+    runId: string,
+    reply: string,
+    result: string,
+    finishedAt: number,
+  ): Promise<boolean>;
+  readStatus(runId: string): Promise<RunStatus | undefined>;
+  fail(
+    runId: string,
+    code: string,
+    finishedAt: number,
+  ): Promise<"failed" | undefined>;
+};
 
 async function failRun(
-  db: D1Database,
+  store: RunStore,
   runId: string,
   code: string,
   finishedAt: number,
 ) {
-  const failed = await db
-    .prepare(
-      "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING status",
-    )
-    .bind(code, finishedAt, runId)
-    .first<{ status: "failed" }>();
-  return failed?.status ?? readRunStatus(db, runId);
+  return (await store.fail(runId, code, finishedAt)) ?? store.readStatus(runId);
 }

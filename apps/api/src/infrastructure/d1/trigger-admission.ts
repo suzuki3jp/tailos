@@ -1,22 +1,9 @@
 import type { D1Database } from "@cloudflare/workers-types";
 
-export type TriggerAdmission = {
-  source: string;
-  idempotencyKey: string;
-  ownerId: string;
-  projectId?: string;
-  target?: string;
-  concurrencyKey: string;
-  prompt: string;
-  executionContext: string;
-  timeoutMs: number;
-};
-
-type Admission = {
-  sessionId: string;
-  runId: string;
-  disposition: "started" | "coalesced";
-};
+import type {
+  Admission,
+  TriggerAdmission,
+} from "../../application/triggers/admit-trigger.ts";
 
 export async function admitTrigger(
   db: D1Database,

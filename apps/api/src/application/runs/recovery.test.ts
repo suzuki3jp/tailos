@@ -1,8 +1,8 @@
-import assert from "node:assert/strict";
-import { test } from "vitest";
-import { createTestDb } from "./db/testing.ts";
-import { rescheduleDueRuns } from "./run-scheduler.ts";
-import { admitTrigger } from "./trigger-admission.ts";
+import { listDueRunIds } from "../../infrastructure/d1/run-recovery.ts";
+import { expect, test } from "vitest";
+import { createTestDb } from "../../infrastructure/d1/testing.ts";
+import { rescheduleDueRuns } from "./recovery.ts";
+import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
 
 test("reschedules overdue work after the original alarm request was lost", async (t) => {
   const db = await createTestDb(t);
@@ -33,18 +33,23 @@ test("reschedules overdue work after the original alarm request was lost", async
   ]);
 
   const scheduled: string[] = [];
-  await assert.rejects(
-    rescheduleDueRuns(db, async (id) => {
-      if (id === queued.runId) throw new Error("Temporary outage");
-      scheduled.push(id);
-    }),
-    /could not be scheduled/,
-  );
-  assert.deepEqual(scheduled, [running.runId]);
+  await expect(
+    rescheduleDueRuns(
+      (now) => listDueRunIds(db, now),
+      async (id) => {
+        if (id === queued.runId) throw new Error("Temporary outage");
+        scheduled.push(id);
+      },
+    ),
+  ).rejects.toThrow(/could not be scheduled/);
+  expect(scheduled).toStrictEqual([running.runId]);
 
   const retried: string[] = [];
-  await rescheduleDueRuns(db, async (id) => {
-    retried.push(id);
-  });
-  assert.deepEqual(retried.sort(), [queued.runId, running.runId].sort());
+  await rescheduleDueRuns(
+    (now) => listDueRunIds(db, now),
+    async (id) => {
+      retried.push(id);
+    },
+  );
+  expect(retried.sort()).toStrictEqual([queued.runId, running.runId].sort());
 });

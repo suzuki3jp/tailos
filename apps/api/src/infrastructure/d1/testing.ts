@@ -15,7 +15,7 @@ export async function createTestBindings(t: TestContext) {
   t.onTestFinished(() => worker.dispose());
   const db = await worker.getD1Database("DB");
   const migration = await readFile(
-    new URL("../../migrations/0000_initial.sql", import.meta.url),
+    new URL("../../../migrations/0000_initial.sql", import.meta.url),
     "utf8",
   );
   await db.batch(

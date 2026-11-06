@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { createTestDb } from "./db/testing.ts";
 import { rescheduleDueRuns } from "./run-scheduler.ts";
 import { admitTrigger } from "./trigger-admission.ts";

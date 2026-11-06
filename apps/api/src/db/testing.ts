@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { TestContext } from "node:test";
+import type { TestContext } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 export async function createTestBindings(t: TestContext) {
@@ -12,7 +12,7 @@ export async function createTestBindings(t: TestContext) {
       r2Buckets: ["RUN_ARTIFACTS"],
     }),
   );
-  t.after(() => worker.dispose());
+  t.onTestFinished(() => worker.dispose());
   const db = await worker.getD1Database("DB");
   const migration = await readFile(
     new URL("../../migrations/0000_initial.sql", import.meta.url),

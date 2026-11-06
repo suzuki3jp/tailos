@@ -13,6 +13,11 @@ export type Bindings = {
   RUN_ARTIFACTS?: RunArtifactsBucket;
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
   MEGURI_TEST_TOKEN?: string;
+  MEGURI_PUBLIC_ORIGIN?: string;
+  BETTER_AUTH_SECRET?: string;
+  MEGURI_GITHUB_OAUTH_CLIENT_ID?: string;
+  MEGURI_GITHUB_OAUTH_CLIENT_SECRET?: string;
+  MEGURI_OPERATOR_GITHUB_ID?: string;
 };
 
 export const smokeOwnerId = "internal-smoke";

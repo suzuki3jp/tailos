@@ -34,6 +34,8 @@ jobs:
           current_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           if [[ "$current_sha" == "$TESTED_SHA" ]]; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipped deployment: main is at $current_sha, CI tested $TESTED_SHA"
           fi
       - uses: actions/checkout@v7
         if: steps.revision.outputs.deploy == 'true'

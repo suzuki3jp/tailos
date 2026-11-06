@@ -1,11 +1,11 @@
 # Meguri の本番デプロイ
 
-`main` の push に対する CI が成功すると、GitHub Actions が検証済みのコミットから D1 マイグレーションを適用し、Worker と Runner イメージを Cloudflare にデプロイする。最後に `meguri.suzuki3.jp/health` で本実装の Worker が応答することを確認する。
+`main` の push に対する CI が成功すると、GitHub Actions が Wrangler 設定の名前で D1 と R2 を探し、見つからないリソースを作成する。取得した D1 の UUID でマイグレーションを適用し、同じバインディングで Worker と Runner イメージを Cloudflare にデプロイする。最後に `meguri.suzuki3.jp/health` で Worker の応答を確認する。
 
 ## Cloudflare
 
-- D1 に `meguri` データベース、R2 に非公開の `meguri-run-artifacts` バケットを用意する。
-- Cloudflare API トークンには、対象アカウントの Workers・Containers・D1 を更新できる権限、R2 バインディングを参照できる権限、`suzuki3.jp` の Worker ルートを設定できる権限を付ける。
+- D1 の `meguri` と R2 の `meguri-run-artifacts` は、対象アカウントに同名のものがあれば再利用する。新しい R2 バケットは非公開で作成する。
+- Cloudflare API トークンには、対象アカウントの Workers と Containers を更新できる権限、`D1 Write`、`Workers R2 Storage Read` と `Workers R2 Storage Write`、`suzuki3.jp` の Worker ルートを設定できる権限を付ける。
 - `meguri.suzuki3.jp` が prototype の Worker に紐づいている場合は、本実装をデプロイする前に古いカスタムドメインの紐付けを解除する。
 
 ## GitHub Actions
@@ -16,7 +16,6 @@
 | --- | --- | --- |
 | Secret | `CLOUDFLARE_API_TOKEN` | デプロイ用の Cloudflare API トークン |
 | Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID。既存の同名 Secret も使える |
-| Variable | `MEGURI_D1_DATABASE_ID` | 本番 D1 の UUID |
 | Secret | `MEGURI_OPERATOR_TOKEN` | 運用画面用に生成したランダムなパスワード |
 | Secret | `CREDENTIAL_ENCRYPTION_KEY` | `openssl rand -base64 32` で生成した暗号化キー |
 | Variable | `MEGURI_GH_APP_ID` | GitHub App ID |

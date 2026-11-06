@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,9 +5,8 @@ import { join } from "node:path";
 import { parse } from "jsonc-parser";
 import { safeParse } from "valibot";
 import { projectsSchema } from "../src/github/projects.ts";
+import { ensureD1Database, ensureR2Bucket, runWrangler } from "./provision.mjs";
 
-const id = process.env.MEGURI_D1_DATABASE_ID;
-const placeholder = "00000000-0000-0000-0000-000000000000";
 const origin = "https://meguri.suzuki3.jp";
 const domain = new URL(origin).hostname;
 const runtimeSecrets = [
@@ -18,16 +16,6 @@ const runtimeSecrets = [
   "MEGURI_GH_WEBHOOK_SECRET",
 ];
 
-if (
-  !id ||
-  !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id) ||
-  id === placeholder
-) {
-  throw new Error(
-    "Set MEGURI_D1_DATABASE_ID to the production D1 database UUID.",
-  );
-}
-
 const env = { ...process.env };
 const secrets = Object.fromEntries(
   runtimeSecrets
@@ -35,6 +23,11 @@ const secrets = Object.fromEntries(
     .map((name) => [name, env[name]]),
 );
 for (const name of runtimeSecrets) delete env[name];
+if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+  throw new Error(
+    "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to deploy.",
+  );
+}
 
 let projects;
 try {
@@ -93,9 +86,18 @@ if (
 const database = config.d1_databases.find(
   (binding) => binding.binding === "DB",
 );
-if (database?.database_id !== placeholder)
-  throw new Error("Expected the local D1 placeholder.");
-database.database_id = id;
+if (typeof database?.database_name !== "string" || !database.database_name) {
+  throw new Error("The DB binding must specify a database_name.");
+}
+const bucket = config.r2_buckets?.find(
+  (binding) => binding.binding === "RUN_ARTIFACTS",
+);
+if (typeof bucket?.bucket_name !== "string" || !bucket.bucket_name) {
+  throw new Error("The RUN_ARTIFACTS binding must specify a bucket_name.");
+}
+const wrangler = (args, capture) => runWrangler(args, env, capture);
+database.database_id = ensureD1Database(database.database_name, wrangler);
+await ensureR2Bucket(bucket, env, wrangler);
 config.workers_dev = false;
 config.routes = [{ pattern: domain, custom_domain: true }];
 config.vars = {
@@ -118,20 +120,8 @@ try {
     });
     deploy.push("--secrets-file", secretPath);
   }
-  for (const command of [
-    ["d1", "migrations", "apply", "DB", "--remote"],
-    deploy,
-  ]) {
-    const result = spawnSync("wrangler", [...command, "--config", path], {
-      stdio: "inherit",
-      env,
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      process.exitCode = result.status ?? 1;
-      break;
-    }
-  }
+  wrangler(["d1", "migrations", "apply", "DB", "--remote", "--config", path]);
+  wrangler([...deploy, "--config", path]);
 } finally {
   try {
     rmSync(path, { force: true });

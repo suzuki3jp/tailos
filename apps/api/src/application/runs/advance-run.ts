@@ -83,7 +83,8 @@ export async function executeRun(
           : { status: outcome.status };
       await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
     } catch {
-      outcome = { status: "failed", errorCode: "artifact_write_failed" };
+      if (outcome.status === "succeeded")
+        outcome = { status: "failed", errorCode: "artifact_write_failed" };
     }
   }
   if (outcome.status === "failed") {

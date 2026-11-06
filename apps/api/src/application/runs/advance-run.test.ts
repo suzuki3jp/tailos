@@ -242,3 +242,27 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
       .first("count"),
   ).toBe(1);
 });
+
+test("recovers a completed job when the next alarm arrives after its deadline", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const deadline = Date.now() - 1;
+  await db
+    .prepare("UPDATE runs SET status = 'running', deadline_at = ? WHERE id = ?")
+    .bind(deadline, runId)
+    .run();
+
+  const result = await advanceRun(db, runId, {
+    async start() {
+      throw new Error("must not restart");
+    },
+    async poll() {
+      return {
+        status: "succeeded",
+        reply: "Finished in time",
+        events: [{ type: "job_succeeded", at: deadline - 1 }],
+      };
+    },
+  });
+  expect(result).toStrictEqual({ status: "succeeded" });
+});

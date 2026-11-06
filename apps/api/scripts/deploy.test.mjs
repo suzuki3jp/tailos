@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assert, expect, test } from "vitest";
+import { expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 const deploy = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
@@ -145,7 +145,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   writeFileSync(join(cwd, "database"), "");
   writeFileSync(join(cwd, "bucket"), "");
   const result = runDeploy();
-  assert(result.status === 0);
+  expect(result.status, result.stderr).toBe(0);
   const calls = readCalls();
   expect(calls.map(({ command }) => command)).toStrictEqual([
     "d1 list --json",

@@ -1,6 +1,6 @@
 # Meguri の本番デプロイ
 
-GitHub Actions が `main` の更新を受けて D1 マイグレーションを適用し、Worker と Runner イメージを Cloudflare にデプロイする。最後に `meguri.suzuki3.jp/health` で本実装の Worker が応答することを確認する。
+`main` の push に対する CI が成功すると、GitHub Actions が検証済みのコミットから D1 マイグレーションを適用し、Worker と Runner イメージを Cloudflare にデプロイする。最後に `meguri.suzuki3.jp/health` で本実装の Worker が応答することを確認する。
 
 ## Cloudflare
 
@@ -9,6 +9,8 @@ GitHub Actions が `main` の更新を受けて D1 マイグレーションを�
 - `meguri.suzuki3.jp` が prototype の Worker に紐づいている場合は、本実装をデプロイする前に古いカスタムドメインの紐付けを解除する。
 
 ## GitHub Actions
+
+リポジトリの **Settings → Environments → production** を開き、デプロイ元のブランチを `main` のみに制限する。下表の Secret は `production` の Environment secrets に登録する。Variables はリポジトリか `production` に登録できる。既に本番用 Secret をリポジトリに登録している場合は、`production` に登録したうえでリポジトリ側のコピーを削除する。 [GitHub の環境設定](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
 
 | 種別 | 名前 | 値 |
 | --- | --- | --- |

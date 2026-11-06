@@ -43,7 +43,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await this.startRunner(Date.now() + 15_000);
       return true;
     } finally {
-      await this.ctx.container?.destroy();
+      await this.ctx.container?.destroy().catch(() => {
+        // oxlint-disable-next-line no-console -- Record cleanup failures without container data.
+        console.warn("Runner health check container cleanup failed");
+      });
     }
   }
 

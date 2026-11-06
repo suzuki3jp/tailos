@@ -1,11 +1,10 @@
 # Meguri の本番デプロイ
 
-`main` の push に対する CI が成功すると、GitHub Actions が Wrangler 設定の名前で D1 と R2 を探し、見つからないリソースを作成する。取得した D1 の UUID でマイグレーションを適用し、同じバインディングで Worker と Runner イメージを Cloudflare にデプロイする。最後に `meguri.suzuki3.jp/health` で Worker の応答を確認する。
+`main` の push に対する CI が成功すると、GitHub Actions が Wrangler 設定の名前で既存の D1 と R2 を探す。両方が見つかったら、取得した D1 の UUID でマイグレーションを適用し、Worker と Runner イメージをデプロイする。最後に `meguri.suzuki3.jp/health` で Worker の応答を確認する。どちらかが見つからなければマイグレーション前に失敗する。
 
 ## Cloudflare
 
-- D1 の `meguri` と R2 の `meguri-run-artifacts` は、対象アカウントに同名のものがあれば再利用する。新しい R2 バケットは非公開で作成する。
-- 初回以降に新規作成の警告が出た場合は、対象アカウントと Wrangler のバインディング名を確認する。既存リソースの名前や対象アカウントが変わると、デプロイ先が空のリソースに切り替わることがある。
+- D1 の `meguri` と R2 の `meguri-run-artifacts` がまだない場合は、手動の **Provision Cloudflare resources** で作成する。R2 は非公開で作成される。同名のリソースは再利用される。
 - Cloudflare API トークンには、対象アカウントの Workers と Containers を更新できる権限、`D1 Write`、`Workers R2 Storage Read` と `Workers R2 Storage Write`、`suzuki3.jp` の Worker ルートを設定できる権限を付ける。
 - `meguri.suzuki3.jp` が prototype の Worker に紐づいている場合は、本実装をデプロイする前に古いカスタムドメインの紐付けを解除する。
 
@@ -25,6 +24,12 @@
 | Variable | `MEGURI_PROJECTS` | 対象リポジトリと起動条件の JSON 配列。例は [projects.example.json](../config/projects.example.json) |
 
 `MEGURI_PROJECTS` が空の場合は GitHub 起動を無効にして Worker をデプロイできる。暗号化キーと運用画面のパスワードを設定すると `/connect` が使える。資格情報を保存した後に暗号化キーを交換する場合は、ChatGPT を接続し直す。
+
+### 初回セットアップ
+
+手動ワークフローが `main` に入ったら、GitHub の **Actions → Provision Cloudflare resources → Run workflow** で `main` を選んで実行する。セットアップは不足分の作成までを行う。初回デプロイがリソース不足で失敗した場合は、セットアップの成功後に、最新の `main` に対する **Deploy API** の失敗ジョブを再実行する。 [GitHub Actions の再実行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
+
+運用開始後にリソース不足が出たときは、セットアップを再実行する前に対象アカウントと Wrangler のリソース名を確認する。
 
 ## GitHub App
 

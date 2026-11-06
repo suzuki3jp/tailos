@@ -15,15 +15,18 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const deploy = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
+const provision = fileURLToPath(
+  new URL("./provision-resources.mjs", import.meta.url),
+);
+const id = "fcb7056f-e824-41f1-b447-b78d1408ab63";
 const sourceConfig = new URL("../wrangler.jsonc", import.meta.url);
 
-test("provisions resources before migrating and deploying, then removes runtime secrets", (t) => {
+function setup(t) {
   const cwd = mkdtempSync(join(tmpdir(), "meguri-test-deploy-"));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   copyFileSync(sourceConfig, join(cwd, "wrangler.jsonc"));
   const wrangler = join(cwd, "wrangler");
   const capture = join(cwd, "capture.ndjson");
-  const id = "fcb7056f-e824-41f1-b447-b78d1408ab63";
   writeFileSync(
     wrangler,
     `#!/usr/bin/env node
@@ -73,34 +76,94 @@ test("provisions resources before migrating and deploying, then removes runtime 
     MEGURI_TEST_CAPTURE: capture,
     CLOUDFLARE_ACCOUNT_ID: "test-account",
     CLOUDFLARE_API_TOKEN: "test-token",
-    GITHUB_ACTIONS: "true",
-    MEGURI_PROJECTS: "[]",
-    MEGURI_OPERATOR_TOKEN: "test-operator",
-    CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
   };
-  const runDeploy = (overrides = {}) =>
-    spawnSync(process.execPath, ["--import", fetchStub, deploy], {
+  const run = (script, overrides = {}) =>
+    spawnSync(process.execPath, ["--import", fetchStub, script], {
       cwd,
       env: { ...env, ...overrides },
       encoding: "utf8",
     });
-  const result = runDeploy();
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /::warning::Created an empty D1 database/);
-  assert.match(result.stdout, /::warning::Created an empty R2 bucket/);
+  const runDeploy = (overrides = {}) =>
+    run(deploy, {
+      MEGURI_PROJECTS: "[]",
+      MEGURI_OPERATOR_TOKEN: "test-operator",
+      CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      ...overrides,
+    });
   const readCalls = () =>
     readFileSync(capture, "utf8").trim().split("\n").map(JSON.parse);
-  const calls = readCalls();
+
+  return { cwd, runDeploy, runProvision: () => run(provision), readCalls };
+}
+
+test("deploy stops before creation or migration when either resource is missing", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+
+  const missingDatabase = runDeploy();
+  assert.notEqual(missingDatabase.status, 0);
+  assert.match(missingDatabase.stderr, /D1 database "meguri" is missing/);
+  assert.match(missingDatabase.stderr, /Provision Cloudflare resources/);
   assert.deepEqual(
-    calls.map(({ command }) => command),
+    readCalls().map(({ command }) => command),
+    ["d1 list --json"],
+  );
+
+  writeFileSync(join(cwd, "database"), "");
+  const missingBucket = runDeploy();
+  assert.notEqual(missingBucket.status, 0);
+  assert.match(
+    missingBucket.stderr,
+    /R2 bucket "meguri-run-artifacts" is missing/,
+  );
+  assert.match(missingBucket.stderr, /Provision Cloudflare resources/);
+  assert.deepEqual(
+    readCalls()
+      .slice(1)
+      .map(({ command }) => command),
+    ["d1 list --json", "look up R2"],
+  );
+});
+
+test("manual provisioning creates only missing resources and is safe to repeat", (t) => {
+  const { runProvision, readCalls } = setup(t);
+
+  const first = runProvision();
+  assert.equal(first.status, 0, first.stderr);
+  const second = runProvision();
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual(
+    readCalls().map(({ command }) => command),
     [
       "d1 list --json",
       "d1 create meguri --no-update-config",
       "d1 list --json",
       "look up R2",
       "r2 bucket create meguri-run-artifacts --no-update-config",
+      "d1 list --json",
+      "look up R2",
+    ],
+  );
+});
+
+test("deploy uses existing resources and removes temporary runtime secrets", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  writeFileSync(join(cwd, "database"), "");
+  writeFileSync(join(cwd, "bucket"), "");
+  const result = runDeploy();
+  assert.equal(result.status, 0, result.stderr);
+  const calls = readCalls();
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    [
+      "d1 list --json",
+      "look up R2",
       ["d1", "migrations", "apply", "DB", "--remote"],
-      ["deploy", "--secrets-file", calls.at(-1).runtime.path],
+      [
+        "deploy",
+        "--no-experimental-provision",
+        "--secrets-file",
+        calls.at(-1).runtime.path,
+      ],
     ],
   );
   const [migration, published] = calls.slice(-2);
@@ -126,22 +189,8 @@ test("provisions resources before migrating and deploying, then removes runtime 
     false,
   );
 
-  const redeployed = runDeploy();
-  assert.equal(redeployed.status, 0, redeployed.stderr);
-  assert.doesNotMatch(redeployed.stdout, /::warning::/);
-  const repeated = readCalls().slice(calls.length);
-  assert.deepEqual(
-    repeated.map(({ command }) => command),
-    [
-      "d1 list --json",
-      "look up R2",
-      ["d1", "migrations", "apply", "DB", "--remote"],
-      ["deploy", "--secrets-file", repeated.at(-1).runtime.path],
-    ],
-  );
-
   const misconfigured = runDeploy({ MEGURI_PROJECTS: "[{}]" });
   assert.notEqual(misconfigured.status, 0);
   assert.match(misconfigured.stderr, /GitHub projects require/);
-  assert.equal(readCalls().length, calls.length + repeated.length);
+  assert.equal(readCalls().length, calls.length);
 });

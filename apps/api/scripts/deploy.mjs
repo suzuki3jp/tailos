@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse } from "jsonc-parser";
 import { safeParse } from "valibot";
 import { projectsSchema } from "../src/github/projects.ts";
-import { ensureD1Database, ensureR2Bucket, runWrangler } from "./provision.mjs";
+import {
+  findD1Database,
+  hasR2Bucket,
+  readResourceConfig,
+  requireCloudflareCredentials,
+  runWrangler,
+} from "./provision.mjs";
 
 const origin = "https://meguri.suzuki3.jp";
 const domain = new URL(origin).hostname;
@@ -23,11 +28,7 @@ const secrets = Object.fromEntries(
     .map((name) => [name, env[name]]),
 );
 for (const name of runtimeSecrets) delete env[name];
-if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
-  throw new Error(
-    "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to deploy.",
-  );
-}
+requireCloudflareCredentials(env);
 
 let projects;
 try {
@@ -71,33 +72,20 @@ if (!checkedProjects.success) {
   );
 }
 
-const configErrors = [];
-const config = parse(readFileSync("wrangler.jsonc", "utf8"), configErrors, {
-  allowTrailingComma: true,
-});
-if (
-  configErrors.length ||
-  !config ||
-  typeof config !== "object" ||
-  !Array.isArray(config.d1_databases)
-) {
-  throw new Error("Invalid Wrangler configuration.");
-}
-const database = config.d1_databases.find(
-  (binding) => binding.binding === "DB",
-);
-if (typeof database?.database_name !== "string" || !database.database_name) {
-  throw new Error("The DB binding must specify a database_name.");
-}
-const bucket = config.r2_buckets?.find(
-  (binding) => binding.binding === "RUN_ARTIFACTS",
-);
-if (typeof bucket?.bucket_name !== "string" || !bucket.bucket_name) {
-  throw new Error("The RUN_ARTIFACTS binding must specify a bucket_name.");
-}
+const { config, database, bucket } = readResourceConfig();
 const wrangler = (args, capture) => runWrangler(args, env, capture);
-database.database_id = ensureD1Database(database.database_name, wrangler);
-await ensureR2Bucket(bucket, env, wrangler);
+const id = findD1Database(database.database_name, wrangler);
+if (!id) {
+  throw new Error(
+    `D1 database "${database.database_name}" is missing. Verify the account and name, then run Provision Cloudflare resources if it needs to be created.`,
+  );
+}
+if (!(await hasR2Bucket(bucket, env))) {
+  throw new Error(
+    `R2 bucket "${bucket.bucket_name}" is missing. Verify the account and name, then run Provision Cloudflare resources if it needs to be created.`,
+  );
+}
+database.database_id = id;
 config.workers_dev = false;
 config.routes = [{ pattern: domain, custom_domain: true }];
 config.vars = {
@@ -111,7 +99,7 @@ const path = `wrangler.deploy.${randomUUID()}.jsonc`;
 const secretDir = mkdtempSync(join(tmpdir(), "meguri-deploy-"));
 try {
   writeFileSync(path, JSON.stringify(config), { flag: "wx" });
-  const deploy = ["deploy"];
+  const deploy = ["deploy", "--no-experimental-provision"];
   if (Object.keys(secrets).length) {
     const secretPath = join(secretDir, "secrets.json");
     writeFileSync(secretPath, JSON.stringify(secrets), {

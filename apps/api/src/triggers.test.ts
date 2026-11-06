@@ -1,3 +1,6 @@
+import { executionContextSchema } from "@meguri/core/runner";
+import { parse } from "valibot";
+import { createTestOperator, testLoginBindings } from "./auth/testing.ts";
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { createTestDb } from "./db/testing.ts";
@@ -76,4 +79,45 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
   assert.notEqual(next.sessionId, first.sessionId);
   assert.equal(next.disposition, "started");
   assert.deepEqual(await send("two", "changed-target"), second);
+});
+
+test("Codex smoke triggers require an operator and select that user's connection", async (t) => {
+  const DB = await createTestDb(t);
+  const env = { ...testLoginBindings(DB), MEGURI_TEST_TOKEN: "test-token" };
+  const send = () =>
+    app.request(
+      "/_internal/triggers",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-token" },
+        body: JSON.stringify({
+          deliveryId: "codex-delivery",
+          target: "test-target",
+          engine: "codex",
+          prompt: "Implement the request",
+        }),
+      },
+      env,
+    );
+
+  const denied = await send();
+  assert.equal(denied.status, 503);
+  assert.deepEqual(await denied.json(), { error: "operator_not_initialized" });
+  assert.equal(
+    await DB.prepare("SELECT count(*) AS n FROM runs").first("n"),
+    0,
+  );
+
+  const operator = await createTestOperator(env);
+  const accepted = await send();
+  assert.equal(accepted.status, 200);
+  const context = await DB.prepare(
+    "SELECT execution_context FROM runs",
+  ).first<string>("execution_context");
+  assert.ok(context);
+  assert.deepEqual(parse(executionContextSchema, JSON.parse(context)), {
+    version: 1,
+    engine: "codex",
+    connectionId: `codex/${operator.id}`,
+  });
 });

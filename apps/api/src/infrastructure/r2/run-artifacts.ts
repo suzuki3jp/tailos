@@ -42,7 +42,13 @@ export async function writeRunArtifacts(
     result,
     events,
   };
-  await bucket.put(key(runId), JSON.stringify(record));
+  try {
+    await bucket.put(key(runId), JSON.stringify(record));
+  } catch (error) {
+    // oxlint-disable-next-line no-console -- Record storage failures without artifact data.
+    console.warn("Run artifact write failed", { runId });
+    throw error;
+  }
 }
 
 export async function readRunArtifact(

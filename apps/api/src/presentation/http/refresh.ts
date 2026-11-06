@@ -57,6 +57,8 @@ export function createRefreshRoutes(
       if (!work.success || work.output.kind !== "prepared")
         return c.json({ error: "invalid_publication" }, 400);
       try {
+        const run = await findActiveRun(c.env, runId.output, Date.now());
+        if (!run) return c.json({ error: "invalid_lease" }, 401);
         const staged = await c.env.RUNNER.getByName(
           runId.output,
         ).stagePublication(runId.output, bearer, work.output);

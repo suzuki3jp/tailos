@@ -84,7 +84,7 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
 test("Codex smoke triggers require an operator and select that user's connection", async (t) => {
   const DB = await createTestDb(t);
   const env = { ...testLoginBindings(DB), MEGURI_TEST_TOKEN: "test-token" };
-  const send = () =>
+  const send = (bindings: { DB: typeof DB; MEGURI_TEST_TOKEN: string } = env) =>
     app.request(
       "/_internal/triggers",
       {
@@ -97,9 +97,14 @@ test("Codex smoke triggers require an operator and select that user's connection
           prompt: "Implement the request",
         }),
       },
-      env,
+      bindings,
     );
 
+  const unconfigured = await send({
+    DB,
+    MEGURI_TEST_TOKEN: env.MEGURI_TEST_TOKEN,
+  });
+  assert.equal(unconfigured.status, 503);
   const denied = await send();
   assert.equal(denied.status, 503);
   assert.deepEqual(await denied.json(), { error: "operator_not_initialized" });

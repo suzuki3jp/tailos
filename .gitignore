@@ -18,3 +18,4 @@ wrangler.deploy.json
 npm-debug.log*
 pnpm-debug.log*
 .claude/settings.local.json
+apps/api/wrangler.deploy.*.jsonc

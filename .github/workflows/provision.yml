@@ -1,0 +1,36 @@
+name: Provision Cloudflare resources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+
+jobs:
+  provision:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    concurrency:
+      group: meguri-api-production
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - name: Create missing Cloudflare resources
+        run: pnpm --filter @meguri/api run provision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}

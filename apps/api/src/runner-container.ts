@@ -35,7 +35,10 @@ export class RunnerContainer extends DurableObject {
       }
       return false;
     } finally {
-      await container.destroy();
+      await container.destroy().catch(() => {
+        // oxlint-disable-next-line no-console -- Record cleanup failures without container data.
+        console.warn("Runner health check container cleanup failed");
+      });
     }
   }
 }

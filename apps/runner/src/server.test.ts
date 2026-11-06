@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { test } from "node:test";
+import { test } from "vitest";
 import { createRunnerServer } from "./server.ts";
 
 test("serves only the runner health endpoint", async (t) => {
   const server = createRunnerServer();
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  t.onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
 

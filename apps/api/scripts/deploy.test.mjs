@@ -190,6 +190,8 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
     published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_SECRET,
     undefined,
   );
+  assert.equal(migration.secretInEnvironment, false);
+  assert.equal(migration.runtime, false);
   assert.equal(published.secretInEnvironment, false);
   assert.deepEqual(published.runtime.names, [
     "BETTER_AUTH_SECRET",

@@ -38,8 +38,6 @@
 
 GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。最終構成の Homepage URL は `https://meguri.suzuki3.jp`、Authorization callback URL は `https://meguri.suzuki3.jp/api/auth/callback/github`。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
-カスタムドメイン導入前にログインを試す場合は、同じ表の設定に加えて `MEGURI_PUBLIC_ORIGIN` に Worker の `workers.dev` オリジンを設定し、OAuth App の callback URL にそのオリジンを使う。本番ドメインに切り替えるときは callback URL も更新する。
-
 ## GitHub App
 
 対象リポジトリに App をインストールし、Repository permissions を **Issues: Read**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://meguri.suzuki3.jp/webhooks/github` とし、`Issues` イベントを購読する。

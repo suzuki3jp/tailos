@@ -89,7 +89,7 @@ export function createConnectRoutes(
       "Content-Security-Policy",
       "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     );
-    c.header("Referrer-Policy", "no-referrer");
+    c.header("Referrer-Policy", "same-origin");
     c.set(
       "broker",
       bindings.getByName(codexConnectionId(c.var.operatorUserId)),

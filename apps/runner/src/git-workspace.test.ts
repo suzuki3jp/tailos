@@ -75,9 +75,14 @@ test("pushes changes to the assigned branch without changing the base ref or sto
       expect(stagedBranch).toBe(branch);
       stagedSha = sha;
       expect(reply).toBe("Edited README");
-      expect(() =>
-        git(repository, "show-ref", "--verify", `refs/heads/${branch}`),
-      ).toThrow();
+      expect(
+        git(
+          repository,
+          "for-each-ref",
+          "--format=%(refname)",
+          `refs/heads/${branch}`,
+        ),
+      ).toBe("");
     },
   );
   expect(result.reply).toBe("Edited README");

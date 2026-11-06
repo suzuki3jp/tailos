@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { afterEach, test, vi } from "vitest";
+import { expect, afterEach, test, vi } from "vitest";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -12,24 +11,23 @@ const database = {
 };
 
 test("reuses the exact D1 database name", () => {
-  assert.equal(
+  expect(
     ensureD1Database(database.name, (args, capture) => {
-      assert.deepEqual(args, ["d1", "list", "--json"]);
-      assert.equal(capture, true);
+      expect(args).toStrictEqual(["d1", "list", "--json"]);
+      expect(capture).toBe(true);
       return JSON.stringify([{ ...database, name: "meguri-dev" }, database]);
     }),
-    database.uuid,
-  );
+  ).toBe(database.uuid);
 });
 
 for (const concurrent of [false, true]) {
   test(`resolves the UUID after ${concurrent ? "a concurrent" : "the first"} D1 creation`, () => {
     let created = false;
-    assert.equal(
+    expect(
       ensureD1Database(database.name, (args) => {
         if (args[1] === "list")
           return JSON.stringify(created ? [database] : []);
-        assert.deepEqual(args, [
+        expect(args).toStrictEqual([
           "d1",
           "create",
           database.name,
@@ -38,21 +36,18 @@ for (const concurrent of [false, true]) {
         created = true;
         if (concurrent) throw new Error("Already exists");
       }),
-      database.uuid,
-    );
-    assert.equal(created, true);
+    ).toBe(database.uuid);
+    expect(created).toBe(true);
   });
 }
 
 test("does not create a database after a failed lookup", () => {
-  assert.throws(
-    () =>
-      ensureD1Database(database.name, (args) => {
-        assert.deepEqual(args, ["d1", "list", "--json"]);
-        throw new Error("Cloudflare denied lookup");
-      }),
-    /Cloudflare denied lookup/,
-  );
+  expect(() =>
+    ensureD1Database(database.name, (args) => {
+      expect(args).toStrictEqual(["d1", "list", "--json"]);
+      throw new Error("Cloudflare denied lookup");
+    }),
+  ).toThrow(/Cloudflare denied lookup/);
 });
 
 const bucket = { bucket_name: "meguri-run-artifacts" };
@@ -68,18 +63,17 @@ const missing = () =>
 test("reuses the exact R2 bucket name in the configured jurisdiction", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(
     (url, { headers, redirect }) => {
-      assert.equal(
-        url,
+      expect(url).toBe(
         "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts",
       );
-      assert.equal(headers.Authorization, "Bearer test-token");
-      assert.equal(headers["cf-r2-jurisdiction"], "eu");
-      assert.equal(redirect, "error");
+      expect(headers.Authorization).toBe("Bearer test-token");
+      expect(headers["cf-r2-jurisdiction"]).toBe("eu");
+      expect(redirect).toBe("error");
       return Promise.resolve(found());
     },
   );
   await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, () => {
-    assert.fail("Existing bucket must be reused");
+    expect.fail("Existing bucket must be reused");
   });
 });
 
@@ -90,7 +84,7 @@ for (const concurrent of [false, true]) {
       Promise.resolve(created ? found() : missing()),
     );
     await ensureR2Bucket({ ...bucket, jurisdiction: "eu" }, env, (args) => {
-      assert.deepEqual(args, [
+      expect(args).toStrictEqual([
         "r2",
         "bucket",
         "create",
@@ -102,7 +96,7 @@ for (const concurrent of [false, true]) {
       created = true;
       if (concurrent) throw new Error("Already exists");
     });
-    assert.equal(created, true);
+    expect(created).toBe(true);
   });
 }
 
@@ -111,9 +105,8 @@ for (const status of [403, 404, 500]) {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(Response.json({ errors: [{ code: 1000 }] }, { status })),
     );
-    await assert.rejects(
-      ensureR2Bucket(bucket, env, () => assert.fail("Unexpected creation")),
-      /Could not look up R2 bucket/,
-    );
+    await expect(
+      ensureR2Bucket(bucket, env, () => expect.fail("Unexpected creation")),
+    ).rejects.toThrow(/Could not look up R2 bucket/);
   });
 }

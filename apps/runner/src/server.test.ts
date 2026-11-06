@@ -1,7 +1,6 @@
-import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { test, type TestContext } from "vitest";
+import { assert, expect, test, type TestContext } from "vitest";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
 import type { AgentAdapter } from "./agent.ts";
@@ -16,7 +15,7 @@ async function listen(t: TestContext, agent?: AgentAdapter) {
   await once(server, "listening");
 
   const address = server.address();
-  assert.ok(address && typeof address === "object");
+  assert(address && typeof address === "object");
   return `http://127.0.0.1:${address.port}`;
 }
 
@@ -30,13 +29,15 @@ const sendJob = (origin: string, job: RunnerJob) =>
 test("serves the internal health endpoint", async (t) => {
   const origin = await listen(t);
   const health = await fetch(`${origin}/health`);
-  assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { status: "ok", service: "runner" });
-  assert.equal(
-    (await fetch(`${origin}/health`, { method: "POST" })).status,
+  expect(health.status).toBe(200);
+  expect(await health.json()).toStrictEqual({
+    status: "ok",
+    service: "runner",
+  });
+  expect((await fetch(`${origin}/health`, { method: "POST" })).status).toBe(
     404,
   );
-  assert.equal((await fetch(`${origin}/`)).status, 404);
+  expect((await fetch(`${origin}/`)).status).toBe(404);
 });
 
 test("executes the selected agent once and rejects a different job", async (t) => {
@@ -54,24 +55,23 @@ test("executes the selected agent once and rejects a different job", async (t) =
     prompt: "Fix the issue",
     deadlineAt: Date.now() + 60_000,
   };
-  assert.equal((await sendJob(origin, { ...job, prompt: "" })).status, 400);
-  assert.equal((await sendJob(origin, job)).status, 202);
-  assert.equal((await sendJob(origin, job)).status, 202);
-  assert.equal(
-    (await sendJob(origin, { ...job, runId: randomUUID() })).status,
+  expect((await sendJob(origin, { ...job, prompt: "" })).status).toBe(400);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await sendJob(origin, { ...job, runId: randomUUID() })).status).toBe(
     409,
   );
-  assert.equal(calls, 1);
+  expect(calls).toBe(1);
   const result = v.parse(
     runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
-  assert.equal(result.status, "succeeded");
-  assert.equal(result.reply, "Received Fix the issue");
-  assert.deepEqual(
-    result.events.map((event) => event.type),
-    ["job_started", "job_succeeded"],
-  );
+  assert(result.status === "succeeded");
+  expect(result.reply).toBe("Received Fix the issue");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_succeeded",
+  ]);
 });
 
 test("cancels an active adapter at the job deadline", async (t) => {
@@ -91,19 +91,19 @@ test("cancels an active adapter at the job deadline", async (t) => {
     prompt: "Wait",
     deadlineAt: Date.now() + 500,
   };
-  assert.equal((await sendJob(origin, job)).status, 202);
-  assert.ok(signal);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  assert(signal);
   if (!signal.aborted) await once(signal, "abort");
   const result = v.parse(
     runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
-  assert.equal(result.status, "failed");
-  assert.equal(result.errorCode, "deadline_exceeded");
-  assert.deepEqual(
-    result.events.map((event) => event.type),
-    ["job_started", "job_failed"],
-  );
+  assert(result.status === "failed");
+  expect(result.errorCode).toBe("deadline_exceeded");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_failed",
+  ]);
 });
 
 test("reports out-of-contract replies as agent failures", async (t) => {
@@ -119,15 +119,15 @@ test("reports out-of-contract replies as agent failures", async (t) => {
     prompt: "Reply",
     deadlineAt: Date.now() + 60_000,
   };
-  assert.equal((await sendJob(origin, job)).status, 202);
+  expect((await sendJob(origin, job)).status).toBe(202);
   const result = v.parse(
     runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
-  assert.equal(result.status, "failed");
-  assert.equal(result.errorCode, "agent_failed");
-  assert.deepEqual(
-    result.events.map((event) => event.type),
-    ["job_started", "job_failed"],
-  );
+  assert(result.status === "failed");
+  expect(result.errorCode).toBe("agent_failed");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_failed",
+  ]);
 });

@@ -10,6 +10,9 @@ export const pendingPublicationSchema = v.strictObject({
 });
 const stateSchema = v.object({
   pendingPublication: v.optional(pendingPublicationSchema),
+  publicationStartedAt: v.optional(
+    v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  ),
 });
 
 // Agent work stops at the Run deadline. Publishing already staged work gets a
@@ -27,5 +30,29 @@ export function pendingPublication(
     return state.success ? (state.output.pendingPublication ?? null) : null;
   } catch {
     return null;
+  }
+}
+
+// A prepared checkpoint is still Agent work until the Runner finishes its push.
+// Reconciliation gets a bounded window starting when its first check begins.
+export function publicationDeadline(
+  stepState: string | null,
+  runDeadline: number,
+) {
+  if (!stepState) return runDeadline;
+  try {
+    const state = v.parse(stateSchema, JSON.parse(stepState));
+    if (state.publicationStartedAt) {
+      return Math.min(
+        state.publicationStartedAt + publicationRecoveryMs,
+        runDeadline + publicationRecoveryMs,
+      );
+    }
+    // Older pushed checkpoints predate the reconciliation timestamp.
+    return state.pendingPublication?.kind === "pushed"
+      ? runDeadline + publicationRecoveryMs
+      : runDeadline;
+  } catch {
+    return runDeadline;
   }
 }

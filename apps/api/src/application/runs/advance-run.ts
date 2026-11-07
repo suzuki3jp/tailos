@@ -8,7 +8,7 @@ import {
 import * as v from "valibot";
 import {
   pendingPublication,
-  publicationRecoveryMs,
+  publicationDeadline,
   type PendingPublication,
 } from "./publication.ts";
 
@@ -91,7 +91,8 @@ export async function advanceRun(
     parseJson(run.executionContext),
   );
   let outcome: RunnerStatus | RunOutcome;
-  let pending = claimed ? null : pendingPublication(run.stepState);
+  let stepState = run.stepState;
+  let pending = claimed ? null : pendingPublication(stepState);
   if (claimed && run.deadlineAt <= Date.now()) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (!context.success) {
@@ -105,15 +106,16 @@ export async function advanceRun(
   }
 
   if (
-    !pending &&
     !claimed &&
-    (outcome.status !== "running" || Date.now() >= run.deadlineAt)
+    (pending || outcome.status !== "running" || Date.now() >= run.deadlineAt)
   ) {
-    // The Runner can checkpoint, then lose its response or container during this poll.
-    pending = pendingPublication((await store.load(runId))?.stepState ?? null);
-    if (pending) outcome = { status: "running" };
+    // A push checkpoint or reconciliation timestamp may have changed during polling.
+    stepState = (await store.load(runId))?.stepState ?? stepState;
+    const latest = pendingPublication(stepState);
+    if (!pending && latest) outcome = { status: "running" };
+    pending = latest;
   }
-  const recoveryDeadline = run.deadlineAt + publicationRecoveryMs;
+  const recoveryDeadline = publicationDeadline(stepState, run.deadlineAt);
   const pollDeadline = pending ? recoveryDeadline : run.deadlineAt;
   if (outcome.status === "running" && pollDeadline > Date.now()) {
     return scheduleNext(store, runId, pollDeadline);
@@ -126,6 +128,7 @@ export async function advanceRun(
     store,
     runId,
     run.deadlineAt,
+    recoveryDeadline,
     outcome,
     pending,
     writeArtifacts,
@@ -169,6 +172,7 @@ async function storeOutcome(
   store: RunStore,
   runId: string,
   deadlineAt: number,
+  recoveryDeadline: number,
   result: RunnerStatus | RunOutcome,
   pending: PendingPublication | null,
   writeArtifacts?: WriteRunArtifacts,
@@ -242,7 +246,7 @@ async function storeOutcome(
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))
       return "succeeded";
   } catch {
-    if (published && Date.now() < deadlineAt + publicationRecoveryMs) {
+    if (published && Date.now() < recoveryDeadline) {
       return "running";
     }
     return failRun(

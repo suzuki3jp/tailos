@@ -129,3 +129,41 @@ test("reuses the pull request after a lost response and never publishes a differ
   expect(await github.publish(target, runId, { branch, sha })).toBe(pullUrl);
   expect(created).toBe(1);
 });
+
+test("checks a lost push using a read-only grant and treats absent or different refs as unpushed", async () => {
+  const runId = randomUUID();
+  const work = { branch: workBranchFor(target, runId), sha };
+  let remote: string | null = null;
+  let revocations = 0;
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/access_tokens")) {
+        expect(JSON.parse(String(init?.body))).toStrictEqual({
+          repository_ids: [42],
+          permissions: { contents: "read" },
+        });
+        return Response.json({
+          token: "read-only-grant",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      }
+      if (url.pathname.includes("/git/ref/heads/")) {
+        return remote
+          ? Response.json({ object: { sha: remote } })
+          : new Response(null, { status: 404 });
+      }
+      expect(url.pathname).toBe("/installation/token");
+      expect(init?.method).toBe("DELETE");
+      revocations++;
+      return new Response(null, { status: 204 });
+    },
+  );
+  expect(await github.hasCommit(target, runId, work)).toBe(false);
+  remote = "b".repeat(40);
+  expect(await github.hasCommit(target, runId, work)).toBe(false);
+  remote = sha;
+  expect(await github.hasCommit(target, runId, work)).toBe(true);
+  expect(revocations).toBe(3);
+});

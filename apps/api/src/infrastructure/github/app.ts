@@ -174,6 +174,27 @@ export class GitHubApp {
       throw new Error("GitHub token revocation failed");
   }
 
+  async hasCommit(
+    target: RepositoryTarget,
+    runId: string,
+    work: { branch: string; sha: string },
+  ) {
+    if (work.branch !== workBranchFor(target, runId))
+      throw new Error("Unexpected work branch");
+    const { token } = await this.token(target, { contents: "read" });
+    try {
+      const response = await this.request(
+        `/repos/${target.repository}/git/ref/heads/${encodeURIComponent(work.branch)}`,
+        token,
+      );
+      if (response.status === 404) return false;
+      if (!response.ok) throw new Error("GitHub ref verification unavailable");
+      return v.parse(refSchema, await response.json()).object.sha === work.sha;
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
+  }
+
   async publish(
     target: RepositoryTarget,
     runId: string,

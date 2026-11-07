@@ -1,7 +1,10 @@
-import { stageRunPublication } from "../d1/run-publication.ts";
+import {
+  beginPublicationReconciliation,
+  stageRunPublication,
+} from "../d1/run-publication.ts";
 import {
   pendingPublication,
-  publicationRecoveryMs,
+  publicationDeadline,
   type PendingPublication,
 } from "../../application/runs/publication.ts";
 import { GitHubApp } from "../github/app.ts";
@@ -331,27 +334,55 @@ export class RunnerContainer extends DurableObject<Bindings> {
   ) {
     const target = context.engine === "codex" ? context.repository : undefined;
     const pending = target ? pendingPublication(stepState) : null;
-    if (target && pending)
-      return this.publish(runId, target, deadlineAt, pending);
+    if (target && pending?.kind === "pushed")
+      return this.publish(
+        runId,
+        target,
+        publicationDeadline(stepState, deadlineAt),
+        pending,
+      );
 
-    const container = this.ctx.container;
-    if (!container?.running)
-      return { status: "failed", errorCode: "runner_lost" } as const;
+    const status = await this.readRunnerStatus(runId);
+    if (target && pending) {
+      if (status.status === "running" && Date.now() < deadlineAt) return status;
+      if (
+        !(await beginPublicationReconciliation(
+          this.env.DB,
+          runId,
+          pending,
+          false,
+        ))
+      )
+        throw new Error("Publication checkpoint changed");
 
-    const reply = await container
-      .getTcpPort(8080)
-      .fetch(`http://runner/job/${runId}`, {
-        signal: AbortSignal.timeout(3_000),
-      });
-    if (reply.status === 404) {
-      await reply.body?.cancel();
-      return { status: "failed", errorCode: "runner_lost" } as const;
+      const pushed =
+        status.status === "succeeded" &&
+        status.publication?.kind === "pushed" &&
+        status.publication.branch === pending.branch &&
+        status.publication.sha === pending.sha;
+      if (!pushed) {
+        const github = this.github;
+        if (!github) throw new Error("GitHub verification unavailable");
+        if (!(await github.hasCommit(target, runId, pending))) {
+          return status.status === "failed"
+            ? status
+            : ({
+                status: "failed",
+                errorCode: "repository_unavailable",
+              } as const);
+        }
+      }
+      if (
+        !(await beginPublicationReconciliation(
+          this.env.DB,
+          runId,
+          pending,
+          true,
+        ))
+      )
+        throw new Error("Publication checkpoint changed");
+      return { status: "running" } as const;
     }
-    if (!reply.ok) {
-      await reply.body?.cancel();
-      throw new Error("Runner status unavailable");
-    }
-    const status = v.parse(runnerStatusSchema, await reply.json());
     if (status.status !== "succeeded" || !target) return status;
     if (!status.publication)
       return { status: "failed", errorCode: "repository_unavailable" } as const;
@@ -365,9 +396,37 @@ export class RunnerContainer extends DurableObject<Bindings> {
       ...status.publication,
     };
     // An older Runner may report a pushed commit without a checkpoint.
-    if (!(await stageRunPublication(this.env.DB, runId, pendingWork)))
+    if (
+      !(await stageRunPublication(this.env.DB, runId, pendingWork)) ||
+      !(await beginPublicationReconciliation(
+        this.env.DB,
+        runId,
+        pendingWork,
+        true,
+      ))
+    )
       return { status: "failed", errorCode: "repository_unavailable" } as const;
     return { status: "running" } as const;
+  }
+
+  private async readRunnerStatus(runId: string) {
+    const container = this.ctx.container;
+    if (!container?.running)
+      return { status: "failed", errorCode: "runner_lost" } as const;
+    const reply = await container
+      .getTcpPort(8080)
+      .fetch(`http://runner/job/${runId}`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+    if (reply.status === 404) {
+      await reply.body?.cancel();
+      return { status: "failed", errorCode: "runner_lost" } as const;
+    }
+    if (!reply.ok) {
+      await reply.body?.cancel();
+      throw new Error("Runner status unavailable");
+    }
+    return v.parse(runnerStatusSchema, await reply.json());
   }
 
   private async publish(
@@ -382,12 +441,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         status: "failed",
         errorCode: "publication_unconfirmed",
       } as const;
-    const url = await github.publish(
-      target,
-      runId,
-      work,
-      deadlineAt + publicationRecoveryMs,
-    );
+    const url = await github.publish(target, runId, work, deadlineAt);
     if (!url)
       return {
         status: "failed",

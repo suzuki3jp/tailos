@@ -342,7 +342,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
         pending,
       );
 
-    const status = await this.readRunnerStatus(runId);
+    const status = await this.readRunnerStatus(runId).catch(
+      (error: unknown) => {
+        if (!pending || Date.now() < deadlineAt) throw error;
+        // Once Agent time is over, a failed status request must not skip the
+        // remote-ref check for a push whose response may have been lost.
+        return { status: "failed", errorCode: "runner_lost" } as const;
+      },
+    );
     if (target && pending) {
       if (status.status === "running" && Date.now() < deadlineAt) return status;
       if (

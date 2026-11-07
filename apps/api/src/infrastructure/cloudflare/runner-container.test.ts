@@ -103,7 +103,7 @@ test("only the active Run lease can stage the expected work branch without overw
 
 async function preparedRun(
   t: import("vitest").TestContext,
-  state: "failed" | "lost",
+  state: "failed" | "lost" | "unavailable",
 ) {
   const DB = await createTestDb(t);
   const target = {
@@ -163,6 +163,8 @@ async function preparedRun(
       getTcpPort() {
         return {
           async fetch() {
+            if (state === "unavailable")
+              throw new Error("Runner status unavailable");
             return Response.json({
               status: "failed",
               errorCode: "agent_failed",
@@ -277,4 +279,42 @@ test("bounds failed ref reconciliation from its first check rather than the Run 
     error_code: "publication_unconfirmed",
     next_action_at: null,
   });
+});
+
+test("reconciles a prepared push when the last Runner status request fails at the deadline", async (t) => {
+  const { DB, runId, runner } = await preparedRun(t, "unavailable");
+  await DB.prepare("UPDATE runs SET deadline_at = ? WHERE id = ?")
+    .bind(Date.now() - 1, runId)
+    .run();
+  const verify = vi
+    .spyOn(GitHubApp.prototype, "hasCommit")
+    .mockResolvedValue(true);
+  const publish = vi
+    .spyOn(GitHubApp.prototype, "publish")
+    .mockResolvedValue("https://github.com/owner/private/pull/32");
+  await runner.alarm();
+  expect(verify).toHaveBeenCalledTimes(1);
+  expect(publish).not.toHaveBeenCalled();
+  await runner.alarm();
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(
+    await DB.prepare("SELECT status FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("status"),
+  ).toBe("succeeded");
+});
+
+test("keeps polling after a temporary status failure before the prepared Run deadline", async (t) => {
+  const { DB, runId, runner, setAlarm } = await preparedRun(t, "unavailable");
+  const verify = vi.spyOn(GitHubApp.prototype, "hasCommit");
+  const publish = vi.spyOn(GitHubApp.prototype, "publish");
+  await runner.alarm();
+  expect(verify).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  expect(setAlarm).toHaveBeenCalledTimes(1);
+  expect(
+    await DB.prepare("SELECT status FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("status"),
+  ).toBe("running");
 });

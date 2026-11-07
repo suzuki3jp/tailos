@@ -1,3 +1,4 @@
+import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "../infrastructure/r2/run-artifacts.ts";
 import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
@@ -17,6 +18,7 @@ const triggerRoutes = createTriggerRoutes(
 );
 
 const runRoutes = createRunRoutes(
+  (env) => runStarter(env.RUNNER),
   (env, id, ownerId) => findOwnedRun(env.DB, id, ownerId),
   (env, id, file, result) =>
     env.RUN_ARTIFACTS

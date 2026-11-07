@@ -1,4 +1,5 @@
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
+import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
 import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
@@ -15,8 +16,9 @@ const triggerRoutes = createTriggerRoutes(
   (env) => (input) => admitTrigger(env.DB, input),
 );
 
-const runRoutes = createRunRoutes((env, id, ownerId) =>
-  findOwnedRun(env.DB, id, ownerId),
+const runRoutes = createRunRoutes(
+  (env) => runStarter(env.RUNNER),
+  (env, id, ownerId) => findOwnedRun(env.DB, id, ownerId),
 );
 
 const runnerHealth = createRunnerHealthRoutes((env) =>

@@ -5,6 +5,9 @@ import { type Bindings } from "../../bindings.ts";
 
 const runIdSchema = v.pipe(v.string(), v.uuid());
 export function createRunRoutes(
+  startRun: (
+    env: Bindings,
+  ) => ((id: string) => Promise<string | undefined>) | undefined,
   findOwnedRun: (
     env: Bindings,
     id: string,
@@ -20,9 +23,9 @@ export function createRunRoutes(
     const run = await findOwnedRun(c.env, id.output, smokeOwnerId);
     if (!run) return c.notFound();
 
-    const runner = c.env.RUNNER;
-    if (!runner) return c.json({ error: "runner_unavailable" }, 503);
-    const status = await runner.getByName(id.output).execute(id.output);
+    const start = startRun(c.env);
+    if (!start) return c.json({ error: "runner_unavailable" }, 503);
+    const status = await start(id.output);
     return c.json({ runId: id.output, status });
   });
 

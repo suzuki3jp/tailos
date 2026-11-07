@@ -20,6 +20,7 @@ const triggerInput = v.strictObject({
 });
 
 export function createTriggerRoutes(
+  scheduleRun: (env: Bindings) => ((id: string) => Promise<void>) | undefined,
   admit: (env: Bindings) => AdmitTrigger,
   findOperatorUserId: (env: Bindings) => Promise<string | null>,
 ) {
@@ -55,12 +56,10 @@ export function createTriggerRoutes(
       ),
       timeoutMs: 5 * 60_000,
     });
-    if (admission.disposition === "started" && c.env.RUNNER) {
-      await c.env.RUNNER.getByName(admission.runId)
-        .schedule(admission.runId)
-        .catch(() => {
-          // The committed D1 row remains due for the scheduled recovery sweep.
-        });
+    if (admission.disposition === "started") {
+      await scheduleRun(c.env)?.(admission.runId).catch(() => {
+        // The committed D1 row remains due for the scheduled recovery sweep.
+      });
     }
     return c.json(admission);
   });

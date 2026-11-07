@@ -1,6 +1,7 @@
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "../infrastructure/r2/run-artifacts.ts";
-import { runnerHealth } from "../presentation/http/runner-health.ts";
+import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
+import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
 import { type Bindings } from "../bindings.ts";
@@ -21,6 +22,10 @@ const runRoutes = createRunRoutes(
     env.RUN_ARTIFACTS
       ? readRunArtifact(env.RUN_ARTIFACTS, id, file, result)
       : Promise.resolve(null),
+);
+
+const runnerHealth = createRunnerHealthRoutes((env) =>
+  checkRunnerHealth(env.RUNNER),
 );
 
 const app = new Hono<{ Bindings: Bindings }>();

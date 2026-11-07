@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { assert, expect, test } from "vitest";
+import { assert, expect, test, type TestContext } from "vitest";
+import type { RunnerJob } from "@meguri/core/runner";
+import type { AgentAdapter } from "./agent.ts";
 import { createRunnerServer } from "./server.ts";
 
-test("serves only the runner health endpoint", async (t) => {
-  const server = createRunnerServer();
+async function listen(t: TestContext, agent?: AgentAdapter) {
+  const server = createRunnerServer(agent);
   t.onTestFinished(
     () => new Promise<void>((resolve) => server.close(() => resolve())),
   );
@@ -12,7 +15,18 @@ test("serves only the runner health endpoint", async (t) => {
 
   const address = server.address();
   assert(address && typeof address === "object");
-  const origin = `http://127.0.0.1:${address.port}`;
+  return `http://127.0.0.1:${address.port}`;
+}
+
+const sendJob = (origin: string, job: RunnerJob) =>
+  fetch(`${origin}/job`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(job),
+  });
+
+test("serves the internal health endpoint", async (t) => {
+  const origin = await listen(t);
   const health = await fetch(`${origin}/health`);
   expect(health.status).toBe(200);
   expect(await health.json()).toStrictEqual({
@@ -23,4 +37,84 @@ test("serves only the runner health endpoint", async (t) => {
     404,
   );
   expect((await fetch(`${origin}/`)).status).toBe(404);
+});
+
+test("executes the selected agent once and rejects a different job", async (t) => {
+  let calls = 0;
+  const origin = await listen(t, {
+    async run(job) {
+      calls++;
+      return `Received ${job.prompt}`;
+    },
+  });
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Fix the issue",
+    deadlineAt: Date.now() + 60_000,
+  };
+  expect((await sendJob(origin, { ...job, prompt: "" })).status).toBe(400);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await sendJob(origin, { ...job, runId: randomUUID() })).status).toBe(
+    409,
+  );
+  expect(calls).toBe(1);
+  expect(
+    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+  ).toStrictEqual({
+    status: "succeeded",
+    reply: "Received Fix the issue",
+  });
+});
+
+test("cancels an active adapter at the job deadline", async (t) => {
+  let signal: AbortSignal | undefined;
+  const origin = await listen(t, {
+    async run(_job, deadline) {
+      signal = deadline;
+      await once(deadline, "abort");
+      deadline.throwIfAborted();
+      return "unexpected";
+    },
+  });
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Wait",
+    deadlineAt: Date.now() + 500,
+  };
+  expect((await sendJob(origin, job)).status).toBe(202);
+  assert(signal);
+  if (!signal.aborted) await once(signal, "abort");
+  expect(
+    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+  ).toStrictEqual({
+    status: "failed",
+    errorCode: "deadline_exceeded",
+  });
+});
+
+test("reports out-of-contract replies as agent failures", async (t) => {
+  const origin = await listen(t, {
+    async run() {
+      return "";
+    },
+  });
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Reply",
+    deadlineAt: Date.now() + 60_000,
+  };
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect(
+    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+  ).toStrictEqual({
+    status: "failed",
+    errorCode: "agent_failed",
+  });
 });

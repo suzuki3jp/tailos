@@ -14,6 +14,7 @@ import { createTriggerRoutes } from "../presentation/http/triggers.ts";
 const { sessionRoutes } = createSessionRoutes((env) => d1Sessions(env.DB));
 
 const triggerRoutes = createTriggerRoutes(
+  (env) => runStarter(env.RUNNER),
   (env) => (input) => admitTrigger(env.DB, input),
 );
 

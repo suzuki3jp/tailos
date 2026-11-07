@@ -28,7 +28,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
         .bind(runId)
         .first("status"),
     ).toBe("running");
-    return { status: "succeeded", reply: "All done" } as const;
+    return { status: "succeeded" as const, reply: "All done", events: [] };
   };
 
   const statuses = await Promise.all([
@@ -77,7 +77,7 @@ test("records an expired or invalid run without starting a runner", async (t) =>
     expect(
       await executeRun(db, runId, async () => {
         started = true;
-        return { status: "succeeded", reply: "unexpected" };
+        return { status: "succeeded", reply: "unexpected", events: [] };
       }),
     ).toBe("failed");
     expect(started).toBe(false);
@@ -102,6 +102,7 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     await executeRun(db, runId, async () => ({
       status: "succeeded",
       reply: "Unstored reply",
+      events: [],
     })),
   ).toBe("failed");
   expect(
@@ -118,4 +119,74 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
       .bind(sessionId)
       .first("count"),
   ).toBe(1);
+});
+
+test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
+  const db = await createTestDb(t);
+  const { runId, sessionId } = await admitTrigger(db, request);
+  const artifacts = {
+    async get() {
+      return null;
+    },
+    async put() {
+      throw new Error("R2 unavailable");
+    },
+  };
+  expect(
+    await executeRun(
+      db,
+      runId,
+      async () => ({
+        status: "succeeded",
+        reply: "Unstored",
+        events: [],
+      }),
+      artifacts,
+    ),
+  ).toBe("failed");
+  expect(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+  ).toBe("artifact_write_failed");
+  expect(
+    await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?",
+      )
+      .bind(sessionId)
+      .first("count"),
+  ).toBe(1);
+});
+
+test("preserves the agent failure when storing its R2 artifact also fails", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const artifacts = {
+    async get() {
+      return null;
+    },
+    async put() {
+      throw new Error("R2 unavailable");
+    },
+  };
+  expect(
+    await executeRun(
+      db,
+      runId,
+      async () => ({
+        status: "failed",
+        errorCode: "agent_failed",
+        events: [],
+      }),
+      artifacts,
+    ),
+  ).toBe("failed");
+  expect(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+  ).toBe("agent_failed");
 });

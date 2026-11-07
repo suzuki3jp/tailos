@@ -11,6 +11,9 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
   ],
+  "r2_buckets": [
+    { "binding": "RUN_ARTIFACTS", "bucket_name": "meguri-run-artifacts" },
+  ],
   "durable_objects": {
     "bindings": [{ "name": "RUNNER", "class_name": "RunnerContainer" }],
   },

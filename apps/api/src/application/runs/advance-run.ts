@@ -1,5 +1,7 @@
+import type { WriteRunArtifacts } from "./artifacts.ts";
 import {
   executionContextSchema,
+  type RunnerEvent,
   type RunnerJob,
   type RunnerStatus,
 } from "@meguri/core/runner";
@@ -17,7 +19,11 @@ type RunOutcome =
   | Exclude<RunnerStatus, { status: "running" }>
   | {
       status: "failed";
-      errorCode: "runner_unavailable" | "invalid_execution_context";
+      errorCode:
+        | "runner_unavailable"
+        | "invalid_execution_context"
+        | "artifact_write_failed";
+      events?: RunnerEvent[];
     };
 
 function parseJson(json: string): unknown {
@@ -32,6 +38,7 @@ export async function executeRun(
   store: RunStore,
   runId: string,
   dispatch: (job: RunnerJob) => Promise<RunOutcome>,
+  writeArtifacts?: WriteRunArtifacts,
 ): Promise<RunStatus | undefined> {
   const run = await store.claim(runId);
   if (!run) return store.readStatus(runId);
@@ -43,7 +50,7 @@ export async function executeRun(
   );
   let outcome: RunOutcome;
   if (run.deadlineAt <= Date.now()) {
-    outcome = { status: "failed", errorCode: "deadline_exceeded" };
+    outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (!context.success || !message) {
     outcome = { status: "failed", errorCode: "invalid_execution_context" };
   } else {
@@ -62,7 +69,23 @@ export async function executeRun(
 
   const finishedAt = Date.now();
   if (finishedAt >= run.deadlineAt) {
-    outcome = { status: "failed", errorCode: "deadline_exceeded" };
+    outcome = {
+      status: "failed",
+      errorCode: "deadline_exceeded",
+      events: outcome.events ?? [],
+    };
+  }
+  if (writeArtifacts) {
+    try {
+      const result =
+        outcome.status === "failed"
+          ? { status: outcome.status, errorCode: outcome.errorCode }
+          : { status: outcome.status };
+      await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
+    } catch {
+      if (outcome.status === "succeeded")
+        outcome = { status: "failed", errorCode: "artifact_write_failed" };
+    }
   }
   if (outcome.status === "failed") {
     return failRun(store, runId, outcome.errorCode, finishedAt);

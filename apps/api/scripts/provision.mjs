@@ -24,7 +24,13 @@ export function readResourceConfig() {
   if (typeof database?.database_name !== "string" || !database.database_name) {
     throw new Error("The DB binding must specify a database_name.");
   }
-  return { config, database };
+  const bucket = config.r2_buckets?.find(
+    (binding) => binding.binding === "RUN_ARTIFACTS",
+  );
+  if (typeof bucket?.bucket_name !== "string" || !bucket.bucket_name) {
+    throw new Error("The RUN_ARTIFACTS binding must specify a bucket_name.");
+  }
+  return { config, database, bucket };
 }
 
 export function runWrangler(args, env, capture = false) {
@@ -81,4 +87,50 @@ export function ensureD1Database(name, wrangler) {
       `Wrangler created D1 database "${name}", but it was not found.`,
     );
   return created;
+}
+
+export async function hasR2Bucket(bucket, env) {
+  const name = bucket.bucket_name;
+  const account = encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
+  const url = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/${encodeURIComponent(name)}`;
+  const headers = { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` };
+  if (bucket.jurisdiction) headers["cf-r2-jurisdiction"] = bucket.jurisdiction;
+
+  const response = await fetch(url, {
+    headers,
+    redirect: "error",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await response.json().catch(() => null);
+  if (response.ok && body?.success === true && body.result?.name === name) {
+    return true;
+  }
+  if (
+    response.status === 404 &&
+    Array.isArray(body?.errors) &&
+    body.errors.some((error) => error?.code === 10006)
+  ) {
+    return false;
+  }
+  throw new Error(
+    `Could not look up R2 bucket "${name}" (HTTP ${response.status}).`,
+  );
+}
+
+export async function ensureR2Bucket(bucket, env, wrangler) {
+  if (await hasR2Bucket(bucket, env)) return;
+
+  const create = [
+    "r2",
+    "bucket",
+    "create",
+    bucket.bucket_name,
+    "--no-update-config",
+  ];
+  if (bucket.jurisdiction) create.push("--jurisdiction", bucket.jurisdiction);
+  try {
+    wrangler(create);
+  } catch (error) {
+    if (!(await hasR2Bucket(bucket, env))) throw error;
+  }
 }

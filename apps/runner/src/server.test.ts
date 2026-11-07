@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { assert, expect, test, type TestContext } from "vitest";
-import type { RunnerJob } from "@meguri/core/runner";
+import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
+import * as v from "valibot";
 import type { AgentAdapter } from "./agent.ts";
 import { createRunnerServer } from "./server.ts";
 
@@ -61,12 +62,16 @@ test("executes the selected agent once and rejects a different job", async (t) =
     409,
   );
   expect(calls).toBe(1);
-  expect(
+  const result = v.parse(
+    runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
-  ).toStrictEqual({
-    status: "succeeded",
-    reply: "Received Fix the issue",
-  });
+  );
+  assert(result.status === "succeeded");
+  expect(result.reply).toBe("Received Fix the issue");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_succeeded",
+  ]);
 });
 
 test("cancels an active adapter at the job deadline", async (t) => {
@@ -89,12 +94,16 @@ test("cancels an active adapter at the job deadline", async (t) => {
   expect((await sendJob(origin, job)).status).toBe(202);
   assert(signal);
   if (!signal.aborted) await once(signal, "abort");
-  expect(
+  const result = v.parse(
+    runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
-  ).toStrictEqual({
-    status: "failed",
-    errorCode: "deadline_exceeded",
-  });
+  );
+  assert(result.status === "failed");
+  expect(result.errorCode).toBe("deadline_exceeded");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_failed",
+  ]);
 });
 
 test("reports out-of-contract replies as agent failures", async (t) => {
@@ -111,10 +120,14 @@ test("reports out-of-contract replies as agent failures", async (t) => {
     deadlineAt: Date.now() + 60_000,
   };
   expect((await sendJob(origin, job)).status).toBe(202);
-  expect(
+  const result = v.parse(
+    runnerStatusSchema,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
-  ).toStrictEqual({
-    status: "failed",
-    errorCode: "agent_failed",
-  });
+  );
+  assert(result.status === "failed");
+  expect(result.errorCode).toBe("agent_failed");
+  expect(result.events.map((event) => event.type)).toStrictEqual([
+    "job_started",
+    "job_failed",
+  ]);
 });

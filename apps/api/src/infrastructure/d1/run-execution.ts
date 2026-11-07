@@ -5,6 +5,10 @@ import {
   type RunStatus,
   type RunStore,
 } from "../../application/runs/advance-run.ts";
+import {
+  writeRunArtifacts,
+  type RunArtifactsBucket,
+} from "../r2/run-artifacts.ts";
 
 function d1RunStore(db: D1Database): RunStore {
   return {
@@ -70,6 +74,12 @@ export function executeRun(
   db: D1Database,
   runId: string,
   driver: Parameters<typeof execute>[2],
+  bucket?: RunArtifactsBucket,
 ) {
-  return execute(d1RunStore(db), runId, driver);
+  return execute(
+    d1RunStore(db),
+    runId,
+    driver,
+    bucket && ((...args) => writeRunArtifacts(bucket, ...args)),
+  );
 }

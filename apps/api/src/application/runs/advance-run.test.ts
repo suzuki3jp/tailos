@@ -159,3 +159,34 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
       .first("count"),
   ).toBe(1);
 });
+
+test("preserves the agent failure when storing its R2 artifact also fails", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const artifacts = {
+    async get() {
+      return null;
+    },
+    async put() {
+      throw new Error("R2 unavailable");
+    },
+  };
+  expect(
+    await executeRun(
+      db,
+      runId,
+      async () => ({
+        status: "failed",
+        errorCode: "agent_failed",
+        events: [],
+      }),
+      artifacts,
+    ),
+  ).toBe("failed");
+  expect(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+  ).toBe("agent_failed");
+});

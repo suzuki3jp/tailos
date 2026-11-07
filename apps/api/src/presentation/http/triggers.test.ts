@@ -4,7 +4,8 @@ import {
   createTestOperator,
   testLoginBindings,
 } from "../../infrastructure/auth/testing.ts";
-import { assert, expect, test } from "vitest";
+import { assert, expect, test, vi } from "vitest";
+import { createTriggerRoutes } from "./triggers.ts";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
 import app from "../../bootstrap/http.ts";
 
@@ -148,3 +149,37 @@ test("Codex smoke triggers require an operator and select that user's connection
     connectionId: `codex/${operator.id}`,
   });
 });
+test.each(["started", "coalesced"] as const)(
+  "preserves %s admission if scheduling fails and only schedules a new Run",
+  async (disposition) => {
+    const schedule = vi.fn(async (_id: string) => {
+      throw new Error("Alarm unavailable");
+    });
+    const admission = { sessionId: "session", runId: "run", disposition };
+    const routes = createTriggerRoutes(
+      () => schedule,
+      () => async () => admission,
+      async () => null,
+    );
+    const response = await routes.request(
+      "/",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          deliveryId: "delivery",
+          target: "target",
+          prompt: "Work",
+        }),
+      },
+      { MEGURI_TEST_TOKEN: "test-token" },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual(admission);
+    expect(schedule).toHaveBeenCalledTimes(disposition === "started" ? 1 : 0);
+    if (disposition === "started") expect(schedule).toHaveBeenCalledWith("run");
+  },
+);

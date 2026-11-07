@@ -8,7 +8,9 @@ import {
 import { findActiveRun } from "../infrastructure/d1/active-run.ts";
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "../infrastructure/r2/run-artifacts.ts";
-import { runnerHealth } from "../presentation/http/runner-health.ts";
+import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
+import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
+import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
 import { createGithubWebhook } from "../presentation/http/github-webhook.ts";
@@ -29,17 +31,20 @@ const { sessionRoutes, userSessionRoutes } = createSessionRoutes(
 );
 
 const triggerRoutes = createTriggerRoutes(
+  (env) => runStarter(env.RUNNER),
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
 );
 
 const githubWebhook = createGithubWebhook(
+  (env) => runStarter(env.RUNNER),
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
   validSignature,
 );
 
 const runRoutes = createRunRoutes(
+  (env) => runStarter(env.RUNNER),
   (env, id, ownerId) => findOwnedRun(env.DB, id, ownerId),
   (env, id, file, result) =>
     env.RUN_ARTIFACTS
@@ -54,6 +59,10 @@ const refreshRoutes = createRefreshRoutes((env, runId, now) =>
 const loginRoutes = createLoginRoutes(createLoginAuth, getOperatorSession);
 
 const connectRoutes = createConnectRoutes(operatorAuth);
+
+const runnerHealth = createRunnerHealthRoutes((env) =>
+  checkRunnerHealth(env.RUNNER),
+);
 
 const app = new Hono<{ Bindings: Bindings }>();
 

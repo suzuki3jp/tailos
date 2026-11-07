@@ -357,3 +357,39 @@ test("recovers a completed job when the next alarm arrives after its deadline", 
   });
   expect(result).toStrictEqual({ status: "succeeded" });
 });
+
+test("preserves the agent failure when storing its R2 artifact also fails", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const artifacts = {
+    async get() {
+      return null;
+    },
+    async put() {
+      throw new Error("R2 unavailable");
+    },
+  };
+  expect(
+    (
+      await advanceRun(
+        db,
+        runId,
+        {
+          start: async () => ({
+            status: "failed",
+            errorCode: "agent_failed",
+            events: [],
+          }),
+          poll: unexpectedPoll,
+        },
+        artifacts,
+      )
+    )?.status,
+  ).toBe("failed");
+  expect(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+  ).toBe("agent_failed");
+});

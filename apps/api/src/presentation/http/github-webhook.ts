@@ -59,6 +59,7 @@ function parseJson(body: string): unknown {
 }
 
 export function createGithubWebhook(
+  scheduleRun: (env: Bindings) => ((id: string) => Promise<void>) | undefined,
   admit: (env: Bindings) => AdmitTrigger,
   findOperatorUserId: (env: Bindings) => Promise<string | null>,
   validSignature: (
@@ -165,13 +166,9 @@ export function createGithubWebhook(
       executionContext: JSON.stringify(executionContext),
       timeoutMs: target.maxRunMinutes * 60_000,
     });
-    if (c.env.RUNNER) {
-      await c.env.RUNNER.getByName(result.runId)
-        .schedule(result.runId)
-        .catch(() => {
-          // The recovery sweep can schedule the committed run.
-        });
-    }
+    await scheduleRun(c.env)?.(result.runId).catch(() => {
+      // The recovery sweep can schedule the committed run.
+    });
     return c.json(result, 202);
   });
 

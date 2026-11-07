@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { assert, expect, test } from "vitest";
+import { assert, expect, test, vi } from "vitest";
 import {
   createTestOperator,
   testLoginBindings,
@@ -9,6 +9,9 @@ import app from "../../bootstrap/http.ts";
 
 test("accepts a signed private issue event once and rejects unauthorized actors", async (t) => {
   const db = await createTestDb(t);
+  const schedule = vi.fn(async (_id: string) => {
+    throw new Error("Alarm unavailable");
+  });
   const event = {
     action: "labeled",
     repository: {
@@ -29,6 +32,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
   };
   const env = {
     ...testLoginBindings(db),
+    RUNNER: { getByName: () => ({ schedule }) },
     MEGURI_GH_WEBHOOK_SECRET: "test-secret",
     MEGURI_GH_APP_ID: "100",
     MEGURI_GH_APP_PRIVATE_KEY: "unused-until-run",
@@ -77,6 +81,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
   ).toBe(0);
 
   const operator = await createTestOperator(env);
+  expect(schedule).not.toHaveBeenCalled();
   const accepted = await send(event);
   expect(accepted.status).toBe(202);
   const data = await accepted.json();
@@ -84,6 +89,8 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
     data && typeof data === "object" && "sessionId" in data && "runId" in data,
   );
   expect(await (await send(event)).json()).toStrictEqual(data);
+  expect(schedule).toHaveBeenCalledTimes(2);
+  expect(schedule).toHaveBeenCalledWith(data.runId);
   expect(
     await db
       .prepare("SELECT owner_id FROM sessions WHERE id = ?")

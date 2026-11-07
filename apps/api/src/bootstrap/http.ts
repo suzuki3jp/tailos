@@ -1,4 +1,5 @@
-import { runnerHealth } from "../presentation/http/runner-health.ts";
+import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
+import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
 import { type Bindings } from "../bindings.ts";
@@ -10,6 +11,10 @@ const { sessionRoutes } = createSessionRoutes((env) => d1Sessions(env.DB));
 
 const triggerRoutes = createTriggerRoutes(
   (env) => (input) => admitTrigger(env.DB, input),
+);
+
+const runnerHealth = createRunnerHealthRoutes((env) =>
+  checkRunnerHealth(env.RUNNER),
 );
 
 const app = new Hono<{ Bindings: Bindings }>();

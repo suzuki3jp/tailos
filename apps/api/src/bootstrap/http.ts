@@ -1,5 +1,6 @@
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
-import { runnerHealth } from "../presentation/http/runner-health.ts";
+import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
+import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
 import { type Bindings } from "../bindings.ts";
@@ -16,6 +17,10 @@ const triggerRoutes = createTriggerRoutes(
 
 const runRoutes = createRunRoutes((env, id, ownerId) =>
   findOwnedRun(env.DB, id, ownerId),
+);
+
+const runnerHealth = createRunnerHealthRoutes((env) =>
+  checkRunnerHealth(env.RUNNER),
 );
 
 const app = new Hono<{ Bindings: Bindings }>();

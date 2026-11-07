@@ -1,0 +1,6 @@
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY --chown=node:node dist/runner.mjs ./runner.mjs
+USER node
+EXPOSE 8080
+CMD ["node", "runner.mjs"]

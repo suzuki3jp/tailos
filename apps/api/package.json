@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler d1 migrations apply DB --local && wrangler dev --local",
+    "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
     "provision": "node scripts/provision-resources.mjs",
-    "deploy": "node scripts/deploy.mjs",
-    "db:generate": "drizzle-kit generate --name initial",
-    "test": "vitest run",
+    "deploy": "pnpm --filter @meguri/runner run build && node scripts/deploy.mjs",
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

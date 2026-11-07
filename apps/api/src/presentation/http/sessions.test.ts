@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { assert, expect, test } from "vitest";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
 import app from "../../bootstrap/http.ts";
 
@@ -38,12 +38,25 @@ test("a configured operator can create and read a standalone session in message 
 
   const response = await app.request(path, payload, env);
   expect(response.status).toBe(201);
-  const { id } = await response.json();
-  expect(typeof id).toBe("string");
+  const created = await response.json();
+  assert(created && typeof created === "object" && "id" in created);
+  const { id } = created;
+  assert(typeof id === "string");
 
   const detail = await app.request(`${path}/${id}`, { headers }, env);
   expect(detail.status).toBe(200);
-  const { session, messages } = await detail.json();
+  const data = await detail.json();
+  assert(
+    data && typeof data === "object" && "session" in data && "messages" in data,
+  );
+  const { session, messages } = data;
+  assert(
+    session &&
+      typeof session === "object" &&
+      "projectId" in session &&
+      "target" in session,
+  );
+  assert(Array.isArray(messages));
   expect(session.projectId).toBe(null);
   expect(session.target).toBe(null);
   expect(

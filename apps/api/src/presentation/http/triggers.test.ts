@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { assert, expect, test } from "vitest";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
 import app from "../../bootstrap/http.ts";
 
@@ -64,7 +64,10 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
     env,
   );
   expect(detail.status).toBe(200);
-  const { messages } = await detail.json();
+  const data = await detail.json();
+  assert(data && typeof data === "object" && "messages" in data);
+  const { messages } = data;
+  assert(Array.isArray(messages));
   expect(messages[0].body).toBe("Implement the request");
 
   await db

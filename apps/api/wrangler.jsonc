@@ -11,4 +11,22 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "RUNNER", "class_name": "RunnerContainer" }],
+  },
+  "migrations": [
+    { "tag": "runner-v1", "new_sqlite_classes": ["RunnerContainer"] },
+  ],
+  "containers": [
+    {
+      "class_name": "RunnerContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "runner": {
+          "dockerfile": "../runner/Dockerfile",
+          "build_context": "../runner",
+        },
+      },
+    },
+  ],
 }

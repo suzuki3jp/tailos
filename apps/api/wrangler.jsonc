@@ -17,10 +17,14 @@
   ],
   "triggers": { "crons": ["* * * * *"] },
   "durable_objects": {
-    "bindings": [{ "name": "RUNNER", "class_name": "RunnerContainer" }],
+    "bindings": [
+      { "name": "RUNNER", "class_name": "RunnerContainer" },
+      { "name": "CREDENTIALS", "class_name": "CredentialBroker" },
+    ],
   },
   "migrations": [
     { "tag": "runner-v1", "new_sqlite_classes": ["RunnerContainer"] },
+    { "tag": "credentials-v1", "new_sqlite_classes": ["CredentialBroker"] },
   ],
   "containers": [
     {

@@ -1,3 +1,4 @@
+import { createOperatorAuth } from "../presentation/http/operator.ts";
 import {
   createLoginAuth,
   getOperatorSession,
@@ -9,12 +10,15 @@ import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
+import { createConnectRoutes } from "../presentation/http/connect.ts";
 import { createLoginRoutes } from "../presentation/http/login.ts";
 import { type Bindings } from "../bindings.ts";
 import { createRunRoutes } from "../presentation/http/runs.ts";
 import { createSessionRoutes } from "../presentation/http/sessions.ts";
 import { d1Sessions } from "../infrastructure/d1/sessions.ts";
 import { createTriggerRoutes } from "../presentation/http/triggers.ts";
+
+const operatorAuth = createOperatorAuth(getOperatorSession);
 
 const { sessionRoutes } = createSessionRoutes((env) => d1Sessions(env.DB));
 
@@ -34,12 +38,15 @@ const runRoutes = createRunRoutes(
 
 const loginRoutes = createLoginRoutes(createLoginAuth, getOperatorSession);
 
+const connectRoutes = createConnectRoutes(operatorAuth);
+
 const runnerHealth = createRunnerHealthRoutes((env) =>
   checkRunnerHealth(env.RUNNER),
 );
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.route("/connect", connectRoutes);
 app.route("/", loginRoutes);
 app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/_internal/runs", runRoutes);

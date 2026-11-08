@@ -42,6 +42,10 @@ export function createLoginRoutes(
       "main",
       null,
       jsx("h1", null, "Meguri"),
+      signedIn &&
+        c.env.CREDENTIALS &&
+        c.env.CREDENTIAL_ENCRYPTION_KEY &&
+        jsx("p", null, jsx("a", { href: "/connect" }, "ChatGPT 接続")),
       c.req.query("error") && jsx("p", null, "ログインできませんでした。"),
       jsx(
         "form",

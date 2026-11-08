@@ -7,6 +7,7 @@ import app from "./bootstrap/http.ts";
 import type { Bindings } from "./bindings.ts";
 import { rescheduleDueRuns } from "./application/runs/recovery.ts";
 
+export { CredentialBroker } from "./infrastructure/cloudflare/credential-broker.ts";
 export { RunnerContainer } from "./infrastructure/cloudflare/runner-container.ts";
 
 export default {

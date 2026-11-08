@@ -1,3 +1,9 @@
+import { executionContextSchema } from "@meguri/core/runner";
+import { parse } from "valibot";
+import {
+  createTestOperator,
+  testLoginBindings,
+} from "../../infrastructure/auth/testing.ts";
 import { assert, expect, test, vi } from "vitest";
 import { createTriggerRoutes } from "./triggers.ts";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
@@ -83,6 +89,66 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
   expect(await send("two", "changed-target")).toStrictEqual(second);
 });
 
+test("Codex smoke triggers require an operator and select that user's connection", async (t) => {
+  const DB = await createTestDb(t);
+  const env = { ...testLoginBindings(DB), MEGURI_TEST_TOKEN: "test-token" };
+  const send = (
+    bindings: { DB: typeof DB; MEGURI_TEST_TOKEN: string } = env,
+    engine = "codex",
+  ) =>
+    app.request(
+      "/_internal/triggers",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-token" },
+        body: JSON.stringify({
+          deliveryId: `${engine}-delivery`,
+          target: "test-target",
+          engine,
+          prompt: "Implement the request",
+        }),
+      },
+      bindings,
+    );
+
+  const unconfigured = await send({
+    DB,
+    MEGURI_TEST_TOKEN: env.MEGURI_TEST_TOKEN,
+  });
+  expect(unconfigured.status).toBe(503);
+  const denied = await send();
+  expect(denied.status).toBe(503);
+  expect(await denied.json()).toStrictEqual({
+    error: "operator_not_initialized",
+  });
+  expect(await DB.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(0);
+
+  const fake = await send(env, "fake");
+  expect(fake.status).toBe(200);
+  const fakeAdmission = await fake.json();
+  const operator = await createTestOperator(env);
+  const accepted = await send();
+  expect(accepted.status).toBe(200);
+  const codexAdmission = await accepted.json();
+  assert(
+    codexAdmission &&
+      typeof codexAdmission === "object" &&
+      "runId" in codexAdmission,
+  );
+  expect(codexAdmission).not.toStrictEqual(fakeAdmission);
+  expect(codexAdmission).toMatchObject({ disposition: "started" });
+  const context = await DB.prepare(
+    "SELECT execution_context FROM runs WHERE id = ?",
+  )
+    .bind(codexAdmission.runId)
+    .first<string>("execution_context");
+  assert(context);
+  expect(parse(executionContextSchema, JSON.parse(context))).toStrictEqual({
+    version: 1,
+    engine: "codex",
+    connectionId: `codex/${operator.id}`,
+  });
+});
 test.each(["started", "coalesced"] as const)(
   "preserves %s admission if scheduling fails and only schedules a new Run",
   async (disposition) => {
@@ -93,6 +159,7 @@ test.each(["started", "coalesced"] as const)(
     const routes = createTriggerRoutes(
       () => schedule,
       () => async () => admission,
+      async () => null,
     );
     const response = await routes.request(
       "/",

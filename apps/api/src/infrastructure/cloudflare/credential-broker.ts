@@ -1,7 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "../../bindings.ts";
+import type { CodexAccess } from "@meguri/core/runner";
 import {
   CodexDeviceAuth,
+  ReauthenticationRequired,
+  codexCredentialsSchema,
   type CodexCredentials,
 } from "../auth/codex-device.ts";
 import {
@@ -23,6 +26,12 @@ const pendingSchema = v.strictObject({
   intervalMs: v.number(),
   expiresAt: v.number(),
 });
+
+type StoredConnection = {
+  version: string;
+  accessVersion?: string;
+  value: Sealed;
+};
 
 export class CredentialBroker extends DurableObject<Bindings> {
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
@@ -95,6 +104,54 @@ export class CredentialBroker extends DurableObject<Bindings> {
     await this.ctx.blockConcurrencyWhile(async () => {
       await this.ctx.storage.delete(["connection", "pending", "status"]);
       await this.ctx.storage.deleteAlarm();
+    });
+  }
+
+  async issueAccess(rejected?: {
+    connectionVersion: string;
+    accessVersion: string;
+  }): Promise<CodexAccess | null> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const connection =
+        await this.ctx.storage.get<StoredConnection>("connection");
+      if (
+        !connection ||
+        (rejected && rejected.connectionVersion !== connection.version)
+      )
+        return null;
+      let accessVersion = connection.accessVersion ?? connection.version;
+      let creds = v.parse(
+        codexCredentialsSchema,
+        await unseal(connection.value, this.key, credentialContext),
+      );
+      if (
+        rejected?.accessVersion === accessVersion ||
+        creds.expiresAt <= Date.now() + 60_000
+      ) {
+        try {
+          creds = await this.adapter.refresh(creds);
+        } catch (error) {
+          if (!(error instanceof ReauthenticationRequired)) throw error;
+          await this.ctx.storage.transaction(async (storage) => {
+            await storage.delete("connection");
+            await storage.put("status", "failed");
+          });
+          return null;
+        }
+        accessVersion = crypto.randomUUID();
+        await this.ctx.storage.put("connection", {
+          version: connection.version,
+          accessVersion,
+          value: await seal(creds, this.key, credentialContext),
+        } satisfies StoredConnection);
+      }
+      return {
+        accessToken: creds.accessToken,
+        accountId: creds.accountId,
+        planType: creds.planType,
+        connectionVersion: connection.version,
+        accessVersion,
+      };
     });
   }
 

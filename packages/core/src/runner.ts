@@ -1,17 +1,48 @@
 import * as v from "valibot";
 
-export const executionContextSchema = v.strictObject({
-  version: v.literal(1),
-  engine: v.literal("fake"),
-});
+export const executionContextSchema = v.variant("engine", [
+  v.strictObject({ version: v.literal(1), engine: v.literal("fake") }),
+  v.strictObject({
+    version: v.literal(1),
+    engine: v.literal("codex"),
+    connectionId: v.pipe(
+      v.string(),
+      v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+    ),
+  }),
+]);
 
-export const runnerJobSchema = v.strictObject({
+const job = {
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),
-  engine: executionContextSchema.entries.engine,
   prompt: v.pipe(v.string(), v.minLength(1), v.maxLength(4000)),
   deadlineAt: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+};
+
+const secret = v.pipe(v.string(), v.minLength(1), v.maxLength(12_000));
+export const codexAccessSchema = v.strictObject({
+  accessToken: secret,
+  accountId: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
+  planType: v.optional(v.pipe(v.string(), v.maxLength(64))),
+  connectionVersion: v.pipe(v.string(), v.uuid()),
+  accessVersion: v.pipe(v.string(), v.uuid()),
 });
+
+export const runnerJobSchema = v.variant("engine", [
+  v.strictObject({ ...job, engine: v.literal("fake") }),
+  v.strictObject({
+    ...job,
+    engine: v.literal("codex"),
+    access: codexAccessSchema,
+    refresh: v.strictObject({
+      url: v.pipe(v.string(), v.url()),
+      bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+    }),
+  }),
+]);
+
+export type CodexAccess = v.InferOutput<typeof codexAccessSchema>;
+export type ExecutionContext = v.InferOutput<typeof executionContextSchema>;
 
 export const runnerEventSchema = v.strictObject({
   type: v.picklist(["job_started", "job_succeeded", "job_failed"]),

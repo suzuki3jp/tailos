@@ -1,3 +1,5 @@
+import type { CodexAccess } from "@meguri/core/runner";
+
 export type DeviceChallenge = {
   id: string;
   userCode: string;
@@ -11,6 +13,7 @@ export class TransientDevicePollError extends Error {}
 export interface DeviceAuthAdapter<Credentials> {
   begin(): Promise<DeviceChallenge>;
   complete(challenge: DeviceChallenge): Promise<Credentials | null>;
+  refresh(previous: Credentials): Promise<Credentials>;
 }
 
 export function codexConnectionId(userId: string) {
@@ -25,4 +28,8 @@ export interface ConnectionControl {
   status(): Promise<ConnectionStatus>;
   begin(): Promise<boolean>;
   disconnect(): Promise<void>;
+  issueAccess(rejected?: {
+    connectionVersion: string;
+    accessVersion: string;
+  }): Promise<CodexAccess | null>;
 }

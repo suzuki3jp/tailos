@@ -1,18 +1,22 @@
-import { expect, test } from "vitest";
+import { expect, test, type TestContext } from "vitest";
 import { fileURLToPath } from "node:url";
+import { codexAccessSchema } from "@meguri/core/runner";
+import * as v from "valibot";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
-test("the Durable Object polls, completes, rejects reconnects and clears its alarm", async (t) => {
+async function createBroker(t: TestContext) {
   const bundled = await build({
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
       contents: `
+        import { ReauthenticationRequired } from "../auth/codex-device.ts";
         import { CredentialBroker } from "./credential-broker.ts";
         import { TransientDevicePollError } from "../../application/auth/device.ts";
 
         export class TestBroker extends CredentialBroker {
           decision = "pending";
+          rotations = 0;
           adapter = {
             begin: async () => {
               if (this.decision === "failure") throw new Error("provider rejected start");
@@ -26,10 +30,22 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
             },
             complete: async () => {
               if (this.decision === "transient") throw new TransientDevicePollError();
-              return this.decision === "approved" ? {
+              return this.decision.startsWith("approved") ? {
                 refreshToken: "secret-refresh",
                 accessToken: "secret-access",
+                idToken: "secret-id",
+                accountId: "test-account",
+                expiresAt: Date.now() + (this.decision === "approved-expired" ? -1 : 900000),
               } : null;
+            },
+            refresh: async (previous) => {
+              if (this.decision === "revoked") throw new ReauthenticationRequired();
+              this.rotations++;
+              return {
+                ...previous,
+                accessToken: "rotated-access-" + this.rotations,
+                expiresAt: Date.now() + 900000,
+              };
             },
           };
           async tick(decision) {
@@ -81,7 +97,7 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   );
   t.onTestFinished(() => worker.dispose());
 
-  const rpc = async (action: string, decision?: string) => {
+  return async (action: string, decision?: unknown) => {
     const response = await worker.dispatchFetch("http://worker", {
       method: "POST",
       body: JSON.stringify({ action, decision }),
@@ -89,7 +105,10 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
     expect(response.status, await response.clone().text()).toBe(200);
     return response.json();
   };
+}
 
+test("the Durable Object polls, completes, rejects reconnects and clears its alarm", async (t) => {
+  const rpc = await createBroker(t);
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("tick", "pending")).toStrictEqual({
@@ -118,4 +137,45 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("tick", "pending")).toStrictEqual({ state: "expired" });
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
+});
+
+test("serializes access rotation and invalidates a revoked connection", async (t) => {
+  const rpc = await createBroker(t);
+  expect(await rpc("begin")).toBe(true);
+  expect(await rpc("tick", "approved-expired")).toStrictEqual({
+    state: "connected",
+  });
+
+  const initial = v.parse(codexAccessSchema, await rpc("issueAccess"));
+  expect(initial.accessToken).toBe("rotated-access-1");
+  expect(await rpc("issueAccess")).toStrictEqual(initial);
+  expect(
+    await rpc("issueAccess", {
+      connectionVersion: crypto.randomUUID(),
+      accessVersion: initial.accessVersion,
+    }),
+  ).toBe(null);
+
+  const rejected = {
+    connectionVersion: initial.connectionVersion,
+    accessVersion: initial.accessVersion,
+  };
+  const [leftResponse, right] = await Promise.all([
+    rpc("issueAccess", rejected),
+    rpc("issueAccess", rejected),
+  ]);
+  const left = v.parse(codexAccessSchema, leftResponse);
+  expect(left).toStrictEqual(right);
+  expect(left.accessToken).toBe("rotated-access-2");
+  expect(left.accessVersion).not.toBe(initial.accessVersion);
+
+  await rpc("setDecision", "revoked");
+  expect(
+    await rpc("issueAccess", {
+      connectionVersion: left.connectionVersion,
+      accessVersion: left.accessVersion,
+    }),
+  ).toBe(null);
+  expect(await rpc("status")).toStrictEqual({ state: "failed" });
+  expect(await rpc("issueAccess")).toBe(null);
 });

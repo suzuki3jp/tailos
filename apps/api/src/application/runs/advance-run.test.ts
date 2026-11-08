@@ -1,8 +1,7 @@
 import { assert, expect, test } from "vitest";
-import type { RunnerJob } from "@meguri/core/runner";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
 import { advanceRun } from "../../infrastructure/d1/run-execution.ts";
-import { type RunnerDriver } from "./advance-run.ts";
+import { type RunnerDriver, type RunRequest } from "./advance-run.ts";
 import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
 
 const unexpectedPoll = async () => {
@@ -23,7 +22,7 @@ test("claims a run once and stores the agent reply with its terminal result", as
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, request);
   let dispatched = 0;
-  const run = async (job: RunnerJob) => {
+  const run = async (job: RunRequest) => {
     dispatched++;
     expect(job.prompt).toBe(request.prompt);
     expect(job.runId).toBe(runId);

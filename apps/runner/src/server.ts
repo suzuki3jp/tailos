@@ -9,6 +9,7 @@ import {
 } from "@meguri/core/runner";
 import * as v from "valibot";
 import { fakeAgent, type AgentAdapter } from "./agent.ts";
+import { codexAgent } from "./codex-agent.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 
@@ -63,7 +64,12 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
   }
 }
 
-export function createRunnerServer(agent = fakeAgent) {
+export function createRunnerServer(
+  agents: Record<RunnerJob["engine"], AgentAdapter> = {
+    fake: fakeAgent,
+    codex: codexAgent,
+  },
+) {
   let current: CurrentJob | undefined;
   return createServer(async (request, response) => {
     try {
@@ -83,7 +89,7 @@ export function createRunnerServer(agent = fakeAgent) {
 
         if (!current) {
           current = { input: parsed.output, state: { status: "running" } };
-          void execute(current, agent);
+          void execute(current, agents[parsed.output.engine]);
         } else if (
           JSON.stringify(current.input) !== JSON.stringify(parsed.output)
         ) {

@@ -3,11 +3,15 @@ import { once } from "node:events";
 import { assert, expect, test, type TestContext } from "vitest";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import type { AgentAdapter } from "./agent.ts";
+import { fakeAgent, type AgentAdapter } from "./agent.ts";
+import { codexAgent } from "./codex-agent.ts";
 import { createRunnerServer } from "./server.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
-  const server = createRunnerServer(agent);
+  const server = createRunnerServer({
+    fake: agent ?? fakeAgent,
+    codex: codexAgent,
+  });
   t.onTestFinished(
     () => new Promise<void>((resolve) => server.close(() => resolve())),
   );

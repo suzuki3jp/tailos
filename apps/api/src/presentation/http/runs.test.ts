@@ -1,8 +1,8 @@
-import { expect, test } from "vitest";
+import { assert, expect, test } from "vitest";
 import { createTestBindings } from "../../infrastructure/d1/testing.ts";
 import app from "../../bootstrap/http.ts";
 import { smokeOwnerId } from "./smoke-auth.ts";
-import { executeRun } from "../../infrastructure/d1/run-execution.ts";
+import { advanceRun } from "../../infrastructure/d1/run-execution.ts";
 import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
 
 const trigger = {
@@ -33,25 +33,35 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
   });
   const jobStarted = { type: "job_started", at: Date.now() } as const;
   for (const id of [runId, outside.runId]) {
-    await executeRun(
+    await advanceRun(
       env.DB,
       id,
-      async () => ({
-        status: "succeeded",
-        reply: "private-reply",
-        events: [jobStarted, { type: "job_succeeded", at: Date.now() }],
-      }),
+      {
+        start: async () => ({
+          status: "succeeded",
+          reply: "private-reply",
+          events: [jobStarted, { type: "job_succeeded", at: Date.now() }],
+        }),
+        poll: async () => {
+          throw new Error("Unexpected poll");
+        },
+      },
       env.RUN_ARTIFACTS,
     );
   }
-  await executeRun(
+  await advanceRun(
     env.DB,
     failed.runId,
-    async () => ({
-      status: "failed",
-      errorCode: "agent_failed",
-      events: [jobStarted, { type: "job_failed", at: Date.now() }],
-    }),
+    {
+      start: async () => ({
+        status: "failed",
+        errorCode: "agent_failed",
+        events: [jobStarted, { type: "job_failed", at: Date.now() }],
+      }),
+      poll: async () => {
+        throw new Error("Unexpected poll");
+      },
+    },
     env.RUN_ARTIFACTS,
   );
 
@@ -85,7 +95,7 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
     [failed.runId, { status: "failed", errorCode: "agent_failed" }],
   ] as const) {
     const result = await app.request(path(id, "result.json"), { headers }, env);
-    expect(result.status).toBe(200);
+    assert(result.status === 200);
     const body = await result.text();
     expect(body).not.toMatch(/private-/);
     expect(JSON.parse(body).result).toStrictEqual(expected);
@@ -98,14 +108,15 @@ test("an unreadable artifact returns a fixed error without exposing its contents
     MEGURI_TEST_TOKEN: "local-smoke",
   };
   const { runId } = await admitTrigger(env.DB, trigger);
-  await executeRun(
+  await advanceRun(
     env.DB,
     runId,
-    async () => ({
-      status: "succeeded",
-      reply: "done",
-      events: [],
-    }),
+    {
+      start: async () => ({ status: "succeeded", reply: "done", events: [] }),
+      poll: async () => {
+        throw new Error("Unexpected poll");
+      },
+    },
     env.RUN_ARTIFACTS,
   );
   await env.RUN_ARTIFACTS.put(
@@ -132,14 +143,15 @@ test("the public artifact result reflects D1 if persisting the agent reply fails
   const { runId } = await admitTrigger(env.DB, trigger);
   await env.DB.prepare(`CREATE TRIGGER reject_artifact_reply BEFORE INSERT ON session_messages
     WHEN NEW.author_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'test failure'); END`).run();
-  await executeRun(
+  await advanceRun(
     env.DB,
     runId,
-    async () => ({
-      status: "succeeded",
-      reply: "done",
-      events: [],
-    }),
+    {
+      start: async () => ({ status: "succeeded", reply: "done", events: [] }),
+      poll: async () => {
+        throw new Error("Unexpected poll");
+      },
+    },
     env.RUN_ARTIFACTS,
   );
 

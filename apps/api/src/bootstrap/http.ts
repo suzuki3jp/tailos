@@ -1,7 +1,7 @@
-import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "../infrastructure/r2/run-artifacts.ts";
 import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
+import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
@@ -14,6 +14,7 @@ import { createTriggerRoutes } from "../presentation/http/triggers.ts";
 const { sessionRoutes } = createSessionRoutes((env) => d1Sessions(env.DB));
 
 const triggerRoutes = createTriggerRoutes(
+  (env) => runStarter(env.RUNNER),
   (env) => (input) => admitTrigger(env.DB, input),
 );
 

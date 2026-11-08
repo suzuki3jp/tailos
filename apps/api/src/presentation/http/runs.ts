@@ -7,9 +7,7 @@ import { type Bindings } from "../../bindings.ts";
 const runIdSchema = v.pipe(v.string(), v.uuid());
 const artifactSchema = v.picklist(["events.ndjson", "result.json"]);
 export function createRunRoutes(
-  startRun: (
-    env: Bindings,
-  ) => ((id: string) => Promise<string | undefined>) | undefined,
+  startRun: (env: Bindings) => ((id: string) => Promise<void>) | undefined,
   findOwnedRun: (
     env: Bindings,
     id: string,
@@ -34,10 +32,13 @@ export function createRunRoutes(
     const run = await ownedRun(c.env, c.req.param("id"));
     if (!run) return c.notFound();
 
-    const start = startRun(c.env);
-    if (!start) return c.json({ error: "runner_unavailable" }, 503);
-    const status = await start(run.id);
-    return c.json({ runId: run.id, status });
+    if (run.status === "queued" || run.status === "running") {
+      const start = startRun(c.env);
+      if (!start) return c.json({ error: "runner_unavailable" }, 503);
+      await start(run.id);
+      return c.json({ runId: run.id, status: run.status }, 202);
+    }
+    return c.json({ runId: run.id, status: run.status });
   });
 
   runRoutes.get("/:id/artifacts/:file", async (c) => {

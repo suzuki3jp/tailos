@@ -9,8 +9,6 @@ import * as v from "valibot";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunInput = {
-  id: string;
-  sessionId: string;
   messageId: string;
   executionContext: string;
   deadlineAt: number;
@@ -21,9 +19,21 @@ type RunOutcome =
       status: "failed";
       errorCode:
         | "runner_unavailable"
+        | "runner_lost"
         | "invalid_execution_context"
         | "artifact_write_failed";
       events?: RunnerEvent[];
+    };
+
+export type RunnerDriver = {
+  start(job: RunnerJob): Promise<RunnerStatus | RunOutcome>;
+  poll(runId: string): Promise<RunnerStatus | RunOutcome>;
+};
+
+type RunProgress =
+  | { status: "running"; nextActionAt: number }
+  | {
+      status: "succeeded" | "failed";
     };
 
 function parseJson(json: string): unknown {
@@ -34,41 +44,93 @@ function parseJson(json: string): unknown {
   }
 }
 
-export async function executeRun(
+export async function advanceRun(
   store: RunStore,
   runId: string,
-  dispatch: (job: RunnerJob) => Promise<RunOutcome>,
+  driver: RunnerDriver,
   writeArtifacts?: WriteRunArtifacts,
-): Promise<RunStatus | undefined> {
-  const run = await store.claim(runId);
-  if (!run) return store.readStatus(runId);
+): Promise<RunProgress | undefined> {
+  // A claimed run can have reached the agent even if the caller never got an
+  // acknowledgement. Every later tick polls the same container.
+  const claimed = await store.claim(runId, Date.now());
+  const run = claimed ?? (await store.load(runId));
+  if (!run) return undefined;
 
+  let outcome: RunnerStatus | RunOutcome;
+  if (claimed && run.deadlineAt <= Date.now()) {
+    outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
+  } else if (claimed) {
+    outcome = await dispatchNewRun(store, runId, run, driver);
+  } else {
+    outcome = await driver
+      .poll(runId)
+      .catch(() => ({ status: "running" as const }));
+  }
+
+  if (outcome.status === "running" && run.deadlineAt > Date.now()) {
+    const nextActionAt = Math.min(run.deadlineAt, Date.now() + 1_500);
+    await store.schedule(runId, nextActionAt);
+    return { status: "running", nextActionAt };
+  }
+
+  const status = await storeOutcome(
+    store,
+    runId,
+    run.deadlineAt,
+    outcome,
+    writeArtifacts,
+  );
+  return status === "succeeded" || status === "failed" ? { status } : undefined;
+}
+
+async function dispatchNewRun(
+  store: RunStore,
+  runId: string,
+  run: RunInput,
+  driver: RunnerDriver,
+): Promise<RunnerStatus | RunOutcome> {
   const message = await store.readMessage(run.messageId);
   const context = v.safeParse(
     executionContextSchema,
     parseJson(run.executionContext),
   );
-  let outcome: RunOutcome;
-  if (run.deadlineAt <= Date.now()) {
-    outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
-  } else if (!context.success || !message) {
-    outcome = { status: "failed", errorCode: "invalid_execution_context" };
-  } else {
-    try {
-      outcome = await dispatch({
-        version: 1,
-        runId,
-        engine: context.output.engine,
-        prompt: message.body,
-        deadlineAt: run.deadlineAt,
-      });
-    } catch {
-      outcome = { status: "failed", errorCode: "runner_unavailable" };
-    }
+  if (!context.success || !message) {
+    return { status: "failed", errorCode: "invalid_execution_context" };
   }
+  return driver
+    .start({
+      version: 1,
+      runId,
+      engine: context.output.engine,
+      prompt: message.body,
+      deadlineAt: run.deadlineAt,
+    })
+    .catch(() => ({ status: "running" as const }));
+}
+
+async function storeOutcome(
+  store: RunStore,
+  runId: string,
+  deadlineAt: number,
+  result: RunnerStatus | RunOutcome,
+  writeArtifacts?: WriteRunArtifacts,
+) {
+  let outcome =
+    result.status === "running"
+      ? {
+          status: "failed" as const,
+          errorCode: "deadline_exceeded" as const,
+          events: [],
+        }
+      : result;
 
   const finishedAt = Date.now();
-  if (finishedAt >= run.deadlineAt) {
+  const terminalEvent =
+    outcome.status === "succeeded" ? "job_succeeded" : "job_failed";
+  const finishedBeforeDeadline = outcome.events?.some(
+    (event) => event.type === terminalEvent && event.at < deadlineAt,
+  );
+  if (finishedAt >= deadlineAt && !finishedBeforeDeadline) {
     outcome = {
       status: "failed",
       errorCode: "deadline_exceeded",
@@ -108,7 +170,9 @@ export async function executeRun(
 }
 
 export type RunStore = {
-  claim(runId: string): Promise<RunInput | null>;
+  claim(runId: string, now: number): Promise<RunInput | null>;
+  load(runId: string): Promise<RunInput | null>;
+  schedule(runId: string, nextActionAt: number): Promise<void>;
   readMessage(messageId: string): Promise<{ body: string } | null>;
   complete(
     runId: string,

@@ -17,7 +17,10 @@ const triggerInput = v.strictObject({
   prompt: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(4000)),
 });
 
-export function createTriggerRoutes(admit: (env: Bindings) => AdmitTrigger) {
+export function createTriggerRoutes(
+  scheduleRun: (env: Bindings) => ((id: string) => Promise<void>) | undefined,
+  admit: (env: Bindings) => AdmitTrigger,
+) {
   const triggerRoutes = new Hono<{ Bindings: Bindings }>();
   triggerRoutes.use("*", smokeAuth);
   triggerRoutes.post("/", bodyLimit({ maxSize: 32 * 1024 }), async (c) => {
@@ -34,8 +37,13 @@ export function createTriggerRoutes(admit: (env: Bindings) => AdmitTrigger) {
       concurrencyKey: JSON.stringify(["internal.smoke", target]),
       prompt,
       executionContext: JSON.stringify({ version: 1, engine: "fake" }),
-      timeoutMs: 60_000,
+      timeoutMs: 5 * 60_000,
     });
+    if (admission.disposition === "started") {
+      await scheduleRun(c.env)?.(admission.runId).catch(() => {
+        // The committed D1 row remains due for the scheduled recovery sweep.
+      });
+    }
     return c.json(admission);
   });
 

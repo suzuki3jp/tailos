@@ -89,7 +89,9 @@ export const runs = sqliteTable(
       .where(
         sql`${t.status} in ('queued', 'running') and ${t.concurrencyKey} is not null`,
       ),
-    index("run_next_action").on(t.nextActionAt),
+    index("run_next_action")
+      .on(t.nextActionAt, t.id)
+      .where(sql`${t.status} in ('queued', 'running')`),
   ],
 );
 

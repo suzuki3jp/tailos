@@ -1,8 +1,13 @@
 import { assert, expect, test } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
 import { createTestDb } from "../../infrastructure/d1/testing.ts";
-import { executeRun } from "../../infrastructure/d1/run-execution.ts";
+import { advanceRun } from "../../infrastructure/d1/run-execution.ts";
+import { type RunnerDriver } from "./advance-run.ts";
 import { admitTrigger } from "../../infrastructure/d1/trigger-admission.ts";
+
+const unexpectedPoll = async () => {
+  throw new Error("Unexpected poll");
+};
 
 const request = {
   source: "test",
@@ -31,13 +36,11 @@ test("claims a run once and stores the agent reply with its terminal result", as
     return { status: "succeeded" as const, reply: "All done", events: [] };
   };
 
-  const statuses = await Promise.all([
-    executeRun(db, runId, run),
-    executeRun(db, runId, run),
-  ]);
-  assert(statuses.includes("succeeded"));
-  expect(dispatched).toBe(1);
-  expect(await executeRun(db, runId, run)).toBe("succeeded");
+  const driver = { start: run, poll: unexpectedPoll };
+  expect(await advanceRun(db, runId, driver)).toStrictEqual({
+    status: "succeeded",
+  });
+  expect(await advanceRun(db, runId, driver)).toBe(undefined);
   expect(dispatched).toBe(1);
 
   const messages = await db
@@ -75,10 +78,15 @@ test("records an expired or invalid run without starting a runner", async (t) =>
   ]) {
     let started = false;
     expect(
-      await executeRun(db, runId, async () => {
-        started = true;
-        return { status: "succeeded", reply: "unexpected", events: [] };
-      }),
+      (
+        await advanceRun(db, runId, {
+          async start() {
+            started = true;
+            return { status: "succeeded", reply: "unexpected", events: [] };
+          },
+          poll: unexpectedPoll,
+        })
+      )?.status,
     ).toBe("failed");
     expect(started).toBe(false);
     expect(
@@ -99,11 +107,16 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
     .run();
 
   expect(
-    await executeRun(db, runId, async () => ({
-      status: "succeeded",
-      reply: "Unstored reply",
-      events: [],
-    })),
+    (
+      await advanceRun(db, runId, {
+        start: async () => ({
+          status: "succeeded",
+          reply: "Unstored reply",
+          events: [],
+        }),
+        poll: unexpectedPoll,
+      })
+    )?.status,
   ).toBe("failed");
   expect(
     await db
@@ -121,6 +134,71 @@ test("finalizes the run as failed if D1 cannot store the reply", async (t) => {
   ).toBe(1);
 });
 
+test("polls the existing job after a lost start response without submitting it again", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  let started = 0;
+  const driver: RunnerDriver = {
+    async start() {
+      started++;
+      throw new Error("The acknowledgement was lost");
+    },
+    async poll(id) {
+      expect(id).toBe(runId);
+      return { status: "succeeded", reply: "Recovered", events: [] };
+    },
+  };
+
+  const first = await advanceRun(db, runId, driver);
+  assert(first?.status === "running");
+  expect(
+    await db
+      .prepare("SELECT next_action_at FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("next_action_at"),
+  ).toBe(first.nextActionAt);
+  expect(await advanceRun(db, runId, driver)).toStrictEqual({
+    status: "succeeded",
+  });
+  expect(started).toBe(1);
+  expect(
+    await db
+      .prepare("SELECT next_action_at FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("next_action_at"),
+  ).toBe(null);
+});
+
+test("ends a run whose container disappeared without creating a replacement", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  await db
+    .prepare("UPDATE runs SET status = 'running' WHERE id = ?")
+    .bind(runId)
+    .run();
+
+  let started = false;
+  const driver: RunnerDriver = {
+    async start() {
+      started = true;
+      return { status: "running" };
+    },
+    async poll() {
+      return { status: "failed", errorCode: "runner_lost" };
+    },
+  };
+  expect(await advanceRun(db, runId, driver)).toStrictEqual({
+    status: "failed",
+  });
+  expect(started).toBe(false);
+  expect(
+    await db
+      .prepare("SELECT error_code FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("error_code"),
+  ).toBe("runner_lost");
+});
+
 test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, request);
@@ -133,16 +211,21 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
     },
   };
   expect(
-    await executeRun(
-      db,
-      runId,
-      async () => ({
-        status: "succeeded",
-        reply: "Unstored",
-        events: [],
-      }),
-      artifacts,
-    ),
+    (
+      await advanceRun(
+        db,
+        runId,
+        {
+          start: async () => ({
+            status: "succeeded",
+            reply: "Unstored",
+            events: [],
+          }),
+          poll: unexpectedPoll,
+        },
+        artifacts,
+      )
+    )?.status,
   ).toBe("failed");
   expect(
     await db
@@ -160,6 +243,30 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
   ).toBe(1);
 });
 
+test("recovers a completed job when the next alarm arrives after its deadline", async (t) => {
+  const db = await createTestDb(t);
+  const { runId } = await admitTrigger(db, request);
+  const deadline = Date.now() - 1;
+  await db
+    .prepare("UPDATE runs SET status = 'running', deadline_at = ? WHERE id = ?")
+    .bind(deadline, runId)
+    .run();
+
+  const result = await advanceRun(db, runId, {
+    async start() {
+      throw new Error("must not restart");
+    },
+    async poll() {
+      return {
+        status: "succeeded",
+        reply: "Finished in time",
+        events: [{ type: "job_succeeded", at: deadline - 1 }],
+      };
+    },
+  });
+  expect(result).toStrictEqual({ status: "succeeded" });
+});
+
 test("preserves the agent failure when storing its R2 artifact also fails", async (t) => {
   const db = await createTestDb(t);
   const { runId } = await admitTrigger(db, request);
@@ -172,16 +279,21 @@ test("preserves the agent failure when storing its R2 artifact also fails", asyn
     },
   };
   expect(
-    await executeRun(
-      db,
-      runId,
-      async () => ({
-        status: "failed",
-        errorCode: "agent_failed",
-        events: [],
-      }),
-      artifacts,
-    ),
+    (
+      await advanceRun(
+        db,
+        runId,
+        {
+          start: async () => ({
+            status: "failed",
+            errorCode: "agent_failed",
+            events: [],
+          }),
+          poll: unexpectedPoll,
+        },
+        artifacts,
+      )
+    )?.status,
   ).toBe("failed");
   expect(
     await db

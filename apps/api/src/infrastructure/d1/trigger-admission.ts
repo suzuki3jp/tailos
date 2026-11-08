@@ -47,8 +47,8 @@ export async function admitTrigger(
     db
       .prepare(
         `INSERT INTO runs (id, session_id, start_message_id, status, concurrency_key,
-                         execution_context, deadline_at, created_at)
-       SELECT ?, ?, ?, 'queued', ?, ?, ?, ? WHERE ${created}`,
+                         execution_context, deadline_at, created_at, next_action_at)
+       SELECT ?, ?, ?, 'queued', ?, ?, ?, ?, ? WHERE ${created}`,
       )
       .bind(
         runId,
@@ -57,6 +57,7 @@ export async function admitTrigger(
         scope,
         input.executionContext,
         now + input.timeoutMs,
+        now,
         now,
         sessionId,
       ),

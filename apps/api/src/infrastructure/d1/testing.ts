@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import type { TestContext } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
@@ -14,15 +14,18 @@ export async function createTestBindings(t: TestContext) {
   );
   t.onTestFinished(() => worker.dispose());
   const db = await worker.getD1Database("DB");
-  const migration = await readFile(
-    new URL("../../../migrations/0000_initial.sql", import.meta.url),
-    "utf8",
-  );
-  await db.batch(
-    migration
-      .split("--> statement-breakpoint")
-      .map((statement) => db.prepare(statement)),
-  );
+  const directory = new URL("../../../migrations/", import.meta.url);
+  const files = (await readdir(directory))
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
+  for (const file of files) {
+    const migration = await readFile(new URL(file, directory), "utf8");
+    await db.batch(
+      migration
+        .split("--> statement-breakpoint")
+        .map((statement) => db.prepare(statement)),
+    );
+  }
 
   return { DB: db, RUN_ARTIFACTS: await worker.getR2Bucket("RUN_ARTIFACTS") };
 }

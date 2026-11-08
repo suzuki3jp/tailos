@@ -1,12 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import {
-  runnerStatusSchema,
-  type RunnerJob,
-  type RunnerStatus,
-} from "@meguri/core/runner";
+import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "../../bindings.ts";
-import { executeRun } from "../d1/run-execution.ts";
+import { advanceRun } from "../d1/run-execution.ts";
+import { type RunnerDriver } from "../../application/runs/advance-run.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -23,24 +20,31 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
   }
 
-  async execute(runId: string) {
-    return executeRun(
+  async schedule(runId: string): Promise<void> {
+    await this.ctx.storage.put("runId", runId);
+    await this.ctx.storage.setAlarm(Date.now());
+  }
+
+  async alarm(): Promise<void> {
+    const runId = await this.ctx.storage.get<string>("runId");
+    if (!runId) return;
+
+    const driver: RunnerDriver = {
+      start: (job) => this.submitJob(job),
+      poll: (id) => this.pollJob(id),
+    };
+    const progress = await advanceRun(
       this.env.DB,
       runId,
-      async (job) => {
-        try {
-          return await this.runJob(job);
-        } finally {
-          await this.ctx.container?.destroy().catch(() => {
-            // oxlint-disable-next-line no-console -- Record cleanup failures without job data.
-            console.warn(
-              "Runner cleanup failed; inactivity timeout remains in effect",
-            );
-          });
-        }
-      },
+      driver,
       this.env.RUN_ARTIFACTS,
     );
+    if (progress?.status === "running") {
+      await this.ctx.storage.setAlarm(progress.nextActionAt);
+      return;
+    }
+
+    if (this.ctx.container?.running) await this.ctx.container.destroy();
   }
 
   private async startRunner(deadlineAt: number) {
@@ -49,14 +53,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
     if (!container || !image) throw new Error("Runner binding unavailable");
 
     container.start({ image, instance: "lite", enableInternet: false });
-    await container.setInactivityTimeout(30_000);
+    await container.setInactivityTimeout(
+      Math.max(30_000, deadlineAt - Date.now() + 30_000),
+    );
     const startupDeadline = Math.min(deadlineAt, Date.now() + 15_000);
     while (Date.now() < startupDeadline) {
       try {
         const port = container.getTcpPort(8080);
         const response = await port.fetch("http://runner/health", {
           signal: AbortSignal.timeout(
-            Math.min(1_000, startupDeadline - Date.now()),
+            Math.max(0, Math.min(1_000, startupDeadline - Date.now())),
           ),
         });
         const body: unknown = await response.json();
@@ -78,36 +84,41 @@ export class RunnerContainer extends DurableObject<Bindings> {
     throw new Error("Runner readiness check timed out");
   }
 
-  private async runJob(
-    job: RunnerJob,
-  ): Promise<Exclude<RunnerStatus, { status: "running" }>> {
+  private async submitJob(job: RunnerJob) {
     const port = await this.startRunner(job.deadlineAt);
-    const signal = AbortSignal.timeout(
-      Math.max(0, job.deadlineAt - Date.now()),
-    );
     const response = await port.fetch("http://runner/job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(job),
-      signal,
+      signal: AbortSignal.timeout(
+        Math.max(0, Math.min(3_000, job.deadlineAt - Date.now())),
+      ),
     });
-    if (response.status !== 202)
-      throw new Error("Runner did not accept the job");
     await response.body?.cancel();
-
-    while (!signal.aborted) {
-      const reply = await port.fetch(`http://runner/job/${job.runId}`, {
-        signal,
-      });
-      if (!reply.ok) throw new Error("Runner status unavailable");
-      const status = v.parse(runnerStatusSchema, await reply.json());
-      if (status.status !== "running") return status;
-      await pause();
+    if (response.status !== 202) {
+      return { status: "failed", errorCode: "runner_unavailable" } as const;
     }
-    return {
-      status: "failed",
-      errorCode: "deadline_exceeded",
-      events: [],
-    };
+    return { status: "running" } as const;
+  }
+
+  private async pollJob(runId: string) {
+    const container = this.ctx.container;
+    if (!container?.running)
+      return { status: "failed", errorCode: "runner_lost" } as const;
+
+    const reply = await container
+      .getTcpPort(8080)
+      .fetch(`http://runner/job/${runId}`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+    if (reply.status === 404) {
+      await reply.body?.cancel();
+      return { status: "failed", errorCode: "runner_lost" } as const;
+    }
+    if (!reply.ok) {
+      await reply.body?.cancel();
+      throw new Error("Runner status unavailable");
+    }
+    return v.parse(runnerStatusSchema, await reply.json());
   }
 }

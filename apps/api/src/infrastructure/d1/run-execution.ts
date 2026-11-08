@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import {
-  executeRun as execute,
+  advanceRun as execute,
   type RunInput,
   type RunStatus,
   type RunStore,
@@ -12,15 +12,33 @@ import {
 
 function d1RunStore(db: D1Database): RunStore {
   return {
-    claim(runId: string) {
+    claim(runId: string, now: number) {
       return db
         .prepare(
-          `UPDATE runs SET status = 'running' WHERE id = ? AND status = 'queued'
-     RETURNING id, session_id AS sessionId, start_message_id AS messageId,
-               execution_context AS executionContext, deadline_at AS deadlineAt`,
+          `UPDATE runs SET status = 'running', next_action_at = ?
+     WHERE id = ? AND status = 'queued'
+     RETURNING start_message_id AS messageId, execution_context AS executionContext,
+               deadline_at AS deadlineAt`,
+        )
+        .bind(now, runId)
+        .first<RunInput>();
+    },
+    load(runId: string) {
+      return db
+        .prepare(
+          `SELECT start_message_id AS messageId, execution_context AS executionContext,
+            deadline_at AS deadlineAt FROM runs WHERE id = ? AND status = 'running'`,
         )
         .bind(runId)
         .first<RunInput>();
+    },
+    async schedule(runId: string, nextActionAt: number) {
+      await db
+        .prepare(
+          "UPDATE runs SET next_action_at = ? WHERE id = ? AND status = 'running'",
+        )
+        .bind(nextActionAt, runId)
+        .run();
     },
     readMessage(messageId: string) {
       return db
@@ -45,7 +63,7 @@ function d1RunStore(db: D1Database): RunStore {
           .bind(crypto.randomUUID(), reply, finishedAt, runId),
         db
           .prepare(
-            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running'",
           )
           .bind(result, finishedAt, runId),
       ]);
@@ -61,7 +79,7 @@ function d1RunStore(db: D1Database): RunStore {
     async fail(runId: string, code: string, finishedAt: number) {
       const failed = await db
         .prepare(
-          "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ? WHERE id = ? AND status = 'running' RETURNING status",
+          "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING status",
         )
         .bind(code, finishedAt, runId)
         .first<{ status: "failed" }>();
@@ -70,7 +88,7 @@ function d1RunStore(db: D1Database): RunStore {
   };
 }
 
-export function executeRun(
+export function advanceRun(
   db: D1Database,
   runId: string,
   driver: Parameters<typeof execute>[2],

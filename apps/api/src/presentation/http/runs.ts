@@ -32,9 +32,9 @@ export function createRunRoutes(
     const run = await ownedRun(c.env, c.req.param("id"));
     if (!run) return c.notFound();
 
-    const start = startRun(c.env);
-    if (!start) return c.json({ error: "runner_unavailable" }, 503);
     if (run.status === "queued" || run.status === "running") {
+      const start = startRun(c.env);
+      if (!start) return c.json({ error: "runner_unavailable" }, 503);
       await start(run.id);
       return c.json({ runId: run.id, status: run.status }, 202);
     }

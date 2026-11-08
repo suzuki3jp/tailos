@@ -41,16 +41,37 @@ test("authenticates and checks ownership before resolving the start operation", 
   expect(starter).not.toHaveBeenCalled();
 });
 
-test("returns 503 if an owned Run has no start operation", async () => {
-  const routes = createRunRoutes(
-    () => undefined,
-    async () => run,
-    readArtifact,
-  );
-  const response = await routes.request(`/${id}/start`, request, env);
-  expect(response.status).toBe(503);
-  expect(await response.json()).toStrictEqual({ error: "runner_unavailable" });
-});
+test.each(["queued", "running"] as const)(
+  "returns 503 if an owned %s Run has no start operation",
+  async (status) => {
+    const routes = createRunRoutes(
+      () => undefined,
+      async () => ({ ...run, status }),
+      readArtifact,
+    );
+    const response = await routes.request(`/${id}/start`, request, env);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toStrictEqual({
+      error: "runner_unavailable",
+    });
+  },
+);
+
+test.each(["succeeded", "failed"] as const)(
+  "returns an owned %s Run without resolving an unavailable Runner",
+  async (status) => {
+    const starter = vi.fn(() => undefined);
+    const routes = createRunRoutes(
+      starter,
+      async () => ({ ...run, status }),
+      readArtifact,
+    );
+    const response = await routes.request(`/${id}/start`, request, env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ runId: id, status });
+    expect(starter).not.toHaveBeenCalled();
+  },
+);
 
 test("returns a terminal Run without scheduling it again", async () => {
   const start = vi.fn(async () => {});

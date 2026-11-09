@@ -1,10 +1,10 @@
-import type { AdmitTrigger } from "../../application/triggers/admit-trigger.ts";
-import { codexConnectionId } from "../../application/auth/device.ts";
+import type { AdmitTrigger } from "../../../../application/triggers/admit-trigger.ts";
+import { codexConnectionId } from "../../../../application/auth/device.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
-import { smokeAuth, smokeOwnerId } from "./smoke-auth.ts";
-import { type Bindings } from "../../bindings.ts";
+import { smokeAuth, smokeOwnerId } from "../../middlewares/smoke-auth.ts";
+import { type Bindings } from "../../../../bindings.ts";
 
 const identifier = v.pipe(
   v.string(),

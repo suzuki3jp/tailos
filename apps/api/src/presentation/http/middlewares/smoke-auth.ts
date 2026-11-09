@@ -1,6 +1,6 @@
 import { bearerAuth } from "hono/bearer-auth";
 import { createMiddleware } from "hono/factory";
-import type { Bindings } from "../../bindings.ts";
+import type { Bindings } from "../../../bindings.ts";
 
 export const smokeOwnerId = "internal-smoke";
 

@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { createRunRoutes } from "./runs.ts";
+import { createRunRoutes } from "./index.ts";
 
 const id = "aabff0c8-dc59-49b7-9598-19f5be8f5f56";
 const run = { id, status: "queued", errorCode: null };

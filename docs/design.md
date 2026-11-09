@@ -16,7 +16,7 @@ ChatGPT の接続画面は Hono JSX で API に同居させ、ブラウザから
 | `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。MVP の実装は Codex app-server |
 | `packages/core` | TypeScript、Valibot | ジョブ、イベント、結果など API と Runner の共有契約 |
 
-API の HTTP ルートは `presentation/http`、ユースケースとその契約は `application`、D1・R2・外部 API の実装は `infrastructure` に置く。`bootstrap` と `worker.ts` が依存を組み立て、Oxlint がレイヤーをまたぐ import を検査する。
+API の HTTP ルートは `presentation/http/handlers/<handler>/index.ts`、認証などのミドルウェアは `presentation/http/middlewares`、ユースケースとその契約は `application`、D1・R2・外部 API の実装は `infrastructure` に置く。`bootstrap` と `worker.ts` が依存を組み立て、Oxlint がレイヤーをまたぐ import を検査する。
 
 ```mermaid
 flowchart LR

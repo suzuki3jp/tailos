@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import type { createOperatorAuth, OperatorEnv } from "./operator.ts";
+import type { createOperatorAuth, OperatorEnv } from "../../middlewares/operator.ts";
 import { jsx } from "hono/jsx";
-import type { Bindings } from "../../bindings.ts";
+import type { Bindings } from "../../../../bindings.ts";
 import {
   codexConnectionId,
   type ConnectionStatus,
-} from "../../application/auth/device.ts";
+} from "../../../../application/auth/device.ts";
 
 const path = "/connect";
 const messages = {

@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { pendingPublicationSchema } from "../../application/runs/publication.ts";
+import { pendingPublicationSchema } from "../../../../application/runs/publication.ts";
 import * as v from "valibot";
-import type { Bindings } from "../../bindings.ts";
+import type { Bindings } from "../../../../bindings.ts";
 
 const runnerBearer = /^Bearer ([a-f0-9]{64})$/;
 const uuid = v.pipe(v.string(), v.uuid());

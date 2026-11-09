@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
+import { loginOrigin } from "../../middlewares/login-origin.ts";
 import { jsx } from "hono/jsx";
-import type { Bindings } from "../../bindings.ts";
-import type { LoginAuth } from "../../application/auth/login.ts";
+import type { Bindings } from "../../../../bindings.ts";
+import type { LoginAuth } from "../../../../application/auth/login.ts";
 
 const providerId = "github";
 const authPath = "/api/auth";
@@ -17,17 +17,6 @@ export function createLoginRoutes(
   ) => Promise<{ user: { id: string } } | null>,
 ) {
   const loginRoutes = new Hono<{ Bindings: Bindings }>();
-
-  const loginOrigin = createMiddleware<{ Bindings: Bindings }>(
-    async (c, next) => {
-      const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
-      if (!origin || new URL(c.req.url).origin !== origin) return c.notFound();
-      if (c.req.method === "POST" && c.req.header("Origin") !== origin)
-        return c.text("Forbidden", 403);
-      await next();
-      c.header("Cache-Control", "private, no-store");
-    },
-  );
 
   loginRoutes.get(loginPath, loginOrigin, async (c) => {
     const auth = createLoginAuth(c.env);

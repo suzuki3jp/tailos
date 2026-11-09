@@ -1,11 +1,11 @@
 import { expect, test } from "vitest";
-import { createTestDb } from "../../infrastructure/d1/testing.ts";
+import { createTestDb } from "../../../../infrastructure/d1/testing.ts";
 import {
   createTestOperator,
   testLoginBindings,
-} from "../../infrastructure/auth/testing.ts";
-import app from "../../bootstrap/http.ts";
-import type { ConnectionStatus } from "../../application/auth/device.ts";
+} from "../../../../infrastructure/auth/testing.ts";
+import app from "../../../../bootstrap/http.ts";
+import type { ConnectionStatus } from "../../../../application/auth/device.ts";
 
 test("protects the device code and requires a same-origin POST to change connection state", async (t) => {
   const login = testLoginBindings(await createTestDb(t));

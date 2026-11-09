@@ -8,7 +8,11 @@ export type DeviceChallenge = {
   expiresAt: number;
 };
 
-export class TransientDevicePollError extends Error {}
+export class TransientDevicePollError extends Error {
+  constructor(readonly httpStatus?: number) {
+    super();
+  }
+}
 
 export interface DeviceAuthAdapter<Credentials> {
   begin(): Promise<DeviceChallenge>;

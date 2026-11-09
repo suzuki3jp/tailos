@@ -10,7 +10,7 @@ async function createBroker(t: TestContext) {
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
       contents: `
-        import { ReauthenticationRequired } from "../auth/codex-device.ts";
+        import { CodexDeviceAuth, ReauthenticationRequired } from "../auth/codex-device.ts";
         import { CredentialBroker } from "./credential-broker.ts";
         import { TransientDevicePollError } from "../../application/auth/device.ts";
 
@@ -19,7 +19,11 @@ async function createBroker(t: TestContext) {
           rotations = 0;
           adapter = {
             begin: async () => {
-              if (this.decision === "failure") throw new Error("provider rejected start");
+              if (this.decision === "failure") {
+                return new CodexDeviceAuth(async () =>
+                  new Response("sensitive upstream response", { status: 530 }),
+                ).begin();
+              }
               return {
                 id: "opaque",
                 userCode: "DISPLAY",
@@ -59,6 +63,17 @@ async function createBroker(t: TestContext) {
           }
           async resetThrottle() {
             await this.ctx.storage.delete("lastStarted");
+          }
+          async captureBeginWarnings() {
+            const warnings = [];
+            const warn = console.warn;
+            console.warn = (...args) => warnings.push(args);
+            try {
+              const started = await this.begin();
+              return { started, warnings };
+            } finally {
+              console.warn = warn;
+            }
           }
           async stored() {
             return {
@@ -127,16 +142,31 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   await rpc("disconnect");
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
   expect(await rpc("begin")).toBe(false);
-  await rpc("resetThrottle");
-  await rpc("setDecision", "failure");
-  expect(await rpc("begin")).toBe(false);
-  expect(await rpc("status")).toStrictEqual({ state: "failed" });
 
   await rpc("resetThrottle");
   await rpc("setDecision", "expired");
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("tick", "pending")).toStrictEqual({ state: "expired" });
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
+});
+
+test("logs only the connection stage and status when OpenAI rejects device code issuance", async (t) => {
+  const rpc = await createBroker(t);
+  await rpc("setDecision", "failure");
+  expect(await rpc("captureBeginWarnings")).toStrictEqual({
+    started: false,
+    warnings: [
+      [
+        {
+          event: "chatgpt_connection_step_failed",
+          stage: "request_device_code",
+          retrying: false,
+          openaiStatus: 530,
+        },
+      ],
+    ],
+  });
+  expect(await rpc("status")).toStrictEqual({ state: "failed" });
 });
 
 test("serializes access rotation and invalidates a revoked connection", async (t) => {

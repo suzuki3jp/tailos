@@ -44,6 +44,42 @@ export type CodexCredentials = v.InferOutput<typeof codexCredentialsSchema>;
 
 export class ReauthenticationRequired extends Error {}
 
+type OpenAIConnectionStage =
+  | "request_device_code"
+  | "poll_device_authorization"
+  | "exchange_authorization_code"
+  | "fetch_signing_keys"
+  | "validate_tokens";
+
+export class CodexDeviceError extends Error {
+  constructor(
+    readonly stage: OpenAIConnectionStage,
+    readonly httpStatus?: number,
+  ) {
+    super(stage);
+  }
+}
+
+async function readOpenAIResponse<T>(
+  stage: OpenAIConnectionStage,
+  request: () => Promise<Response>,
+  read: (response: Response) => T | Promise<T>,
+): Promise<T> {
+  let response: Response | undefined;
+  try {
+    response = await request();
+    return await read(response);
+  } catch (error) {
+    if (
+      error instanceof CodexDeviceError ||
+      error instanceof TransientDevicePollError
+    )
+      throw error;
+    // Parsing and fetch errors can carry provider data. Keep only the stage and status.
+    throw new CodexDeviceError(stage, response?.status);
+  }
+}
+
 export class CodexDeviceAuth implements DeviceAuthAdapter<CodexCredentials> {
   private readonly http: typeof fetch;
   private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
@@ -53,55 +89,88 @@ export class CodexDeviceAuth implements DeviceAuthAdapter<CodexCredentials> {
   ) {
     this.http = http;
     this.jwks = createRemoteJWKSet(new URL(issuer + "/.well-known/jwks.json"), {
-      [customFetch]: (input, init) => http(input, init),
+      [customFetch]: (input, init) =>
+        readOpenAIResponse(
+          "fetch_signing_keys",
+          () => http(input, init),
+          (response) => {
+            if (response.status !== 200)
+              throw new Error("Signing keys unavailable");
+            return response;
+          },
+        ),
       timeoutDuration: 5_000,
     });
   }
 
   async begin(): Promise<DeviceChallenge> {
-    const response = await this.post("/api/accounts/deviceauth/usercode", {
-      client_id: clientId,
-    });
-    if (!response.ok) throw new Error("Device authorization could not start");
-    const data = v.parse(userCodeSchema, await response.json());
-    const userCode = data.user_code ?? data.usercode;
-    if (!userCode) throw new Error("Device code is missing");
+    return readOpenAIResponse(
+      "request_device_code",
+      () =>
+        this.post("/api/accounts/deviceauth/usercode", { client_id: clientId }),
+      async (response) => {
+        if (!response.ok)
+          throw new Error("Device authorization could not start");
+        const data = v.parse(userCodeSchema, await response.json());
+        const userCode = data.user_code ?? data.usercode;
+        if (!userCode) throw new Error("Device code is missing");
 
-    return {
-      id: data.device_auth_id,
-      userCode,
-      verificationUrl: issuer + "/codex/device",
-      intervalMs: 1000 * Math.min(60, Math.max(5, Number(data.interval) || 5)),
-      expiresAt:
-        Date.now() + 1000 * Math.min(900, Math.max(5, data.expires_in ?? 900)),
-    };
+        return {
+          id: data.device_auth_id,
+          userCode,
+          verificationUrl: issuer + "/codex/device",
+          intervalMs:
+            1000 * Math.min(60, Math.max(5, Number(data.interval) || 5)),
+          expiresAt:
+            Date.now() +
+            1000 * Math.min(900, Math.max(5, data.expires_in ?? 900)),
+        };
+      },
+    );
   }
 
   async complete(challenge: DeviceChallenge): Promise<CodexCredentials | null> {
-    const response = await this.post("/api/accounts/deviceauth/token", {
-      device_auth_id: challenge.id,
-      user_code: challenge.userCode,
-    }).catch(() => {
-      throw new TransientDevicePollError();
-    });
-    if (response.status === 403 || response.status === 404) return null;
-    if (response.status === 429 || response.status >= 500)
-      throw new TransientDevicePollError();
-    if (!response.ok) throw new Error("Device authorization failed");
-    const data = v.parse(exchangeSchema, await response.json());
-
-    const tokens = await this.post(
-      "/oauth/token",
-      new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: clientId,
-        code: data.authorization_code,
-        code_verifier: data.code_verifier,
-        redirect_uri: issuer + "/deviceauth/callback",
-      }),
+    const data = await readOpenAIResponse(
+      "poll_device_authorization",
+      () =>
+        this.post("/api/accounts/deviceauth/token", {
+          device_auth_id: challenge.id,
+          user_code: challenge.userCode,
+        }).catch(() => {
+          throw new TransientDevicePollError();
+        }),
+      async (response) => {
+        if (response.status === 403 || response.status === 404) return null;
+        if (response.status === 429 || response.status >= 500)
+          throw new TransientDevicePollError(response.status);
+        if (!response.ok) throw new Error("Device authorization failed");
+        return v.parse(exchangeSchema, await response.json());
+      },
     );
-    if (!tokens.ok) throw new Error("Authorization code exchange failed");
-    return this.validate(await tokens.json());
+    if (!data) return null;
+
+    return readOpenAIResponse(
+      "exchange_authorization_code",
+      () =>
+        this.post(
+          "/oauth/token",
+          new URLSearchParams({
+            grant_type: "authorization_code",
+            client_id: clientId,
+            code: data.authorization_code,
+            code_verifier: data.code_verifier,
+            redirect_uri: issuer + "/deviceauth/callback",
+          }),
+        ),
+      async (response) => {
+        if (!response.ok) throw new Error("Authorization code exchange failed");
+        const value: unknown = await response.json();
+        return this.validate(value).catch((error) => {
+          if (error instanceof CodexDeviceError) throw error;
+          throw new CodexDeviceError("validate_tokens", response.status);
+        });
+      },
+    );
   }
 
   async refresh(previous: CodexCredentials): Promise<CodexCredentials> {

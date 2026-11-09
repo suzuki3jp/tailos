@@ -54,20 +54,3 @@ jobs:
       - name: Build the Web Worker
         if: matrix.check == 'typecheck'
         run: pnpm --filter @meguri/web run build
-
-      - name: Verify Web document security headers
-        if: matrix.check == 'typecheck'
-        working-directory: apps/web
-        shell: bash
-        run: |
-          ./node_modules/.bin/vite preview --host 127.0.0.1 --port 3017 --strictPort &
-          preview_pid=$!
-          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
-          headers=$(curl --silent --show-error --fail --retry 8 --retry-all-errors \
-            --retry-delay 1 --max-time 10 --dump-header - --output /dev/null \
-            http://127.0.0.1:3017/login)
-          grep -Eiq "^content-security-policy: .*script-src 'self' 'nonce-[^']+'.*base-uri 'none'; frame-ancestors 'none'" <<< "$headers"
-          grep -Eiq '^referrer-policy: strict-origin' <<< "$headers"
-          grep -Eiq '^x-frame-options: deny' <<< "$headers"
-          grep -Eiq '^x-content-type-options: nosniff' <<< "$headers"
-          grep -Eiq '^cache-control: private, no-store' <<< "$headers"

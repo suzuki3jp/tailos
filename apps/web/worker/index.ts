@@ -2,7 +2,7 @@ import handler from "vinext/server/fetch-handler";
 import { apiOrigin } from "../api-origin.ts";
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env, ctx) {
     const nonce = btoa(
       String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
     );

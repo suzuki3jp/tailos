@@ -1,4 +1,11 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+import {
+  Miniflare,
+  Response as MiniflareResponse,
+  convertV4MiniflareOptions,
+} from "miniflare";
 import { assert, expect, test } from "vitest";
 import { GitHubApp, workBranchFor } from "./app.ts";
 
@@ -18,6 +25,64 @@ const target = {
 };
 const sha = "a".repeat(40);
 const pullUrl = "https://github.com/owner/private/pull/32";
+
+test("sends authenticated GitHub requests from Workers without following redirects", async (t) => {
+  const bundled = await build({
+    stdin: {
+      resolveDir: fileURLToPath(new URL(".", import.meta.url)),
+      contents: `
+        import { GitHubApp } from "./app.ts";
+        export default {
+          async fetch(request, env) {
+            const github = new GitHubApp({ appId: "100", privateKey: env.TEST_PRIVATE_KEY });
+            try {
+              await github.revoke("test-grant");
+              return new Response(null, { status: 204 });
+            } catch (error) {
+              return new Response(error.message, { status: 502 });
+            }
+          },
+        };
+      `,
+    },
+    bundle: true,
+    format: "esm",
+    external: ["node:crypto"],
+    write: false,
+  });
+  let redirect = false;
+  const outboundUrls: string[] = [];
+  const endpoint = "https://api.github.com/installation/token";
+  const worker = new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      script: bundled.outputFiles[0].text,
+      compatibilityDate: "2026-10-06",
+      compatibilityFlags: ["nodejs_compat"],
+      bindings: { TEST_PRIVATE_KEY: privateKey },
+      outboundService(request) {
+        outboundUrls.push(request.url);
+        expect(request.method).toBe("DELETE");
+        expect(request.headers.get("Authorization")).toBe("Bearer test-grant");
+        return redirect
+          ? new MiniflareResponse(null, {
+              status: 307,
+              headers: { Location: "https://unexpected.example/" },
+            })
+          : new MiniflareResponse(null, { status: 204 });
+      },
+    }),
+  );
+  t.onTestFinished(() => worker.dispose());
+
+  const success = await worker.dispatchFetch("http://worker");
+  expect(success.status, await success.text()).toBe(204);
+  redirect = true;
+  const rejected = await worker.dispatchFetch("http://worker");
+  expect(rejected.status).toBe(502);
+  expect(await rejected.text()).toBe("GitHub token revocation failed");
+  expect(outboundUrls).toStrictEqual([endpoint, endpoint]);
+});
 
 test("scopes app grants to one repository and protects the default branch before granting write", async () => {
   let protectedBranch = false;

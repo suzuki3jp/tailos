@@ -8,7 +8,8 @@ import { createLoginAuth } from "./login.ts";
 export function testLoginBindings(DB: Bindings["DB"]) {
   return {
     DB,
-    MEGURI_PUBLIC_ORIGIN: "https://meguri.example",
+    MEGURI_PUBLIC_ORIGIN: "https://api.meguri.example",
+    MEGURI_WEB_ORIGIN: "https://meguri.example",
     BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
     MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
     MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",

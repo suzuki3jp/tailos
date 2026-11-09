@@ -44,15 +44,17 @@ export function createSessionRoutes<Detail>(
     return detail ? c.json(detail) : c.notFound();
   });
 
-  const userSessionRoutes = new Hono<OperatorEnv>();
-  userSessionRoutes.use("*", operatorAuth);
-  userSessionRoutes.get("/:id", async (c) => {
-    const detail = await store(c.env).read(
-      c.req.param("id"),
-      c.var.operatorUserId,
-    );
-    return detail ? c.json(detail) : c.notFound();
-  });
+  const userSessionRoutes = new Hono<OperatorEnv>()
+    .use("*", operatorAuth)
+    .get("/:id", async (c) => {
+      const detail = await store(c.env).read(
+        c.req.param("id"),
+        c.var.operatorUserId,
+      );
+      return detail
+        ? c.json(detail)
+        : c.json({ error: "not_found" as const }, 404);
+    });
 
   return { sessionRoutes, userSessionRoutes };
 }

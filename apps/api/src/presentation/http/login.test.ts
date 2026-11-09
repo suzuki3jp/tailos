@@ -8,10 +8,12 @@ import {
 
 test("GitHub login authenticates the configured account and persists only the Meguri session", async (t) => {
   const DB = await createTestDb(t);
-  const origin = "https://meguri.example";
+  const origin = "https://api.meguri.example";
+  const webOrigin = "https://meguri.example";
   const env = {
     DB,
     MEGURI_PUBLIC_ORIGIN: origin,
+    MEGURI_WEB_ORIGIN: webOrigin,
     BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
     MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
     MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
@@ -62,9 +64,9 @@ test("GitHub login authenticates the configured account and persists only the Me
   const request = (path: string, init?: RequestInit) =>
     app.request(origin + path, init, env);
   const start = async () => {
-    const response = await request("/login", {
+    const response = await request("/api/auth/login", {
       method: "POST",
-      headers: { Origin: origin },
+      headers: { Origin: webOrigin },
     });
     expect(response.status, await response.clone().text()).toBe(303);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
@@ -86,14 +88,9 @@ test("GitHub login authenticates the configured account and persists only the Me
     );
 
   expect((await app.request(origin + "/login")).status).toBe(404);
-  const page = await request("/login");
-  expect(page.headers.get("Referrer-Policy")).toBe("same-origin");
-  expect(page.headers.get("Content-Security-Policy")).toContain(
-    "form-action 'self' https://github.com;",
-  );
   expect(
     (
-      await request("/login", {
+      await request("/api/auth/login", {
         method: "POST",
         headers: { Origin: "null" },
       })
@@ -101,7 +98,7 @@ test("GitHub login authenticates the configured account and persists only the Me
   ).toBe(403);
   expect(
     (
-      await request("/login", {
+      await request("/api/auth/login", {
         method: "POST",
         headers: { Origin: "https://other.example" },
       })
@@ -121,15 +118,16 @@ test("GitHub login authenticates the configured account and persists only the Me
   githubId = 123;
   const login = await start();
   const granted = await finish(login);
-  expect(granted.headers.get("Location")).toBe("/login");
+  expect(granted.headers.get("Location")).toBe(webOrigin + "/login");
   expect(granted.headers.get("Cache-Control")).toBe("private, no-store");
   const sessionCookie = cookieHeader(granted);
-  const signedInPage = await request("/login", {
-    headers: { Cookie: sessionCookie },
+  const account = await request("/api/account", {
+    headers: { Cookie: sessionCookie, Origin: webOrigin },
   });
-  expect(signedInPage.headers.get("Content-Security-Policy")).toContain(
-    "form-action 'self';",
-  );
+  expect(account.status).toBe(200);
+  expect(await account.json()).toStrictEqual({ connectEnabled: false });
+  expect(account.headers.get("Access-Control-Allow-Origin")).toBe(webOrigin);
+  expect(account.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   assert(
     granted.headers
       .getSetCookie()
@@ -137,7 +135,8 @@ test("GitHub login authenticates the configured account and persists only the Me
         (line) =>
           line.includes("session_token") &&
           line.includes("HttpOnly") &&
-          line.includes("Secure"),
+          line.includes("Secure") &&
+          !line.includes("Domain="),
       ),
   );
   const auth = createLoginAuth(env);
@@ -161,17 +160,18 @@ test("GitHub login authenticates the configured account and persists only the Me
 
   expect(
     (
-      await request("/logout", {
+      await request("/api/auth/logout", {
         method: "POST",
         headers: { Origin: "https://other.example", Cookie: sessionCookie },
       })
     ).status,
   ).toBe(403);
-  const logout = await request("/logout", {
+  const logout = await request("/api/auth/logout", {
     method: "POST",
-    headers: { Origin: origin, Cookie: sessionCookie },
+    headers: { Origin: webOrigin, Cookie: sessionCookie },
   });
   expect(logout.status).toBe(303);
+  expect(logout.headers.get("Location")).toBe(webOrigin + "/login");
   expect(logout.headers.get("Cache-Control")).toBe("private, no-store");
   expect(
     await auth.api.getSession({

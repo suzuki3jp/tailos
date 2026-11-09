@@ -180,9 +180,12 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(published.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.workers_dev).toBe(false);
   expect(published.config.routes).toStrictEqual([
-    { pattern: "meguri.suzuki3.jp", custom_domain: true },
+    { pattern: "api.meguri.suzuki3.jp", custom_domain: true },
   ]);
   expect(published.config.vars.MEGURI_PUBLIC_ORIGIN).toBe(
+    "https://api.meguri.suzuki3.jp",
+  );
+  expect(published.config.vars.MEGURI_WEB_ORIGIN).toBe(
     "https://meguri.suzuki3.jp",
   );
   expect(published.config.vars.MEGURI_OPERATOR_GITHUB_ID).toBe("123");

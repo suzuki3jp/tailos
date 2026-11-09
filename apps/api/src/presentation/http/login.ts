@@ -1,77 +1,23 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
-import { jsx } from "hono/jsx";
 import type { Bindings } from "../../bindings.ts";
 import type { LoginAuth } from "../../application/auth/login.ts";
 
-const providerId = "github";
-const authPath = "/api/auth";
-const loginPath = "/login";
-
 export function createLoginRoutes(
   createLoginAuth: (env: Bindings) => LoginAuth | null,
-  getOperatorSession: (
-    env: Bindings,
-    headers: Headers,
-    auth: LoginAuth,
-  ) => Promise<{ user: { id: string } } | null>,
 ) {
-  const loginRoutes = new Hono<{ Bindings: Bindings }>();
-
   const loginOrigin = createMiddleware<{ Bindings: Bindings }>(
     async (c, next) => {
       const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
-      if (!origin || new URL(c.req.url).origin !== origin) return c.notFound();
-      if (c.req.method === "POST" && c.req.header("Origin") !== origin)
+      const webOrigin = c.env?.MEGURI_WEB_ORIGIN;
+      if (!origin || !webOrigin || new URL(c.req.url).origin !== origin)
+        return c.notFound();
+      if (c.req.method === "POST" && c.req.header("Origin") !== webOrigin)
         return c.text("Forbidden", 403);
       await next();
       c.header("Cache-Control", "private, no-store");
     },
   );
-
-  loginRoutes.get(loginPath, loginOrigin, async (c) => {
-    const auth = createLoginAuth(c.env);
-    if (!auth) return c.notFound();
-    const signedIn = await getOperatorSession(c.env, c.req.raw.headers, auth);
-    c.header(
-      "Content-Security-Policy",
-      `default-src 'none'; form-action 'self'${signedIn ? "" : " https://github.com"}; base-uri 'none'; frame-ancestors 'none'`,
-    );
-    c.header("Referrer-Policy", "same-origin");
-    const body = jsx(
-      "main",
-      null,
-      jsx("h1", null, "Meguri"),
-      signedIn &&
-        c.env.CREDENTIALS &&
-        c.env.CREDENTIAL_ENCRYPTION_KEY &&
-        jsx("p", null, jsx("a", { href: "/connect" }, "ChatGPT 接続")),
-      c.req.query("error") && jsx("p", null, "ログインできませんでした。"),
-      jsx(
-        "form",
-        { method: "post", action: signedIn ? "/logout" : loginPath },
-        jsx(
-          "button",
-          { type: "submit" },
-          signedIn ? "ログアウト" : "GitHub でログイン",
-        ),
-      ),
-    );
-    return c.html(
-      "<!doctype html>" +
-        jsx(
-          "html",
-          { lang: "ja" },
-          jsx(
-            "head",
-            null,
-            jsx("meta", { charset: "utf-8" }),
-            jsx("title", null, "Meguri"),
-          ),
-          jsx("body", null, body),
-        ).toString(),
-    );
-  });
 
   function redirectAfterAuth(response: Response, location: string) {
     const headers = new Headers(response.headers);
@@ -80,34 +26,39 @@ export function createLoginRoutes(
     return new Response(null, { headers, status: 303 });
   }
 
-  loginRoutes.post(loginPath, loginOrigin, async (c) => {
-    const auth = createLoginAuth(c.env);
-    if (!auth) return c.notFound();
-    const response = await auth.api.signInSocial({
-      body: { provider: providerId, callbackURL: loginPath },
-      headers: c.req.raw.headers,
-      asResponse: true,
+  return new Hono<{ Bindings: Bindings }>()
+    .post("/login", loginOrigin, async (c) => {
+      const auth = createLoginAuth(c.env);
+      if (!auth) return c.notFound();
+      const response = await auth.api.signInSocial({
+        body: {
+          provider: "github",
+          callbackURL: new URL("/login", c.env.MEGURI_WEB_ORIGIN).href,
+        },
+        headers: c.req.raw.headers,
+        asResponse: true,
+      });
+      const location = response.headers.get("Location");
+      return response.ok && location
+        ? redirectAfterAuth(response, location)
+        : response;
+    })
+    .get("/callback/github", loginOrigin, (c) => {
+      const auth = createLoginAuth(c.env);
+      return auth ? auth.handler(c.req.raw) : c.notFound();
+    })
+    .post("/logout", loginOrigin, async (c) => {
+      const auth = createLoginAuth(c.env);
+      if (!auth) return c.notFound();
+      const response = await auth.api.signOut({
+        headers: c.req.raw.headers,
+        asResponse: true,
+      });
+      return response.ok
+        ? redirectAfterAuth(
+            response,
+            new URL("/login", c.env.MEGURI_WEB_ORIGIN).href,
+          )
+        : response;
     });
-    const location = response.headers.get("Location");
-    return response.ok && location
-      ? redirectAfterAuth(response, location)
-      : response;
-  });
-
-  loginRoutes.get(authPath + "/callback/github", loginOrigin, (c) => {
-    const auth = createLoginAuth(c.env);
-    return auth ? auth.handler(c.req.raw) : c.notFound();
-  });
-
-  loginRoutes.post("/logout", loginOrigin, async (c) => {
-    const auth = createLoginAuth(c.env);
-    if (!auth) return c.notFound();
-    const response = await auth.api.signOut({
-      headers: c.req.raw.headers,
-      asResponse: true,
-    });
-    return response.ok ? redirectAfterAuth(response, loginPath) : response;
-  });
-
-  return loginRoutes;
 }

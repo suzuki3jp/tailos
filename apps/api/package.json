@@ -2,6 +2,11 @@
   "name": "@meguri/api",
   "private": true,
   "type": "module",
+  "exports": {
+    "./browser": {
+      "types": "./src/bootstrap/http.ts"
+    }
+  },
   "scripts": {
     "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
     "provision": "node scripts/provision-resources.mjs",

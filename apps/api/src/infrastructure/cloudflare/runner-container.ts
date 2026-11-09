@@ -1,6 +1,22 @@
+import {
+  beginPublicationReconciliation,
+  stageRunPublication,
+} from "../d1/run-publication.ts";
+import {
+  pendingPublication,
+  publicationDeadline,
+  type PendingPublication,
+} from "../../application/runs/publication.ts";
+import { GitHubApp } from "../github/app.ts";
+import { seal, unseal, type Sealed } from "../auth/sealed-store.ts";
 import { hashRunLease, matchRunLease, newRunLease } from "../auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
-import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
+import {
+  runnerStatusSchema,
+  type ExecutionContext,
+  type RunnerJob,
+  type RepositoryTarget,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "../../bindings.ts";
 import { advanceRun } from "../d1/run-execution.ts";
@@ -10,6 +26,12 @@ import {
 } from "../../application/runs/advance-run.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
+
+type RepositoryGrant = {
+  value: Sealed;
+  expiresAt: number;
+  attempts: number;
+};
 
 type RefreshLease = {
   digest: string;
@@ -44,7 +66,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     const driver: RunnerDriver = {
       start: (job) => this.submitJob(job),
-      poll: (id) => this.pollJob(id),
+      poll: (id, context, deadlineAt, stepState) =>
+        this.pollJob(id, context, deadlineAt, stepState),
     };
     const progress = await advanceRun(
       this.env.DB,
@@ -58,7 +81,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     await this.ctx.storage.delete("refreshLease");
-    if (this.ctx.container?.running) await this.ctx.container.destroy();
+    try {
+      if (this.ctx.container?.running) await this.ctx.container.destroy();
+    } finally {
+      await this.revokeRepositoryGrant(runId);
+    }
   }
 
   private async startRunner(deadlineAt: number, enableInternet = false) {
@@ -133,6 +160,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
   }
 
+  async stagePublication(
+    runId: string,
+    bearer: string,
+    work: PendingPublication,
+  ) {
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (
+      !lease ||
+      lease.runId !== runId ||
+      lease.expiresAt <= Date.now() ||
+      !matchRunLease(await hashRunLease(bearer), lease.digest)
+    )
+      return false;
+    return stageRunPublication(this.env.DB, runId, work);
+  }
+
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
     const { runId, prompt, deadlineAt, context } = request;
     const base = { version: 1 as const, runId, prompt, deadlineAt };
@@ -165,10 +208,108 @@ export class RunnerContainer extends DurableObject<Bindings> {
     };
   }
 
+  private get github() {
+    const appId = this.env.MEGURI_GH_APP_ID;
+    const privateKey = this.env.MEGURI_GH_APP_PRIVATE_KEY;
+    return appId && privateKey ? new GitHubApp({ appId, privateKey }) : null;
+  }
+
+  private async revokeRepositoryGrant(runId: string) {
+    const grant =
+      await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
+    if (!grant) return;
+    if (grant.expiresAt <= Date.now()) {
+      await this.ctx.storage.delete("repositoryGrant");
+      return;
+    }
+
+    try {
+      const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+      const github = this.github;
+      if (!key || !github) throw new Error("Repository revocation unavailable");
+      const token = v.parse(
+        v.string(),
+        await unseal(grant.value, key, `meguri:github:${runId}`),
+      );
+      await github.revoke(token);
+    } catch {
+      if (grant.attempts < 4) {
+        await this.ctx.storage.put("repositoryGrant", {
+          ...grant,
+          attempts: grant.attempts + 1,
+        });
+        await this.ctx.storage.setAlarm(
+          Math.min(grant.expiresAt, Date.now() + 15_000),
+        );
+        return;
+      }
+      // oxlint-disable-next-line no-console -- Record revocation exhaustion without token data.
+      console.warn("Repository grant revocation failed; relying on expiry");
+    }
+    await this.ctx.storage.delete("repositoryGrant");
+  }
+
   private async submitJob(request: RunRequest) {
     const job = await this.prepareJob(request).catch(() => null);
     if (!job)
       return { status: "failed", errorCode: "provider_unavailable" } as const;
+
+    const target =
+      request.context.engine === "codex"
+        ? request.context.repository
+        : undefined;
+    if (target && job.engine === "codex") {
+      const github = this.github;
+      const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+      if (!github || !key)
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      const checkout = await github
+        .checkout(target, request.runId)
+        .catch(() => null);
+      if (!checkout)
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      try {
+        await this.ctx.storage.put("repositoryGrant", {
+          value: await seal(
+            checkout.token,
+            key,
+            `meguri:github:${request.runId}`,
+          ),
+          expiresAt: checkout.expiresAt,
+          attempts: 0,
+        } satisfies RepositoryGrant);
+        await this.env.DB.prepare(
+          "UPDATE runs SET step_state = ? WHERE id = ? AND status = 'running'",
+        )
+          .bind(
+            JSON.stringify({
+              version: 1,
+              baseSha: checkout.baseSha,
+              branch: checkout.branch,
+            }),
+            request.runId,
+          )
+          .run();
+      } catch {
+        await github.revoke(checkout.token).catch(() => {});
+        return {
+          status: "failed",
+          errorCode: "repository_unavailable",
+        } as const;
+      }
+      job.checkout = {
+        repository: target.repository,
+        baseSha: checkout.baseSha,
+        branch: checkout.branch,
+        token: checkout.token,
+      };
+    }
     const port = await this.startRunner(job.deadlineAt, job.engine === "codex");
     const response = await port.fetch("http://runner/job", {
       method: "POST",
@@ -185,11 +326,100 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return { status: "running" } as const;
   }
 
-  private async pollJob(runId: string) {
+  private async pollJob(
+    runId: string,
+    context: ExecutionContext,
+    deadlineAt: number,
+    stepState: string | null,
+  ) {
+    const target = context.engine === "codex" ? context.repository : undefined;
+    const pending = target ? pendingPublication(stepState) : null;
+    if (target && pending?.kind === "pushed")
+      return this.publish(
+        runId,
+        target,
+        publicationDeadline(stepState, deadlineAt),
+        pending,
+      );
+
+    const status = await this.readRunnerStatus(runId).catch(
+      (error: unknown) => {
+        if (!pending || Date.now() < deadlineAt) throw error;
+        // Once Agent time is over, a failed status request must not skip the
+        // remote-ref check for a push whose response may have been lost.
+        return { status: "failed", errorCode: "runner_lost" } as const;
+      },
+    );
+    if (target && pending) {
+      if (status.status === "running" && Date.now() < deadlineAt) return status;
+      if (
+        !(await beginPublicationReconciliation(
+          this.env.DB,
+          runId,
+          pending,
+          false,
+        ))
+      )
+        throw new Error("Publication checkpoint changed");
+
+      const pushed =
+        status.status === "succeeded" &&
+        status.publication?.kind === "pushed" &&
+        status.publication.branch === pending.branch &&
+        status.publication.sha === pending.sha;
+      if (!pushed) {
+        const github = this.github;
+        if (!github) throw new Error("GitHub verification unavailable");
+        if (!(await github.hasCommit(target, runId, pending))) {
+          return status.status === "failed"
+            ? status
+            : ({
+                status: "failed",
+                errorCode: "repository_unavailable",
+              } as const);
+        }
+      }
+      if (
+        !(await beginPublicationReconciliation(
+          this.env.DB,
+          runId,
+          pending,
+          true,
+        ))
+      )
+        throw new Error("Publication checkpoint changed");
+      return { status: "running" } as const;
+    }
+    if (status.status !== "succeeded" || !target) return status;
+    if (!status.publication)
+      return { status: "failed", errorCode: "repository_unavailable" } as const;
+    if (status.publication.kind === "no_changes") {
+      return { ...status, publicationResult: { kind: "no_changes" as const } };
+    }
+
+    const pendingWork = {
+      reply: status.reply,
+      events: status.events,
+      ...status.publication,
+    };
+    // An older Runner may report a pushed commit without a checkpoint.
+    if (
+      !(await stageRunPublication(this.env.DB, runId, pendingWork)) ||
+      !(await beginPublicationReconciliation(
+        this.env.DB,
+        runId,
+        pendingWork,
+        true,
+      ))
+    )
+      return { status: "failed", errorCode: "repository_unavailable" } as const;
+    return { status: "running" } as const;
+  }
+
+  private async readRunnerStatus(runId: string) {
     const container = this.ctx.container;
     if (!container?.running)
       return { status: "failed", errorCode: "runner_lost" } as const;
-
     const reply = await container
       .getTcpPort(8080)
       .fetch(`http://runner/job/${runId}`, {
@@ -204,5 +434,37 @@ export class RunnerContainer extends DurableObject<Bindings> {
       throw new Error("Runner status unavailable");
     }
     return v.parse(runnerStatusSchema, await reply.json());
+  }
+
+  private async publish(
+    runId: string,
+    target: RepositoryTarget,
+    deadlineAt: number,
+    work: PendingPublication,
+  ) {
+    const github = this.github;
+    if (!github)
+      return {
+        status: "failed",
+        errorCode: "publication_unconfirmed",
+      } as const;
+    const url = await github.publish(target, runId, work, deadlineAt);
+    if (!url)
+      return {
+        status: "failed",
+        errorCode: "publication_unconfirmed",
+        events: work.events,
+      } as const;
+    return {
+      status: "succeeded" as const,
+      reply: work.reply,
+      events: work.events,
+      publicationResult: {
+        kind: "pull_request" as const,
+        url,
+        branch: work.branch,
+        sha: work.sha,
+      },
+    };
   }
 }

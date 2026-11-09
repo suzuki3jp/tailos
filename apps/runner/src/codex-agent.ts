@@ -17,8 +17,8 @@ const completedSchema = v.object({
   turn: v.object({ status: v.string() }),
 });
 
-type LaunchCodex = (directory: string) => CodexProcess;
-const launchCodex: LaunchCodex = (directory) =>
+type LaunchCodex = (directory: string, workspace: string) => CodexProcess;
+const launchCodex: LaunchCodex = (directory, workspace) =>
   spawn(
     "codex",
     [
@@ -31,6 +31,12 @@ const launchCodex: LaunchCodex = (directory) =>
       "check_for_update_on_startup=false",
       "-c",
       "features.plugins=false",
+      "-c",
+      "sandbox_workspace_write.exclude_slash_tmp=true",
+      "-c",
+      "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+      "-c",
+      `projects={${JSON.stringify(workspace)}={trust_level="untrusted"}}`,
     ],
     {
       cwd: directory,
@@ -45,12 +51,18 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal) {
+    async run(job, signal, cwd) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const directory = await mkdtemp(join(tmpdir(), "meguri-codex-"));
       try {
         signal.throwIfAborted();
-        return await runTurn(launch(directory), directory, job, signal, http);
+        return await runTurn(
+          launch(directory, cwd ?? directory),
+          cwd ?? directory,
+          job,
+          signal,
+          http,
+        );
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
@@ -72,6 +84,7 @@ async function runTurn(
   let threadId: string | undefined;
   let reply = "";
   const sensitive = new Set([access.accessToken, job.refresh.bearer]);
+  if (job.checkout) sensitive.add(job.checkout.token);
   const loginParams = () => ({
     accessToken: access.accessToken,
     chatgptAccountId: access.accountId,
@@ -140,7 +153,7 @@ async function runTurn(
         cwd,
         ephemeral: true,
         approvalPolicy: "never",
-        sandbox: "read-only",
+        sandbox: job.checkout ? "workspace-write" : "read-only",
       }),
     );
     threadId = thread.thread.id;

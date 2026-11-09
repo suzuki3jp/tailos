@@ -2,6 +2,7 @@ import {
   createSession,
   type SessionStore,
 } from "../../application/sessions/create-session.ts";
+import type { createOperatorAuth, OperatorEnv } from "./operator.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
@@ -19,6 +20,7 @@ const sessionInput = v.strictObject({
 
 export function createSessionRoutes<Detail>(
   store: (env: Bindings) => SessionStore<Detail>,
+  operatorAuth: ReturnType<typeof createOperatorAuth>,
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -42,5 +44,15 @@ export function createSessionRoutes<Detail>(
     return detail ? c.json(detail) : c.notFound();
   });
 
-  return { sessionRoutes };
+  const userSessionRoutes = new Hono<OperatorEnv>();
+  userSessionRoutes.use("*", operatorAuth);
+  userSessionRoutes.get("/:id", async (c) => {
+    const detail = await store(c.env).read(
+      c.req.param("id"),
+      c.var.operatorUserId,
+    );
+    return detail ? c.json(detail) : c.notFound();
+  });
+
+  return { sessionRoutes, userSessionRoutes };
 }

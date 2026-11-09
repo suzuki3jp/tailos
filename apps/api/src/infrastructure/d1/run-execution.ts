@@ -18,7 +18,7 @@ function d1RunStore(db: D1Database): RunStore {
           `UPDATE runs SET status = 'running', next_action_at = ?
      WHERE id = ? AND status = 'queued'
      RETURNING start_message_id AS messageId, execution_context AS executionContext,
-               deadline_at AS deadlineAt`,
+               deadline_at AS deadlineAt, step_state AS stepState`,
         )
         .bind(now, runId)
         .first<RunInput>();
@@ -27,7 +27,7 @@ function d1RunStore(db: D1Database): RunStore {
       return db
         .prepare(
           `SELECT start_message_id AS messageId, execution_context AS executionContext,
-            deadline_at AS deadlineAt FROM runs WHERE id = ? AND status = 'running'`,
+            deadline_at AS deadlineAt, step_state AS stepState FROM runs WHERE id = ? AND status = 'running'`,
         )
         .bind(runId)
         .first<RunInput>();
@@ -63,7 +63,7 @@ function d1RunStore(db: D1Database): RunStore {
           .bind(crypto.randomUUID(), reply, finishedAt, runId),
         db
           .prepare(
-            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running'",
+            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running'",
           )
           .bind(result, finishedAt, runId),
       ]);
@@ -76,12 +76,17 @@ function d1RunStore(db: D1Database): RunStore {
         .first<{ status: RunStatus }>();
       return stored?.status;
     },
-    async fail(runId: string, code: string, finishedAt: number) {
+    async fail(
+      runId: string,
+      code: string,
+      finishedAt: number,
+      result: string | null = null,
+    ) {
       const failed = await db
         .prepare(
-          "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING status",
+          "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
         )
-        .bind(code, finishedAt, runId)
+        .bind(code, finishedAt, result, runId)
         .first<{ status: "failed" }>();
       return failed?.status;
     },

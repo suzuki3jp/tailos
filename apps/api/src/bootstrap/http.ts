@@ -1,3 +1,4 @@
+import { validSignature } from "../infrastructure/github/webhook-signature.ts";
 import { createOperatorAuth } from "../presentation/http/operator.ts";
 import {
   createLoginAuth,
@@ -12,6 +13,7 @@ import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
+import { createGithubWebhook } from "../presentation/http/github-webhook.ts";
 import { createConnectRoutes } from "../presentation/http/connect.ts";
 import { createRefreshRoutes } from "../presentation/http/refresh.ts";
 import { createLoginRoutes } from "../presentation/http/login.ts";
@@ -23,12 +25,22 @@ import { createTriggerRoutes } from "../presentation/http/triggers.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
-const { sessionRoutes } = createSessionRoutes((env) => d1Sessions(env.DB));
+const { sessionRoutes, userSessionRoutes } = createSessionRoutes(
+  (env) => d1Sessions(env.DB),
+  operatorAuth,
+);
 
 const triggerRoutes = createTriggerRoutes(
   (env) => runStarter(env.RUNNER),
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
+);
+
+const githubWebhook = createGithubWebhook(
+  (env) => runStarter(env.RUNNER),
+  (env) => (input) => admitTrigger(env.DB, input),
+  findOperatorUserId,
+  validSignature,
 );
 
 const runRoutes = createRunRoutes(
@@ -55,6 +67,8 @@ const runnerHealth = createRunnerHealthRoutes((env) =>
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route("/connect", connectRoutes);
+app.route("/sessions", userSessionRoutes);
+app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
 app.route("/", loginRoutes);
 app.get("/health", (c) => c.json({ status: "ok" }));

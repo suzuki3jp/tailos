@@ -12,6 +12,10 @@ export type Bindings = {
   RUN_ARTIFACTS?: RunArtifactsBucket;
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
   MEGURI_TEST_TOKEN?: string;
+  PROJECTS?: string;
+  MEGURI_GH_APP_ID?: string;
+  MEGURI_GH_APP_PRIVATE_KEY?: string;
+  MEGURI_GH_WEBHOOK_SECRET?: string;
   CREDENTIAL_ENCRYPTION_KEY?: string;
   CREDENTIALS?: { getByName(name: string): ConnectionControl };
   MEGURI_PUBLIC_ORIGIN?: string;

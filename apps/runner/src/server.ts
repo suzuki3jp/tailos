@@ -10,6 +10,7 @@ import {
 import * as v from "valibot";
 import { fakeAgent, type AgentAdapter } from "./agent.ts";
 import { codexAgent } from "./codex-agent.ts";
+import { runInGitWorkspace } from "./git-workspace.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 
@@ -37,6 +38,34 @@ function json(response: ServerResponse, code: number, body: object) {
     .end(JSON.stringify(body));
 }
 
+async function stagePublication(
+  job: Extract<RunnerJob, { engine: "codex" }>,
+  work: { branch: string; sha: string; reply: string },
+  events: RunnerEvent[],
+  signal: AbortSignal,
+) {
+  const url = new URL("publication", job.refresh.url);
+  if (url.protocol !== "https:" || url.username || url.password)
+    throw new Error("Invalid publication URL");
+  const response = await fetch(url, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      Authorization: `Bearer ${job.refresh.bearer}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      kind: "prepared",
+      ...work,
+      events: [...events, { type: "job_succeeded", at: Date.now() }],
+    }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+  });
+  await response.body?.cancel();
+  if (response.status !== 204)
+    throw new Error("Publication checkpoint unavailable");
+}
+
 async function execute(job: CurrentJob, agent: AgentAdapter) {
   const events: RunnerEvent[] = [{ type: "job_started", at: Date.now() }];
   const remaining = job.input.deadlineAt - Date.now();
@@ -47,11 +76,21 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
   }
   const signal = AbortSignal.timeout(remaining);
   try {
-    const reply = await agent.run(job.input, signal);
+    const input = job.input;
+    const result =
+      input.engine === "codex" && input.checkout
+        ? await runInGitWorkspace(
+            input.checkout,
+            signal,
+            (cwd) => agent.run(input, signal, cwd),
+            undefined,
+            (work) => stagePublication(input, work, events, signal),
+          )
+        : { reply: await agent.run(input, signal) };
     signal.throwIfAborted();
     job.state = v.parse(runnerStatusSchema, {
       status: "succeeded",
-      reply,
+      ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
     });
   } catch {

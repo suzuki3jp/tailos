@@ -57,7 +57,8 @@ export class GitHubApp {
   ) {
     return this.http("https://api.github.com" + path, {
       method,
-      redirect: "error",
+      // Workers supports manual redirects. Callers reject the non-2xx response.
+      redirect: "manual",
       headers: {
         Authorization: "Bearer " + token,
         Accept: "application/vnd.github+json",

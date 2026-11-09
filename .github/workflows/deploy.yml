@@ -101,12 +101,29 @@ jobs:
         with:
           cache: true
       - run: pnpm install --frozen-lockfile
+      - name: Build Web Worker
+        run: pnpm --filter @meguri/web run build
+      - name: Recheck the current main revision
+        id: revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ "$current_sha" == "$TESTED_SHA" ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipped Web deployment: main is at $current_sha, CI tested $TESTED_SHA"
+          fi
       - name: Deploy Web to Cloudflare
-        run: pnpm --filter @meguri/web run deploy
+        if: steps.revision.outputs.deploy == 'true'
+        run: pnpm --filter @meguri/web exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Verify the deployed Web Worker
+        if: steps.revision.outputs.deploy == 'true'
         run: |
           for attempt in {1..12}; do
             if curl --fail --silent --show-error --max-time 8 https://meguri.suzuki3.jp/health |

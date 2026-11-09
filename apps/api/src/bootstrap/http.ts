@@ -13,6 +13,8 @@ import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
 import { createRunnerHealthRoutes } from "../presentation/http/runner-health.ts";
 import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
+import type { ApplyGlobalResponse } from "hono/client";
+import { cors } from "hono/cors";
 import { createGithubWebhook } from "../presentation/http/github-webhook.ts";
 import { createConnectRoutes } from "../presentation/http/connect.ts";
 import { createLoginRoutes } from "../presentation/http/login.ts";
@@ -56,7 +58,7 @@ const refreshRoutes = createRefreshRoutes((env, runId, now) =>
   findActiveRun(env.DB, runId, now),
 );
 
-const loginRoutes = createLoginRoutes(createLoginAuth, getOperatorSession);
+const loginRoutes = createLoginRoutes(createLoginAuth);
 
 const connectRoutes = createConnectRoutes(operatorAuth);
 
@@ -66,11 +68,39 @@ const runnerHealth = createRunnerHealthRoutes((env) =>
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.route("/connect", connectRoutes);
-app.route("/sessions", userSessionRoutes);
+const browserApi = new Hono<{ Bindings: Bindings }>()
+  .use(
+    "*",
+    cors({
+      origin: (origin, c) =>
+        origin === c.env?.MEGURI_WEB_ORIGIN ? origin : undefined,
+      credentials: true,
+      allowMethods: ["GET", "POST"],
+    }),
+  )
+  .get("/account", operatorAuth, (c) =>
+    c.json({
+      connectEnabled: Boolean(
+        c.env.CREDENTIALS && c.env.CREDENTIAL_ENCRYPTION_KEY,
+      ),
+    }),
+  )
+  .route("/connect", connectRoutes)
+  .route("/sessions", userSessionRoutes);
+
+export type BrowserApi = ApplyGlobalResponse<
+  typeof browserApi,
+  {
+    401: { json: { error: "unauthorized" } };
+    403: { json: { error: "forbidden" } };
+    404: { json: { error: "not_found" } };
+  }
+>;
+
+app.route("/api", browserApi);
+app.route("/api/auth", loginRoutes);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
-app.route("/", loginRoutes);
 app.get("/health", (c) => c.json({ status: "ok", service: "meguri-api" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);

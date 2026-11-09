@@ -18,17 +18,26 @@ const loginPath = "/login";
 
 export function createLoginAuth(env: Bindings) {
   const origin = env.MEGURI_PUBLIC_ORIGIN;
+  const webOrigin = env.MEGURI_WEB_ORIGIN;
   const secret = env.BETTER_AUTH_SECRET;
   const clientId = env.MEGURI_GITHUB_OAUTH_CLIENT_ID;
   const clientSecret = env.MEGURI_GITHUB_OAUTH_CLIENT_SECRET;
   const githubId = env.MEGURI_OPERATOR_GITHUB_ID;
-  if (!origin || !secret || !clientId || !clientSecret || !githubId)
+  if (
+    !origin ||
+    !webOrigin ||
+    !secret ||
+    !clientId ||
+    !clientSecret ||
+    !githubId
+  )
     return null;
 
   const provider = github({ clientId, clientSecret });
   return betterAuth({
     baseURL: origin,
     basePath: authPath,
+    trustedOrigins: [webOrigin],
     secret,
     database: drizzleAdapter(drizzle(env.DB), {
       provider: "sqlite",
@@ -75,7 +84,7 @@ export function createLoginAuth(env: Bindings) {
         },
       },
     },
-    onAPIError: { errorURL: new URL(loginPath, origin).href },
+    onAPIError: { errorURL: new URL(loginPath, webOrigin).href },
   });
 }
 

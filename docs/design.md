@@ -4,7 +4,7 @@
 
 GitHub Issue に `meguri:run` ラベルを付けると、Meguri が Session と最初の依頼を作る。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は config で管理する。PR 作成後のレビューとマージは人が行う。
 
-ChatGPT の接続画面は Hono JSX で API に同居させ、ブラウザから接続を完了できるようにする。Web チャットからの起動・続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
+GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。Web チャットからの起動・続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 
@@ -12,7 +12,8 @@ ChatGPT の接続画面は Hono JSX で API に同居させ、ブラウザから
 
 | 配置 | 技術 | 責務 |
 | --- | --- | --- |
-| `apps/api` | Hono、Hono JSX、Cloudflare Workers、Wrangler、Drizzle ORM | トリガーの受付、Session と会話履歴の管理、Run の進行、コンテナ制御、プロバイダ認証、PR 作成 |
+| `apps/web` | vinext、React、Tailwind CSS、TanStack Query | ログイン、ChatGPT 接続、Session 詳細の画面 |
+| `apps/api` | Hono、Cloudflare Workers、Wrangler、Drizzle ORM | トリガーの受付、Session と会話履歴の管理、Run の進行、コンテナ制御、プロバイダ認証、PR 作成 |
 | `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。MVP の実装は Codex app-server |
 | `packages/core` | TypeScript、Valibot | ジョブ、イベント、結果など API と Runner の共有契約 |
 
@@ -21,7 +22,8 @@ API の HTTP ルートは `presentation/http`、ユースケースとその契�
 ```mermaid
 flowchart LR
     GitHub[GitHub Issue] -->|ラベル Webhook| API[apps/api · Workers]
-    Browser[ブラウザ] -->|ChatGPT 接続| API
+    Browser[ブラウザ] --> Web[apps/web · Workers]
+    Browser -->|Hono Client| API
     API --> D1[(D1 · Session・会話・Run・起動イベント)]
     API --> DO[Run ごとの Durable Object]
     DO -->|内部 HTTP| Runner[apps/runner · Cloudflare Containers]
@@ -34,6 +36,7 @@ flowchart LR
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
 - **実行の境界。** Runner 内に `AgentAdapter` を置き、Codex 固有の起動・入力・イベント・結果の変換をその実装に閉じる。API と Runner は共通のジョブと結果の形式で通信する。
 - **認証の境界。** プロバイダ固有の接続とトークン更新は API 側が担当する。共有契約は Cloudflare や Agent 固有の SDK に依存させない。実装は各 app の中に置き、共有する契約を `packages/core` に置く。
+- **Web の境界。** ブラウザは `api.meguri.suzuki3.jp` の JSON API を Hono Client で呼ぶ。Web は公開ルートの型だけを `@meguri/api/browser` から取り込む。Cookie は API ホストに限定し、資格情報付きの CORS と更新リクエストは Web のオリジンを許可する。
 
 ## Session と実行のデータモデル
 
@@ -113,7 +116,7 @@ Run 完了時は、確定した Agent の返答と Run の結果を一緒に保�
 
 ## 認証と GitHub の権限
 
-ChatGPT 接続は Hono JSX のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Meguri が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
+ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Meguri が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
 
 GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命のインストールトークンを渡し、取得と作業ブランチへの push を許可する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 
@@ -123,7 +126,7 @@ GitHub では専用の権限主体として GitHub App を使う。App の秘密
 
 事前検証では Wrangler `4.157.0` を使い、Worker → DO → Docker の HTTP 疎通、ローカル R2 への読み書き、再起動後の DO ストレージの保持を確認した。本実装では `apps/api/package.json` に固定した Wrangler でフェーズごとの動作を検証する。 [Cloudflare Containers のローカル開発](https://developers.cloudflare.com/containers/guides/local-dev/)
 
-D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` の push に対する CI が成功した後、検証したコミットを `production` 環境から Cloudflare にデプロイする。本番ドメインは `meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
+D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` の push に対する CI が成功した後、検証したコミットを `production` 環境から Cloudflare にデプロイする。本番は Web が `meguri.suzuki3.jp`、API が `api.meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
 
 ## 実装フェーズ
 
@@ -145,6 +148,6 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 
 | フェーズ | 作るもの | 完了条件 |
 | --- | --- | --- |
-| 2. ChatGPT 接続と Codex 実行 | Hono JSX の接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
+| 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
 | 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチへの push と PR 作成を行う | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
 | 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `meguri.suzuki3.jp` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |

@@ -1,12 +1,14 @@
 # Meguri の本番デプロイ
 
-`main` の push に対する CI が成功すると、GitHub Actions が Wrangler 設定の名前で既存の D1 と R2 を探す。両方が見つかったら、取得した D1 の UUID でマイグレーションを適用し、Worker と Runner イメージをデプロイする。最後に `meguri.suzuki3.jp/health` で Worker の応答を確認する。どちらかが見つからなければマイグレーション前に失敗する。
+`main` の最新コミットに対する CI が成功すると **Deploy** が走る。API と Runner をデプロイし、API の公開確認後に Web をデプロイする。
+
+API ジョブは Wrangler 設定の名前で既存の D1 と R2 を探し、D1 マイグレーション、API Worker と Runner イメージのデプロイ、`api.meguri.suzuki3.jp/health` の確認を行う。
 
 ## Cloudflare
 
 - D1 の `meguri` と R2 の `meguri-run-artifacts` がまだない場合は、手動の **Provision Cloudflare resources** で作成する。R2 は非公開で作成される。同名のリソースは再利用される。
 - Cloudflare API トークンには、対象アカウントの Workers と Containers を更新できる権限、`D1 Write`、`Workers R2 Storage Read` と `Workers R2 Storage Write`、`suzuki3.jp` の Worker ルートを設定できる権限を付ける。
-- `meguri.suzuki3.jp` が prototype の Worker に紐づいている場合は、本実装をデプロイする前に古いカスタムドメインの紐付けを解除する。
+- API Worker は `api.meguri.suzuki3.jp`、Web Worker は `meguri.suzuki3.jp` を使う。Wrangler が各 Custom Domain を割り当て、Cloudflare が DNS レコードと TLS 証明書を作成する。マージ前に、両ホスト名に Meguri 以外で使っている DNS レコードや Worker がないことを確認する。 [Cloudflare Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
 
 ## GitHub Actions
 
@@ -30,17 +32,29 @@
 
 ### 初回セットアップ
 
-手動ワークフローが `main` に入ったら、GitHub の **Actions → Provision Cloudflare resources → Run workflow** で `main` を選んで実行する。セットアップは不足分の作成までを行う。初回デプロイがリソース不足で失敗した場合は、セットアップの成功後に、最新の `main` に対する **Deploy API** の失敗ジョブを再実行する。 [GitHub Actions の再実行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
+手動ワークフローが `main` に入ったら、GitHub の **Actions → Provision Cloudflare resources → Run workflow** で `main` を選んで実行する。セットアップは不足分の作成までを行う。初回デプロイがリソース不足で失敗した場合は、セットアップの成功後に、最新の `main` に対する **Deploy** の失敗ジョブを再実行する。 [GitHub Actions の再実行](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
 
 運用開始後にリソース不足が出たときは、セットアップを再実行する前に対象アカウントと Wrangler のリソース名を確認する。
 
+## Web のデプロイ
+
+### 初回の Web 公開
+
+1. マージ前に GitHub Actions の `production-web` 環境を作り、デプロイ元を `main` に制限する。Web Worker と `suzuki3.jp` の Custom Domain を設定できる `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` を登録する。既存の API 用 D1 と R2 があり、進行中の Run が完了していることを確認する。
+2. `main` の CI が通ると、API の公開確認後に Wrangler が `meguri-web` Worker を作成し、静的アセットをアップロードして `meguri.suzuki3.jp` を割り当てる。Web が使う Cloudflare リソースはこのデプロイで揃う。最後に `/health` が Web Worker を返すまで再試行する。
+3. API が新ドメインで応答したら、下記の GitHub OAuth App のコールバックと GitHub App の Webhook URL を更新する。Web 公開後に GitHub でログインし直し、テスト Issue から Session まで確認する。
+
+ドメイン割り当てが失敗した場合は、Cloudflare の **Domains & Routes** と DNS を確認する。旧 API Worker や prototype に紐づいたままなら解除し、最新の `main` に対する **Deploy** の失敗ジョブを再実行する。
+
+ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @meguri/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/api/auth/callback/github` を設定する。
+
 ## 運用者の GitHub ログイン
 
-GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://meguri.suzuki3.jp`、Authorization callback URL は `https://meguri.suzuki3.jp/api/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
+GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://meguri.suzuki3.jp`、Authorization callback URL は `https://api.meguri.suzuki3.jp/api/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
 ## GitHub App
 
-対象リポジトリに App をインストールし、Repository permissions を **Issues: Read**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://meguri.suzuki3.jp/webhooks/github` とし、`Issues` イベントを購読する。
+対象リポジトリに App をインストールし、Repository permissions を **Issues: Read**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://api.meguri.suzuki3.jp/webhooks/github` とし、`Issues` イベントを購読する。
 
 既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Meguri の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents 権限に限定される。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 

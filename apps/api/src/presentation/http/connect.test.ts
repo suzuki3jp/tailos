@@ -7,11 +7,11 @@ import {
 import app from "../../bootstrap/http.ts";
 import type { ConnectionStatus } from "../../application/auth/device.ts";
 
-test("protects the device code and requires a same-origin POST to change connection state", async (t) => {
+test("protects the device code and requires a POST from the Web origin to change connection state", async (t) => {
   const login = testLoginBindings(await createTestDb(t));
   const { id, cookie } = await createTestOperator(login);
-  const origin = login.MEGURI_PUBLIC_ORIGIN;
-  const path = origin + "/connect";
+  const origin = login.MEGURI_WEB_ORIGIN;
+  const path = login.MEGURI_PUBLIC_ORIGIN + "/api/connect";
   let status: ConnectionStatus = { state: "disconnected" };
   let starts = 0;
   const env = {
@@ -45,7 +45,25 @@ test("protects the device code and requires a same-origin POST to change connect
   };
 
   expect((await app.request(path)).status).toBe(404);
-  expect((await app.request(path, undefined, env)).status).toBe(303);
+  expect((await app.request(path, undefined, env)).status).toBe(401);
+  const preflight = await app.request(
+    path + "/start",
+    {
+      method: "OPTIONS",
+      headers: { Origin: origin, "Access-Control-Request-Method": "POST" },
+    },
+    env,
+  );
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+  const foreign = await app.request(
+    path,
+    {
+      headers: { Origin: "https://another.example", Cookie: cookie },
+    },
+    env,
+  );
+  expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
   expect(
     (
       await app.request(
@@ -70,17 +88,12 @@ test("protects the device code and requires a same-origin POST to change connect
     { method: "POST", headers },
     env,
   );
-  expect(response.status).toBe(303);
-  expect(response.headers.get("Location")).toBe("/connect");
+  expect(response.status).toBe(200);
   expect(starts).toBe(1);
   const pending = await app.request(path, { headers }, env);
   expect(pending.status).toBe(200);
-  expect(pending.headers.get("Referrer-Policy")).toBe("same-origin");
-  expect(pending.headers.get("Content-Security-Policy")).toContain(
-    "form-action 'self';",
-  );
   expect(pending.headers.get("Cache-Control")).toBe("private, no-store");
-  expect(await pending.text()).toMatch(/MY&lt;CODE/);
+  expect(await pending.json()).toEqual(status);
   expect(
     (await app.request(path + "/disconnect", unauthenticated, env)).status,
   ).toBe(401);
@@ -88,6 +101,6 @@ test("protects the device code and requires a same-origin POST to change connect
   expect(
     (await app.request(path + "/disconnect", { method: "POST", headers }, env))
       .status,
-  ).toBe(303);
+  ).toBe(200);
   expect(status).toStrictEqual({ state: "disconnected" });
 });

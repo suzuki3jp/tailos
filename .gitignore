@@ -19,3 +19,8 @@ npm-debug.log*
 pnpm-debug.log*
 .claude/settings.local.json
 apps/api/wrangler.deploy.*.jsonc
+
+.vinext/
+
+.next/
+apps/web/next-env.d.ts

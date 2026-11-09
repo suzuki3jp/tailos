@@ -50,3 +50,7 @@ jobs:
 
       - name: Run ${{ matrix.check }}
         run: pnpm run ${{ matrix.script }}
+
+      - name: Build the Web Worker
+        if: matrix.check == 'typecheck'
+        run: pnpm --filter @meguri/web run build

@@ -1,0 +1,84 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console graphite · signature: Session history · v2.0.0 */
+/* Graphite and a single amber action keep attention on the task. System faces cover Japanese text. */
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --paper: oklch(17% 0.008 250);
+  --panel: oklch(21% 0.009 250);
+  --ink: oklch(95% 0.005 250);
+  --muted: oklch(74% 0.01 250);
+  --rule: oklch(41% 0.012 250);
+  --accent: oklch(82% 0.15 80);
+  --accent-ink: oklch(18% 0.04 75);
+  --signal: oklch(80% 0.1 245);
+  --danger: oklch(78% 0.13 25);
+  --body-face: system-ui, sans-serif;
+  --code-face: ui-monospace, monospace;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-signal: var(--signal);
+  --color-danger: var(--danger);
+  --font-sans: var(--body-face);
+  --font-mono: var(--code-face);
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body-face);
+  scrollbar-color: var(--rule) var(--paper);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+h1,
+h2 {
+  min-width: 0;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+}
+
+@layer components {
+  .action {
+    @apply inline-flex min-h-11 items-center rounded-md border border-rule px-4 py-2 text-sm font-medium hover:border-muted;
+  }
+
+  .action:active {
+    filter: brightness(0.9);
+  }
+
+  .action:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  .action-primary {
+    @apply border-accent bg-accent text-accent-ink hover:border-accent;
+  }
+
+  .surface {
+    @apply rounded-lg border border-rule bg-panel p-5 sm:p-6;
+  }
+}

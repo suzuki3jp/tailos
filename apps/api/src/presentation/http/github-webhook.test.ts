@@ -105,8 +105,8 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
   expect(
     await db.prepare("SELECT count(*) AS count FROM runs").first("count"),
   ).toBe(1);
-  const path = `https://meguri.example/sessions/${data.sessionId}`;
-  expect((await app.request(path, undefined, env)).status).toBe(303);
+  const path = `https://api.meguri.example/api/sessions/${data.sessionId}`;
+  expect((await app.request(path, undefined, env)).status).toBe(401);
   const view = await app.request(
     path,
     {
@@ -121,7 +121,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
     .bind("other-session", crypto.randomUUID(), Date.now())
     .run();
   const another = await app.request(
-    "https://meguri.example/sessions/other-session",
+    "https://api.meguri.example/api/sessions/other-session",
     { headers: { Cookie: operator.cookie } },
     env,
   );

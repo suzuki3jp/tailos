@@ -14,7 +14,8 @@ import {
   runWrangler,
 } from "./provision.mjs";
 
-const origin = "https://meguri.suzuki3.jp";
+const origin = "https://api.meguri.suzuki3.jp";
+const webOrigin = "https://meguri.suzuki3.jp";
 const domain = new URL(origin).hostname;
 const runtimeSecrets = [
   "CREDENTIAL_ENCRYPTION_KEY",
@@ -90,6 +91,7 @@ config.vars = {
   ...config.vars,
   ...login.vars,
   MEGURI_PUBLIC_ORIGIN: origin,
+  MEGURI_WEB_ORIGIN: webOrigin,
   MEGURI_GH_APP_ID: appId,
   PROJECTS: JSON.stringify(checkedProjects.output),
 };

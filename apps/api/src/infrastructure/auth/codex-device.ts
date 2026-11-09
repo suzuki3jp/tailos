@@ -196,7 +196,8 @@ export class CodexDeviceAuth implements DeviceAuthAdapter<CodexCredentials> {
     const isForm = payload instanceof URLSearchParams;
     return this.http(issuer + path, {
       method: "POST",
-      redirect: "error",
+      // Workers supports manual redirects. Callers reject the non-2xx response.
+      redirect: "manual",
       headers: {
         "Content-Type": isForm
           ? "application/x-www-form-urlencoded"

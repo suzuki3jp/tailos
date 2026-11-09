@@ -3,9 +3,13 @@ import { fileURLToPath } from "node:url";
 import { codexAccessSchema } from "@meguri/core/runner";
 import * as v from "valibot";
 import { build } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import {
+  Miniflare,
+  Response as MiniflareResponse,
+  convertV4MiniflareOptions,
+} from "miniflare";
 
-async function createBroker(t: TestContext) {
+async function createBroker(t: TestContext, openAIStatus = 530) {
   const bundled = await build({
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
@@ -20,9 +24,7 @@ async function createBroker(t: TestContext) {
           adapter = {
             begin: async () => {
               if (this.decision === "failure") {
-                return new CodexDeviceAuth(async () =>
-                  new Response("sensitive upstream response", { status: 530 }),
-                ).begin();
+                return new CodexDeviceAuth().begin();
               }
               return {
                 id: "opaque",
@@ -102,6 +104,19 @@ async function createBroker(t: TestContext) {
       modules: true,
       script: bundled.outputFiles[0].text,
       compatibilityDate: "2026-10-06",
+      outboundService(request) {
+        expect(request.url).toBe(
+          "https://auth.openai.com/api/accounts/deviceauth/usercode",
+        );
+        expect(request.method).toBe("POST");
+        return new MiniflareResponse("sensitive upstream response", {
+          status: openAIStatus,
+          headers:
+            openAIStatus === 302
+              ? { Location: "https://unexpected.example/" }
+              : undefined,
+        });
+      },
       bindings: {
         CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
       },
@@ -150,24 +165,27 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
 });
 
-test("logs only the connection stage and status when OpenAI rejects device code issuance", async (t) => {
-  const rpc = await createBroker(t);
-  await rpc("setDecision", "failure");
-  expect(await rpc("captureBeginWarnings")).toStrictEqual({
-    started: false,
-    warnings: [
-      [
-        {
-          event: "chatgpt_connection_step_failed",
-          stage: "request_device_code",
-          retrying: false,
-          openaiStatus: 530,
-        },
+test.for([530, 302])(
+  "logs only the stage and status when the Workers fetch returns HTTP %s",
+  async (status, t) => {
+    const rpc = await createBroker(t, status);
+    await rpc("setDecision", "failure");
+    expect(await rpc("captureBeginWarnings")).toStrictEqual({
+      started: false,
+      warnings: [
+        [
+          {
+            event: "chatgpt_connection_step_failed",
+            stage: "request_device_code",
+            retrying: false,
+            openaiStatus: status,
+          },
+        ],
       ],
-    ],
-  });
-  expect(await rpc("status")).toStrictEqual({ state: "failed" });
-});
+    });
+    expect(await rpc("status")).toStrictEqual({ state: "failed" });
+  },
+);
 
 test("serializes access rotation and invalidates a revoked connection", async (t) => {
   const rpc = await createBroker(t);

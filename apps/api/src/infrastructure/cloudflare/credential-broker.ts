@@ -3,6 +3,7 @@ import type { Bindings } from "../../bindings.ts";
 import type { CodexAccess } from "@meguri/core/runner";
 import {
   CodexDeviceAuth,
+  CodexDeviceError,
   ReauthenticationRequired,
   codexCredentialsSchema,
   type CodexCredentials,
@@ -32,6 +33,21 @@ type StoredConnection = {
   accessVersion?: string;
   value: Sealed;
 };
+
+function logConnectionFailure(stage: string, error?: unknown) {
+  const retrying = error instanceof TransientDevicePollError;
+  const openaiStatus =
+    error instanceof CodexDeviceError || retrying
+      ? error.httpStatus
+      : undefined;
+  // oxlint-disable-next-line no-console -- Emit only allowlisted diagnostics to Workers Logs.
+  console.warn({
+    event: "chatgpt_connection_step_failed",
+    stage: error instanceof CodexDeviceError ? error.stage : stage,
+    retrying,
+    ...(openaiStatus === undefined ? {} : { openaiStatus }),
+  });
+}
 
 export class CredentialBroker extends DurableObject<Bindings> {
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
@@ -73,27 +89,32 @@ export class CredentialBroker extends DurableObject<Bindings> {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (await this.ctx.storage.get("connection")) return false;
       const existing = await this.readPending().catch(async () => {
+        logConnectionFailure("read_device_challenge");
         await this.finish("failed");
         return null;
       });
       if (existing && existing.expiresAt > Date.now()) {
         if ((await this.ctx.storage.getAlarm()) === null)
-          await this.ctx.storage.setAlarm(Date.now() + existing.intervalMs);
+          await this.scheduleDevicePoll(Date.now() + existing.intervalMs);
         return true;
       }
       const previous = (await this.ctx.storage.get<number>("lastStarted")) ?? 0;
       if (Date.now() - previous < 15_000) return false;
       await this.ctx.storage.put("lastStarted", Date.now());
 
+      let stage = "request_device_code";
       try {
         const challenge = await this.adapter.begin();
+        stage = "save_device_challenge";
         await this.ctx.storage.put(
           "pending",
           await seal(challenge, this.key, pendingContext),
         );
+        stage = "schedule_device_poll";
         await this.ctx.storage.setAlarm(Date.now() + challenge.intervalMs);
         return true;
-      } catch {
+      } catch (error) {
+        logConnectionFailure(stage, error);
         await this.finish("failed");
         return false;
       }
@@ -158,6 +179,7 @@ export class CredentialBroker extends DurableObject<Bindings> {
   async alarm(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
       const pending = await this.readPending().catch(async () => {
+        logConnectionFailure("read_device_challenge");
         await this.finish("failed");
         return null;
       });
@@ -171,8 +193,9 @@ export class CredentialBroker extends DurableObject<Bindings> {
       try {
         credentials = await this.adapter.complete(pending);
       } catch (error) {
+        logConnectionFailure("poll_device_authorization", error);
         if (error instanceof TransientDevicePollError) {
-          await this.ctx.storage.setAlarm(
+          await this.scheduleDevicePoll(
             Math.min(pending.expiresAt, Date.now() + pending.intervalMs * 2),
           );
         } else {
@@ -182,20 +205,34 @@ export class CredentialBroker extends DurableObject<Bindings> {
       }
 
       if (!credentials) {
-        await this.ctx.storage.setAlarm(
+        await this.scheduleDevicePoll(
           Math.min(pending.expiresAt, Date.now() + pending.intervalMs),
         );
         return;
       }
-      const connection = {
-        version: crypto.randomUUID(),
-        value: await seal(credentials, this.key, credentialContext),
-      };
-      await this.ctx.storage.transaction(async (storage) => {
-        await storage.put({ connection, status: "connected" });
-        await storage.delete("pending");
-      });
+      try {
+        const connection = {
+          version: crypto.randomUUID(),
+          value: await seal(credentials, this.key, credentialContext),
+        };
+        await this.ctx.storage.transaction(async (storage) => {
+          await storage.put({ connection, status: "connected" });
+          await storage.delete("pending");
+        });
+      } catch (error) {
+        logConnectionFailure("save_connection");
+        throw error;
+      }
     });
+  }
+
+  private async scheduleDevicePoll(when: number) {
+    try {
+      await this.ctx.storage.setAlarm(when);
+    } catch (error) {
+      logConnectionFailure("schedule_device_poll");
+      throw error;
+    }
   }
 
   private async finish(state: "expired" | "failed") {

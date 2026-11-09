@@ -1,6 +1,7 @@
 import { assert, expect, test } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { CodexDeviceAuth, ReauthenticationRequired } from "./codex-device.ts";
+import { TransientDevicePollError } from "../../application/auth/device.ts";
 
 test("exchanges a device code, verifies its account, and preserves rotated credentials", async () => {
   const issuer = "https://auth.openai.com";
@@ -71,4 +72,36 @@ test("exchanges a device code, verifies its account, and preserves rotated crede
   await expect(provider.refresh(creds)).rejects.toThrow(
     ReauthenticationRequired,
   );
+});
+
+test("retains the status for a retryable poll failure and distinguishes code exchange failures", async () => {
+  let pollStatus = 429;
+  const provider = new CodexDeviceAuth(async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/accounts/deviceauth/token") {
+      if (pollStatus !== 200) return new Response(null, { status: pollStatus });
+      return Response.json({
+        authorization_code: "one-time",
+        code_verifier: "pkce",
+      });
+    }
+    expect(path).toBe("/oauth/token");
+    return new Response(null, { status: 502 });
+  });
+  const challenge = {
+    id: "opaque",
+    userCode: "DISPLAY",
+    verificationUrl: "https://auth.openai.com/codex/device",
+    intervalMs: 5000,
+    expiresAt: Date.now() + 60_000,
+  };
+
+  await expect(provider.complete(challenge)).rejects.toMatchObject(
+    new TransientDevicePollError(429),
+  );
+  pollStatus = 200;
+  await expect(provider.complete(challenge)).rejects.toMatchObject({
+    stage: "exchange_authorization_code",
+    httpStatus: 502,
+  });
 });

@@ -98,9 +98,15 @@ export function createConnectRoutes(
   });
 
   connectRoutes.get("/", async (c) => {
-    const status = await c.var.broker
-      .status()
-      .catch(() => ({ state: "failed" as const }));
+    const status = await c.var.broker.status().catch(() => {
+      // oxlint-disable-next-line no-console -- Record the failed RPC without its error or payload.
+      console.warn({
+        event: "chatgpt_connection_step_failed",
+        stage: "read_connection_status",
+        retrying: false,
+      });
+      return { state: "failed" as const };
+    });
     return c.html("<!doctype html>" + page(status).toString());
   });
   connectRoutes.post("/start", async (c) => {

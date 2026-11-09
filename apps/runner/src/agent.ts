@@ -4,6 +4,8 @@ export interface AgentAdapter {
   run(job: RunnerJob, signal: AbortSignal, cwd?: string): Promise<string>;
 }
 
+export class AgentSandboxUnavailable extends Error {}
+
 export const fakeAgent: AgentAdapter = {
   async run(job, signal) {
     signal.throwIfAborted();

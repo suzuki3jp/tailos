@@ -3,7 +3,11 @@ import { once } from "node:events";
 import { assert, expect, test, type TestContext } from "vitest";
 import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import { fakeAgent, type AgentAdapter } from "./agent.ts";
+import {
+  AgentSandboxUnavailable,
+  fakeAgent,
+  type AgentAdapter,
+} from "./agent.ts";
 import { codexAgent } from "./codex-agent.ts";
 import { createRunnerServer } from "./server.ts";
 
@@ -134,4 +138,25 @@ test("reports out-of-contract replies as agent failures", async (t) => {
     "job_started",
     "job_failed",
   ]);
+});
+
+test("reports a sandbox startup failure as a failed job", async (t) => {
+  const origin = await listen(t, {
+    async run() {
+      throw new AgentSandboxUnavailable();
+    },
+  });
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Run a command",
+    deadlineAt: Date.now() + 60_000,
+  };
+  expect((await sendJob(origin, job)).status).toBe(202);
+  const response = await fetch(`${origin}/job/${job.runId}`);
+  expect(v.parse(runnerStatusSchema, await response.json())).toMatchObject({
+    status: "failed",
+    errorCode: "sandbox_unavailable",
+  });
 });

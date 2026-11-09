@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import type { AgentAdapter } from "./agent.ts";
+import { AgentSandboxUnavailable, type AgentAdapter } from "./agent.ts";
 import { CodexRpc, type CodexProcess } from "./codex-rpc.ts";
 
 const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
+const sandboxProbeSchema = v.object({ exitCode: v.literal(0) });
 const messageSchema = v.object({
   threadId: v.string(),
   item: v.object({ type: v.literal("agentMessage"), text: v.string() }),
@@ -143,6 +144,25 @@ async function runTurn(
       capabilities: { experimentalApi: true },
     });
     rpc.notify("initialized");
+    try {
+      v.parse(
+        sandboxProbeSchema,
+        await rpc.call("command/exec", {
+          command: ["/bin/true"],
+          cwd,
+          timeoutMs: 5_000,
+          sandboxPolicy: job.checkout
+            ? {
+                type: "workspaceWrite",
+                excludeSlashTmp: true,
+                excludeTmpdirEnvVar: true,
+              }
+            : { type: "readOnly" },
+        }),
+      );
+    } catch {
+      throw new AgentSandboxUnavailable("Codex command sandbox unavailable");
+    }
     await rpc.call("account/login/start", {
       type: "chatgptAuthTokens",
       ...loginParams(),

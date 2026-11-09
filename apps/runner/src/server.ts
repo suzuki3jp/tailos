@@ -8,7 +8,11 @@ import {
   type RunnerStatus,
 } from "@meguri/core/runner";
 import * as v from "valibot";
-import { fakeAgent, type AgentAdapter } from "./agent.ts";
+import {
+  AgentSandboxUnavailable,
+  fakeAgent,
+  type AgentAdapter,
+} from "./agent.ts";
 import { codexAgent } from "./codex-agent.ts";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
@@ -93,11 +97,15 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
       ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
     });
-  } catch {
+  } catch (error) {
     events.push({ type: "job_failed", at: Date.now() });
+    const errorCode =
+      error instanceof AgentSandboxUnavailable
+        ? "sandbox_unavailable"
+        : "agent_failed";
     job.state = {
       status: "failed",
-      errorCode: signal.aborted ? "deadline_exceeded" : "agent_failed",
+      errorCode: signal.aborted ? "deadline_exceeded" : errorCode,
       events,
     };
   }

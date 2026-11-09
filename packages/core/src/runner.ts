@@ -99,7 +99,11 @@ export const runnerStatusSchema = v.variant("status", [
   }),
   v.strictObject({
     status: v.literal("failed"),
-    errorCode: v.picklist(["agent_failed", "deadline_exceeded"]),
+    errorCode: v.picklist([
+      "agent_failed",
+      "deadline_exceeded",
+      "sandbox_unavailable",
+    ]),
     events,
   }),
 ]);

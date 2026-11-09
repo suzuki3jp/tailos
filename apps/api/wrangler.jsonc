@@ -6,6 +6,11 @@
   "workers_dev": true,
   "vars": { "MEGURI_PUBLIC_ORIGIN": "http://localhost:8787" },
   "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "traces": { "enabled": true },
+  },
   "d1_databases": [
     {
       "binding": "DB",

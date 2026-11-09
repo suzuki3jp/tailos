@@ -2,25 +2,31 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
 import type { RunnerJob } from "@meguri/core/runner";
+import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "./agent.ts";
 import { createCodexAgent } from "./codex-agent.ts";
 
 const script = `
   const { createInterface } = require("node:readline");
   const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+  const [workspace, mode, probeJson] = process.argv.slice(1);
+  const probeResponse = JSON.parse(probeJson);
   let sandboxReady = false;
   createInterface({ input: process.stdin }).on("line", (line) => {
     const request = JSON.parse(line);
     const reply = (result) => send({ id: request.id, result });
     if (request.method === "initialize") reply({});
     if (request.method === "command/exec") {
+      const { command, cwd, sandboxPolicy } = request.params;
       if (
-        request.params.command.join(" ") !== "/bin/true" ||
-        request.params.sandboxPolicy.type !== "readOnly"
+        command.join(" ") !== "/bin/true" || cwd !== workspace ||
+        sandboxPolicy.type !== mode ||
+        (mode === "workspaceWrite" && (
+          sandboxPolicy.excludeSlashTmp !== true || sandboxPolicy.excludeTmpdirEnvVar !== true
+        ))
       ) throw new Error("Unexpected sandbox probe");
-      const exitCode = Number(process.argv[1]);
-      sandboxReady = exitCode === 0;
-      reply({ exitCode });
+      sandboxReady = probeResponse.result?.exitCode === 0;
+      send({ id: request.id, ...probeResponse });
     }
     if (request.method === "account/login/start") {
       if (
@@ -74,16 +80,39 @@ function testJob(): Extract<RunnerJob, { engine: "codex" }> {
   };
 }
 
-test("executes a Codex turn and replaces access tokens without exposing them in the reply", async () => {
-  const job = testJob();
-  const agent = createCodexAgent(
-    (cwd) =>
-      spawn(process.execPath, ["-e", script, "0"], {
+function launchStub(
+  mode: "readOnly" | "workspaceWrite",
+  probeResponse:
+    | { result: unknown }
+    | { error: { code: number; message: string } } = {
+    result: { exitCode: 0 },
+  },
+) {
+  return (cwd: string, workspace: string) =>
+    spawn(
+      process.execPath,
+      ["-e", script, workspace, mode, JSON.stringify(probeResponse)],
+      {
         cwd,
         detached: true,
         stdio: ["pipe", "pipe", "ignore"],
-      }),
-    async (url, init) => {
+      },
+    );
+}
+
+test.for(["readOnly", "workspaceWrite"] as const)(
+  "probes the %s sandbox and refreshes credentials without exposing them in the reply",
+  async (mode) => {
+    const job = testJob();
+    if (mode === "workspaceWrite") {
+      job.checkout = {
+        repository: "owner/repo",
+        baseSha: "a".repeat(40),
+        branch: `meguri/issue-1/${job.runId}`,
+        token: "checkout-token",
+      };
+    }
+    const agent = createCodexAgent(launchStub(mode), async (url, init) => {
       expect(String(url)).toBe(job.refresh.url);
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
@@ -95,23 +124,43 @@ test("executes a Codex turn and replaces access tokens without exposing them in 
         accessToken: "new-access",
         accessVersion: randomUUID(),
       });
-    },
-  );
+    });
 
-  expect(await agent.run(job, AbortSignal.timeout(10_000))).toBe(
-    "Reply containing [REDACTED]",
-  );
-});
+    expect(
+      await agent.run(
+        job,
+        AbortSignal.timeout(10_000),
+        job.checkout ? process.cwd() : undefined,
+      ),
+    ).toBe("Reply containing [REDACTED]");
+  },
+);
 
 test("rejects the job before login if Codex cannot start its command sandbox", async () => {
-  const agent = createCodexAgent((cwd) =>
-    spawn(process.execPath, ["-e", script, "1"], {
-      cwd,
-      detached: true,
-      stdio: ["pipe", "pipe", "ignore"],
-    }),
+  const agent = createCodexAgent(
+    launchStub("readOnly", { result: { exitCode: 1 } }),
   );
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(AgentSandboxUnavailable);
+});
+
+test("preserves an RPC rejection from the sandbox probe", async () => {
+  const agent = createCodexAgent(
+    launchStub("readOnly", {
+      error: { code: -32601, message: "Method not found" },
+    }),
+  );
+  await expect(
+    agent.run(testJob(), AbortSignal.timeout(10_000)),
+  ).rejects.toThrow("Codex app-server rejected a request");
+});
+
+test("reports an invalid probe response as a protocol failure", async () => {
+  const agent = createCodexAgent(
+    launchStub("readOnly", { result: { exitCode: "1" } }),
+  );
+  await expect(
+    agent.run(testJob(), AbortSignal.timeout(10_000)),
+  ).rejects.toThrow(ValiError);
 });

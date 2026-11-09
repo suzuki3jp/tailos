@@ -5,7 +5,10 @@ test("the Worker serves the health endpoint", async () => {
   const response = await app.request("/health");
 
   expect(response.status).toBe(200);
-  expect(await response.json()).toStrictEqual({ status: "ok" });
+  expect(await response.json()).toStrictEqual({
+    status: "ok",
+    service: "meguri-api",
+  });
 });
 
 test("runner smoke does not allocate a container without a configured bearer token", async () => {

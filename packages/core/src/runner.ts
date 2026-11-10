@@ -151,6 +151,7 @@ export const runnerStatusSchema = v.variant("status", [
       "agent_failed",
       "deadline_exceeded",
       "sandbox_unavailable",
+      // Accept outcomes from Runner images that ran fixed publication checks.
       "format_check_failed",
       "lint_failed",
       "invalid_change_headline",

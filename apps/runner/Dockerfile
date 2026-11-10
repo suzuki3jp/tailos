@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --global --ignore-scripts @openai/codex@0.166.0
-# Match the workspace package manager and the tools used by the CI scripts.
+# Make Tailos's formatting and linting tools available to the Agent offline.
 RUN npm install --prefix /opt/tailos-checks --ignore-scripts \
     @pnpm/exe@12.15.0 oxfmt@0.75.0 oxlint@1.89.0
 ENV PATH="/opt/tailos-checks/node_modules/.bin:${PATH}"

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   changeHeadline,
@@ -24,7 +24,6 @@ export async function runInGitWorkspace(
   checkout: Checkout,
   signal: AbortSignal,
   work: (cwd: string) => Promise<AgentResult>,
-  check: (cwd: string) => Promise<void>,
   stage: (work: CheckedWork) => Promise<void>,
   remote = `https://github.com/${checkout.repository}.git`,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
@@ -106,14 +105,6 @@ export async function runInGitWorkspace(
       true,
     );
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
-    const readScripts = (manifest: Buffer) =>
-      v.parse(
-        v.object({ scripts: v.optional(v.record(v.string(), v.string()), {}) }),
-        JSON.parse(manifest.toString()),
-      ).scripts;
-    const baseScripts = await git(["show", checkout.baseSha + ":package.json"])
-      .then(readScripts)
-      .catch(() => null);
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
     const { reply, headline } = await work(cwd);
@@ -165,26 +156,6 @@ export async function runInGitWorkspace(
       if (size >= maxPublicationBytes)
         throw new PublicationFailed("unsupported_changes");
       changes.additions.push({ path, contents });
-    }
-
-    // Check a fresh checkout of the staged snapshot. Untracked build output and
-    // dependencies installed or modified by the Agent cannot affect the checks.
-    const verification = await mkdtemp(join(tmpdir(), "tailos-check-"));
-    try {
-      await git(["checkout-index", "--all", "--prefix=" + verification + sep]);
-      const scripts = await readFile(join(verification, "package.json"))
-        .then(readScripts)
-        .catch(() => null);
-      if (
-        !baseScripts?.["format:check"] ||
-        baseScripts["format:check"] !== scripts?.["format:check"]
-      )
-        throw new PublicationFailed("format_check_failed");
-      if (!baseScripts.lint || baseScripts.lint !== scripts?.lint)
-        throw new PublicationFailed("lint_failed");
-      await check(verification);
-    } finally {
-      await rm(verification, { recursive: true, force: true });
     }
 
     signal.throwIfAborted();

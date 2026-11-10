@@ -44,6 +44,10 @@ const script = `
     if (request.method === "turn/start") {
       const { input, outputSchema } = request.params;
       if (mode === "workspaceWrite") {
+        if (!input[0].text.includes("repository instructions and CI configuration") ||
+            !input[0].text.includes("commands you ran and their results") ||
+            input[0].text.includes("pnpm run"))
+          throw new Error("Expected repository-specific verification instructions");
         if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
           throw new Error("Missing repository response schema");
       } else if (input[0].text !== "Answer the prompt" || outputSchema !== undefined) {

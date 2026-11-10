@@ -9,11 +9,7 @@ export interface AgentAdapter {
 export class AgentSandboxUnavailable extends Error {}
 export class PublicationFailed extends Error {
   constructor(
-    readonly code:
-      | "format_check_failed"
-      | "lint_failed"
-      | "invalid_change_headline"
-      | "unsupported_changes",
+    readonly code: "invalid_change_headline" | "unsupported_changes",
   ) {
     super(code);
   }

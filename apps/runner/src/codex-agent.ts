@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
-import {
-  AgentSandboxUnavailable,
-  PublicationFailed,
-  type AgentAdapter,
-} from "./agent.ts";
+import { AgentSandboxUnavailable, type AgentAdapter } from "./agent.ts";
 import { CodexRpc, type CodexProcess } from "./codex-rpc.ts";
 
 const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
@@ -79,58 +75,6 @@ export function createCodexAgent(
       }
     },
   };
-}
-
-export async function checkCodexWorkspace(
-  cwd: string,
-  signal: AbortSignal,
-  launch = launchCodex,
-) {
-  const directory = await mkdtemp(join(tmpdir(), "tailos-check-codex-"));
-  try {
-    signal.throwIfAborted();
-    const rpc = new CodexRpc(launch(directory, cwd));
-    const abort = () => rpc.close();
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      await initialize(rpc);
-      for (const [script, errorCode] of [
-        ["format:check", "format_check_failed"],
-        ["lint", "lint_failed"],
-      ] as const) {
-        signal.throwIfAborted();
-        const result = v.parse(
-          sandboxProbeSchema,
-          await rpc.call("command/exec", {
-            // The npm-installed pnpm launcher is a shell file without a
-            // shebang. The check tools are pinned on PATH in the image.
-            command: [
-              "/bin/sh",
-              "-c",
-              'exec pnpm --config.verify-deps-before-run=false run "$1"',
-              "tailos-check",
-              script,
-            ],
-            cwd,
-            env: {
-              CI: "true",
-              HUSKY: "0",
-              npm_config_script_shell: "/bin/sh",
-            },
-            outputBytesCap: 16 * 1024,
-            timeoutMs: 120_000,
-            sandboxPolicy: { type: "readOnly", networkAccess: false },
-          }),
-        );
-        if (result.exitCode !== 0) throw new PublicationFailed(errorCode);
-      }
-    } finally {
-      signal.removeEventListener("abort", abort);
-      rpc.close();
-    }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 }
 
 async function initialize(rpc: CodexRpc) {
@@ -254,7 +198,10 @@ async function runTurn(
           type: "text",
           text: job.checkout
             ? job.prompt +
-              "\n\nRun pnpm run format:check and pnpm run lint and fix failures before returning. Summarize your work in reply and give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
+              "\n\nUse the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
+              "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
+              "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
+              "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
             : job.prompt,
           text_elements: [],
         },

@@ -17,7 +17,7 @@ import {
   PublicationFailed,
   type AgentAdapter,
 } from "./agent.ts";
-import { checkCodexWorkspace, codexAgent } from "./codex-agent.ts";
+import { codexAgent } from "./codex-agent.ts";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
@@ -96,7 +96,6 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
             input.checkout,
             signal,
             (cwd) => agent.run(input, signal, cwd),
-            (cwd) => checkCodexWorkspace(cwd, signal),
             (work) => stagePublication(input, work, events, signal),
           )
         : { reply: (await agent.run(input, signal)).reply };

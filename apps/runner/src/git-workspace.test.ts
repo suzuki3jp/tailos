@@ -16,7 +16,7 @@ import { PublicationFailed } from "./agent.ts";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
 async function repository(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), "meguri-git-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "tailos-git-test-"));
   t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const seed = join(directory, "seed");
   const git = (cwd: string, ...args: string[]) =>
@@ -54,7 +54,7 @@ async function repository(t: TestContext) {
     "Base",
   );
   const baseSha = git(seed, "rev-parse", "HEAD");
-  const branch = "meguri/issue-8/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const branch = "tailos/issue-8/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
   return {
     baseSha,
     branch,

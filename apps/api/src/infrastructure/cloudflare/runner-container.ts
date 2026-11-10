@@ -19,7 +19,7 @@ import {
   type ExecutionContext,
   type RunnerJob,
   type RepositoryTarget,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "../../bindings.ts";
 import { advanceRun } from "../d1/run-execution.ts";
@@ -46,7 +46,7 @@ type RefreshLease = {
 };
 
 const publicationKey = (runId: string, digest: string) =>
-  `meguri-api/v1/runs/${runId}/publication-${digest}.json`;
+  `tailos-api/v1/runs/${runId}/publication-${digest}.json`;
 
 async function publicationDigest(content: string) {
   const bytes = await crypto.subtle.digest(
@@ -240,7 +240,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const base = { version: 1 as const, runId, prompt, deadlineAt };
     if (context.engine === "fake") return { ...base, engine: "fake" };
 
-    const origin = this.env.MEGURI_PUBLIC_ORIGIN;
+    const origin = this.env.TAILOS_PUBLIC_ORIGIN;
     if (!origin || !this.env.CREDENTIALS) return null;
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin) return null;
@@ -268,8 +268,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   private get github() {
-    const appId = this.env.MEGURI_GH_APP_ID;
-    const privateKey = this.env.MEGURI_GH_APP_PRIVATE_KEY;
+    const appId = this.env.TAILOS_GH_APP_ID;
+    const privateKey = this.env.TAILOS_GH_APP_PRIVATE_KEY;
     return appId && privateKey ? new GitHubApp({ appId, privateKey }) : null;
   }
 
@@ -288,7 +288,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (!key || !github) throw new Error("Repository revocation unavailable");
       const token = v.parse(
         v.string(),
-        await unseal(grant.value, key, `meguri:github:${runId}`),
+        await unseal(grant.value, key, `tailos:github:${runId}`),
       );
       await github.revoke(token);
     } catch {
@@ -338,7 +338,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           value: await seal(
             checkout.token,
             key,
-            `meguri:github:${request.runId}`,
+            `tailos:github:${request.runId}`,
           ),
           expiresAt: checkout.expiresAt,
           attempts: 0,

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexAccessSchema, type RunnerJob } from "@meguri/core/runner";
+import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   AgentSandboxUnavailable,
@@ -64,7 +64,7 @@ export function createCodexAgent(
   return {
     async run(job, signal, cwd) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
-      const directory = await mkdtemp(join(tmpdir(), "meguri-codex-"));
+      const directory = await mkdtemp(join(tmpdir(), "tailos-codex-"));
       try {
         signal.throwIfAborted();
         return await runTurn(
@@ -86,7 +86,7 @@ export async function checkCodexWorkspace(
   signal: AbortSignal,
   launch = launchCodex,
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "meguri-check-codex-"));
+  const directory = await mkdtemp(join(tmpdir(), "tailos-check-codex-"));
   try {
     signal.throwIfAborted();
     const rpc = new CodexRpc(launch(directory, cwd));
@@ -108,7 +108,7 @@ export async function checkCodexWorkspace(
               "/bin/sh",
               "-c",
               'exec pnpm --config.verify-deps-before-run=false run "$1"',
-              "meguri-check",
+              "tailos-check",
               script,
             ],
             cwd,
@@ -135,7 +135,7 @@ export async function checkCodexWorkspace(
 
 async function initialize(rpc: CodexRpc) {
   await rpc.call("initialize", {
-    clientInfo: { name: "meguri", version: "0.1.0" },
+    clientInfo: { name: "tailos", version: "0.1.0" },
     capabilities: { experimentalApi: true },
   });
   rpc.notify("initialized");
@@ -181,7 +181,7 @@ async function runTurn(
         redirect: "error",
         headers: {
           Authorization: `Bearer ${job.refresh.bearer}`,
-          "X-Meguri-Access-Version": access.accessVersion,
+          "X-Tailos-Access-Version": access.accessVersion,
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       });

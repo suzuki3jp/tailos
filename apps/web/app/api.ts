@@ -1,4 +1,4 @@
-import type { BrowserApi } from "@meguri/api/browser";
+import type { BrowserApi } from "@tailos/api/browser";
 import { hc } from "hono/client";
 import { apiOrigin } from "../api-origin.ts";
 

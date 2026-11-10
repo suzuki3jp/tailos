@@ -10,7 +10,7 @@ test("a configured operator can create and read a standalone session in message 
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
-  const env = { DB: db, MEGURI_TEST_TOKEN: token };
+  const env = { DB: db, TAILOS_TEST_TOKEN: token };
   const path = "/_internal/sessions";
   const payload = {
     method: "POST",

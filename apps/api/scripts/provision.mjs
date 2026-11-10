@@ -75,7 +75,7 @@ export function ensureD1Database(name, wrangler) {
   if (existing) return existing;
 
   try {
-    wrangler(["d1", "create", name, "--no-update-config"]);
+    wrangler(["d1", "create", name, "--location=apac", "--no-update-config"]);
   } catch (error) {
     const concurrent = findD1Database(name, wrangler);
     if (concurrent) return concurrent;

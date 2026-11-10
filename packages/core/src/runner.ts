@@ -9,7 +9,7 @@ export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
 export const workBranch = v.pipe(
   v.string(),
-  v.regex(/^meguri\/issue-[1-9][0-9]*\/[a-f0-9-]{36}$/),
+  v.regex(/^tailos\/issue-[1-9][0-9]*\/[a-f0-9-]{36}$/),
 );
 export const changeHeadline = v.pipe(
   v.string(),

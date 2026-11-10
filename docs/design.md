@@ -1,8 +1,8 @@
-# Meguri 本実装の設計
+# Tailos 本実装の設計
 
 ## MVP の範囲
 
-GitHub Issue に `meguri:run` ラベルを付けると、Meguri が Session と最初の依頼を作る。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は config で管理する。PR 作成後のレビューとマージは人が行う。
+GitHub Issue に `tailos:run` ラベルを付けると、Tailos が Session と最初の依頼を作る。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は config で管理する。PR 作成後のレビューとマージは人が行う。
 
 GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。Web チャットからの起動・続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
@@ -36,7 +36,7 @@ flowchart LR
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
 - **実行の境界。** Runner 内に `AgentAdapter` を置き、Codex 固有の起動・入力・イベント・結果の変換をその実装に閉じる。API と Runner は共通のジョブと結果の形式で通信する。
 - **認証の境界。** プロバイダ固有の接続とトークン更新は API 側が担当する。共有契約は Cloudflare や Agent 固有の SDK に依存させない。実装は各 app の中に置き、共有する契約を `packages/core` に置く。
-- **Web の境界。** ブラウザは `api.meguri.suzuki3.jp` の JSON API を Hono Client で呼ぶ。Web は公開ルートの型だけを `@meguri/api/browser` から取り込む。Cookie は API ホストに限定し、資格情報付きの CORS と更新リクエストは Web のオリジンを許可する。
+- **Web の境界。** ブラウザは `api.tailos.app` の JSON API を Hono Client で呼ぶ。Web は公開ルートの型だけを `@tailos/api/browser` から取り込む。Cookie は API ホストに限定し、資格情報付きの CORS と更新リクエストは Web のオリジンを許可する。
 
 ## Session と実行のデータモデル
 
@@ -88,7 +88,7 @@ erDiagram
 
 | テーブル | 保存する情報 |
 | --- | --- |
-| `sessions` | 所有者は Meguri 上の ID で識別する。`project_id` は config の安定した ID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
+| `sessions` | 所有者は Tailos 上の ID で識別する。`project_id` は config の安定した ID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
 | `session_messages` | 自動化が生成した依頼、ユーザーの発言、Agent の確定した返答を `(session_id, seq)` の順に保存する。起点は `runs.start_message_id` で参照し、返答や将来の追加指示はメッセージの `run_id` で関連づける |
 | `runs` | `queued`、`running`、`succeeded`、`failed` の状態、締切、次の処理時刻、失敗理由を持つ。`execution_context` は実行に使う Agent・接続 ID・基準コミット・自動公開の可否を記録する。`step_state` は作業ブランチ、公開処理の進行、ログの取得位置などを持つ。`result` には PR URL、公開したブランチとコミット SHA、`no_changes` などを記録する |
 | `trigger_events` | 外部イベントの起動元、重複判定キー、受付時刻、対応する Run を記録する。`disposition` は起点の `started` と、既存 Run に合流した `coalesced` |
@@ -116,7 +116,7 @@ Run 完了時は、確定した Agent の返答と Run の結果を一緒に保�
 
 ## 認証と GitHub の権限
 
-ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Meguri が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
+ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Tailos が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
 
 GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命の読み取りトークンを渡す。Runner はステージ済みスナップショットのコピーで `pnpm run format:check` と `pnpm run lint` を実行する。API は検査済み差分を使って GitHub App で署名付きコミットを作り、署名・親・tree を照合してから PR を作る。英語の Conventional Commits の見出しをコミットと PR で共有する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 
@@ -126,7 +126,7 @@ GitHub では専用の権限主体として GitHub App を使う。App の秘密
 
 事前検証では Wrangler `4.157.0` を使い、Worker → DO → Docker の HTTP 疎通、ローカル R2 への読み書き、再起動後の DO ストレージの保持を確認した。本実装では `apps/api/package.json` に固定した Wrangler でフェーズごとの動作を検証する。 [Cloudflare Containers のローカル開発](https://developers.cloudflare.com/containers/guides/local-dev/)
 
-D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` の push に対する CI が成功した後、検証したコミットを `production` 環境から Cloudflare にデプロイする。本番は Web が `meguri.suzuki3.jp`、API が `api.meguri.suzuki3.jp`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
+D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle Kit で SQL を生成し、Wrangler でローカルと本番に適用する。GitHub Actions は `main` の push に対する CI が成功した後、検証したコミットを `production` 環境から Cloudflare にデプロイする。本番は Web が `tailos.app`、API が `api.tailos.app`。PR ごとのプレビュー環境は後続とする。 [D1 のマイグレーション](https://developers.cloudflare.com/d1/reference/migrations/)
 
 ## 実装フェーズ
 
@@ -150,4 +150,4 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 | --- | --- | --- |
 | 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
 | 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチに署名付きコミットを作成し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
-| 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `meguri.suzuki3.jp` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |
+| 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `tailos.app` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |

@@ -7,7 +7,7 @@ const render = vi.hoisted(() =>
 
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
 vi.mock("../api-origin.ts", () => ({
-  apiOrigin: "https://api.meguri.example",
+  apiOrigin: "https://api.tailos.example",
 }));
 
 const env = { ASSETS: { fetch: vi.fn(), connect: vi.fn() } };
@@ -23,12 +23,12 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   vi.stubEnv("DEV", false);
   render.mockImplementation(
     async () =>
-      new Response("<h1>Meguri</h1>", {
+      new Response("<h1>Tailos</h1>", {
         status: 404,
         headers: { "Content-Type": "text/html; charset=utf-8" },
       }),
   );
-  const request = new Request("https://meguri.example/login", {
+  const request = new Request("https://tailos.example/login", {
     headers: { "Content-Security-Policy": "script-src 'nonce-client'" },
   });
   const response = await worker.fetch(request, env, context);
@@ -51,11 +51,11 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
   expect(directives.get("connect-src")).toEqual([
     "'self'",
-    "https://api.meguri.example",
+    "https://api.tailos.example",
   ]);
   expect(directives.get("form-action")).toEqual([
     "'self'",
-    "https://api.meguri.example",
+    "https://api.tailos.example",
     "https://github.com",
   ]);
   expect(render.mock.calls[0][0].headers.get("Content-Security-Policy")).toBe(
@@ -66,18 +66,18 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
   expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   expect(response.status).toBe(404);
-  expect(await response.text()).toBe("<h1>Meguri</h1>");
+  expect(await response.text()).toBe("<h1>Tailos</h1>");
 
   const next = await worker.fetch(request, env, context);
   expect(next.headers.get("Content-Security-Policy")).not.toBe(csp);
 });
 
 test("preserves the health route response", async () => {
-  const health = Response.json({ status: "ok", service: "meguri-web" });
+  const health = Response.json({ status: "ok", service: "tailos-web" });
   render.mockResolvedValueOnce(health);
 
   const response = await worker.fetch(
-    new Request("https://meguri.example/health"),
+    new Request("https://tailos.example/health"),
     env,
     context,
   );

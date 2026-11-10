@@ -21,7 +21,7 @@ const id = "fcb7056f-e824-41f1-b447-b78d1408ab63";
 const sourceConfig = new URL("../wrangler.jsonc", import.meta.url);
 
 function setup(t) {
-  const cwd = mkdtempSync(join(tmpdir(), "meguri-test-deploy-"));
+  const cwd = mkdtempSync(join(tmpdir(), "tailos-test-deploy-"));
   t.onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
   copyFileSync(sourceConfig, join(cwd, "wrangler.jsonc"));
   const wrangler = join(cwd, "wrangler");
@@ -31,10 +31,10 @@ function setup(t) {
     `#!/usr/bin/env node
     const fs = require("node:fs");
     const args = process.argv.slice(2);
-    const record = (event) => fs.appendFileSync(process.env.MEGURI_TEST_CAPTURE, JSON.stringify(event) + "\\n");
+    const record = (event) => fs.appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify(event) + "\\n");
     if (args[0] === "d1" && args[1] === "list") {
       record({ command: args.join(" ") });
-      console.log(JSON.stringify(fs.existsSync("database") ? [{ name: "meguri", uuid: "${id}" }] : []));
+      console.log(JSON.stringify(fs.existsSync("database") ? [{ name: "tailos", uuid: "${id}" }] : []));
       process.exit(0);
     }
     if (args[1] === "create" || args[2] === "create") {
@@ -50,7 +50,7 @@ function setup(t) {
       privateMode: (fs.statSync(secretsPath).mode & 511) === 384,
     };
     record({
-      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.BETTER_AUTH_SECRET || process.env.MEGURI_GITHUB_OAUTH_CLIENT_SECRET || process.env.CREDENTIAL_ENCRYPTION_KEY),
+      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.BETTER_AUTH_SECRET || process.env.TAILOS_GITHUB_OAUTH_CLIENT_SECRET || process.env.CREDENTIAL_ENCRYPTION_KEY),
     });
   `,
   );
@@ -63,7 +63,7 @@ function setup(t) {
     fs.appendFileSync("capture.ndjson", JSON.stringify({
       command: process.argv.slice(2),
       secretInEnvironment: Object.keys(process.env).some((name) =>
-        /^(CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|MEGURI_GITHUB_OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY|MEGURI_GH_APP_PRIVATE_KEY|MEGURI_GH_WEBHOOK_SECRET)$/.test(name),
+        /^(CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|TAILOS_GITHUB_OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY|TAILOS_GH_APP_PRIVATE_KEY|TAILOS_GH_WEBHOOK_SECRET)$/.test(name),
       ),
     }) + "\\n");
     if (fs.existsSync("fail-build")) process.exit(1);
@@ -76,17 +76,17 @@ function setup(t) {
     fetchStub,
     `import { appendFileSync, existsSync } from "node:fs";
     globalThis.fetch = async (url, { headers }) => {
-      if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts") throw new Error("Unexpected R2 lookup URL");
+      if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/tailos-run-artifacts") throw new Error("Unexpected R2 lookup URL");
       if (headers.Authorization !== "Bearer test-token") throw new Error("Unexpected R2 authorization");
-      appendFileSync(process.env.MEGURI_TEST_CAPTURE, JSON.stringify({ command: "look up R2" }) + "\\n");
+      appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: "look up R2" }) + "\\n");
       return existsSync("bucket")
-        ? Response.json({ success: true, result: { name: "meguri-run-artifacts" } })
+        ? Response.json({ success: true, result: { name: "tailos-run-artifacts" } })
         : Response.json({ errors: [{ code: 10006 }] }, { status: 404 });
     };`,
   );
   const env = {
     PATH: cwd + ":" + process.env.PATH,
-    MEGURI_TEST_CAPTURE: capture,
+    TAILOS_TEST_CAPTURE: capture,
     CLOUDFLARE_ACCOUNT_ID: "test-account",
     CLOUDFLARE_API_TOKEN: "test-token",
   };
@@ -98,10 +98,11 @@ function setup(t) {
     });
   const runDeploy = (overrides = {}) =>
     run(deploy, {
-      MEGURI_PROJECTS: "[]",
-      MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
-      MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
-      MEGURI_OPERATOR_GITHUB_ID: "123",
+      TAILOS_D1_DATABASE_ID: id,
+      TAILOS_PROJECTS: "[]",
+      TAILOS_GITHUB_OAUTH_CLIENT_ID: "test-client",
+      TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "test-client-secret",
+      TAILOS_OPERATOR_GITHUB_ID: "123",
       BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
       CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
       ...overrides,
@@ -117,7 +118,7 @@ test("deploy stops before creation or migration when either resource is missing"
 
   const missingDatabase = runDeploy();
   expect(missingDatabase.status).not.toBe(0);
-  expect(missingDatabase.stderr).toMatch(/D1 database "meguri" is missing/);
+  expect(missingDatabase.stderr).toMatch(/D1 database "tailos" is missing/);
   expect(missingDatabase.stderr).toMatch(/Provision Cloudflare resources/);
   expect(readCalls().map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
@@ -127,7 +128,7 @@ test("deploy stops before creation or migration when either resource is missing"
   const missingBucket = runDeploy();
   expect(missingBucket.status).not.toBe(0);
   expect(missingBucket.stderr).toMatch(
-    /R2 bucket "meguri-run-artifacts" is missing/,
+    /R2 bucket "tailos-run-artifacts" is missing/,
   );
   expect(missingBucket.stderr).toMatch(/Provision Cloudflare resources/);
   expect(
@@ -146,10 +147,10 @@ test("manual provisioning creates only missing resources and is safe to repeat",
   expect(second.status, second.stderr).toBe(0);
   expect(readCalls().map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
-    "d1 create meguri --no-update-config",
+    "d1 create tailos --location=apac --no-update-config",
     "d1 list --json",
     "look up R2",
-    "r2 bucket create meguri-run-artifacts --no-update-config",
+    "r2 bucket create tailos-run-artifacts --no-update-config",
     "d1 list --json",
     "look up R2",
   ]);
@@ -165,7 +166,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(calls.map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
     "look up R2",
-    ["--filter", "@meguri/runner", "run", "build"],
+    ["--filter", "@tailos/runner", "run", "build"],
     ["d1", "migrations", "apply", "DB", "--remote"],
     [
       "deploy",
@@ -179,21 +180,24 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(migration.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.workers_dev).toBe(false);
+  expect(published.config.preview_urls).toBe(false);
+  expect(published.config.migrations[1]).toEqual({
+    tag: "credentials-v1",
+    new_sqlite_classes: ["CredentialBroker"],
+  });
   expect(published.config.routes).toStrictEqual([
-    { pattern: "api.meguri.suzuki3.jp", custom_domain: true },
+    { pattern: "api.tailos.app", custom_domain: true },
   ]);
-  expect(published.config.vars.MEGURI_PUBLIC_ORIGIN).toBe(
-    "https://api.meguri.suzuki3.jp",
+  expect(published.config.vars.TAILOS_PUBLIC_ORIGIN).toBe(
+    "https://api.tailos.app",
   );
-  expect(published.config.vars.MEGURI_WEB_ORIGIN).toBe(
-    "https://meguri.suzuki3.jp",
-  );
-  expect(published.config.vars.MEGURI_OPERATOR_GITHUB_ID).toBe("123");
-  expect(published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_ID).toBe(
+  expect(published.config.vars.TAILOS_WEB_ORIGIN).toBe("https://tailos.app");
+  expect(published.config.vars.TAILOS_OPERATOR_GITHUB_ID).toBe("123");
+  expect(published.config.vars.TAILOS_GITHUB_OAUTH_CLIENT_ID).toBe(
     "test-client",
   );
   expect(published.config.vars.BETTER_AUTH_SECRET).toBe(undefined);
-  expect(published.config.vars.MEGURI_GITHUB_OAUTH_CLIENT_SECRET).toBe(
+  expect(published.config.vars.TAILOS_GITHUB_OAUTH_CLIENT_SECRET).toBe(
     undefined,
   );
   expect(migration.secretInEnvironment).toBe(false);
@@ -202,7 +206,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(published.runtime.names).toStrictEqual([
     "BETTER_AUTH_SECRET",
     "CREDENTIAL_ENCRYPTION_KEY",
-    "MEGURI_GITHUB_OAUTH_CLIENT_SECRET",
+    "TAILOS_GITHUB_OAUTH_CLIENT_SECRET",
   ]);
   expect(published.runtime.privateMode).toBe(true);
   expect(() => readFileSync(published.runtime.path)).toThrow(
@@ -213,12 +217,12 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   ).toBe(false);
 
   const missingLoginSecret = runDeploy({
-    MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "",
+    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "",
   });
   expect(missingLoginSecret.status).not.toBe(0);
   expect(missingLoginSecret.stderr).toMatch(/GitHub login requires/);
 
-  const misconfigured = runDeploy({ MEGURI_PROJECTS: "[{}]" });
+  const misconfigured = runDeploy({ TAILOS_PROJECTS: "[{}]" });
   expect(misconfigured.status).not.toBe(0);
   expect(misconfigured.stderr).toMatch(/GitHub projects require/);
   expect(readCalls().length).toBe(calls.length);
@@ -237,6 +241,44 @@ test("deploy never migrates when the Runner cannot build", (t) => {
   expect(readCalls().map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
     "look up R2",
-    ["--filter", "@meguri/runner", "run", "build"],
+    ["--filter", "@tailos/runner", "run", "build"],
+  ]);
+});
+
+test("deploy requires the verified D1 UUID before doing any writes", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  writeFileSync(join(cwd, "database"), "");
+  for (const TAILOS_D1_DATABASE_ID of [
+    "",
+    "1d8f8a1c-84c9-4dad-819a-8d698b8bcb2e",
+  ]) {
+    const result = runDeploy({ TAILOS_D1_DATABASE_ID });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("TAILOS_D1_DATABASE_ID must match");
+  }
+  expect(readCalls().map(({ command }) => command)).toEqual([
+    "d1 list --json",
+    "d1 list --json",
+  ]);
+});
+
+test("deploy transfers the existing credential namespace and creates a fresh Runner", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  for (const marker of ["database", "bucket"])
+    writeFileSync(join(cwd, marker), "");
+  const result = runDeploy({ TAILOS_CREDENTIALS_FROM_WORKER: "meguri-api" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(readCalls().at(-1).config.migrations).toEqual([
+    { tag: "runner-v1", new_sqlite_classes: ["RunnerContainer"] },
+    {
+      tag: "credentials-v1",
+      transferred_classes: [
+        {
+          from: "CredentialBroker",
+          from_script: "meguri-api",
+          to: "CredentialBroker",
+        },
+      ],
+    },
   ]);
 });

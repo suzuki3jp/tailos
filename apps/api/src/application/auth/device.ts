@@ -1,4 +1,4 @@
-import type { CodexAccess } from "@meguri/core/runner";
+import type { CodexAccess } from "@tailos/core/runner";
 
 export type DeviceChallenge = {
   id: string;

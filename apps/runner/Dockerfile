@@ -3,12 +3,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && rm -rf /var/lib/apt/lists/*
 RUN npm install --global --ignore-scripts @openai/codex@0.166.0
 # Match the workspace package manager and the tools used by the CI scripts.
-RUN npm install --prefix /opt/meguri-checks --ignore-scripts \
+RUN npm install --prefix /opt/tailos-checks --ignore-scripts \
     @pnpm/exe@12.15.0 oxfmt@0.75.0 oxlint@1.89.0
-ENV PATH="/opt/meguri-checks/node_modules/.bin:${PATH}"
+ENV PATH="/opt/tailos-checks/node_modules/.bin:${PATH}"
 WORKDIR /app
 RUN install -d -o node -g node -m 0700 /app/git-state
-ENV MEGURI_GIT_STATE_DIR=/app/git-state
+ENV TAILOS_GIT_STATE_DIR=/app/git-state
 COPY --chown=node:node dist/runner.mjs ./runner.mjs
 USER node
 EXPOSE 8080

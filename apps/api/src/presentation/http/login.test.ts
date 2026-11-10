@@ -6,18 +6,18 @@ import {
   findOperatorUserId,
 } from "../../infrastructure/auth/login.ts";
 
-test("GitHub login authenticates the configured account and persists only the Meguri session", async (t) => {
+test("GitHub login authenticates the configured account and persists only the Tailos session", async (t) => {
   const DB = await createTestDb(t);
-  const origin = "https://api.meguri.example";
-  const webOrigin = "https://meguri.example";
+  const origin = "https://api.tailos.example";
+  const webOrigin = "https://tailos.example";
   const env = {
     DB,
-    MEGURI_PUBLIC_ORIGIN: origin,
-    MEGURI_WEB_ORIGIN: webOrigin,
+    TAILOS_PUBLIC_ORIGIN: origin,
+    TAILOS_WEB_ORIGIN: webOrigin,
     BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
-    MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
-    MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
-    MEGURI_OPERATOR_GITHUB_ID: "123",
+    TAILOS_GITHUB_OAUTH_CLIENT_ID: "test-client",
+    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
+    TAILOS_OPERATOR_GITHUB_ID: "123",
   };
   const callback = origin + "/api/auth/callback/github";
   const fetch = globalThis.fetch;

@@ -1,6 +1,6 @@
 ---
 name: github
-description: Meguri の GitHub PR や Issue を調べ、依頼された GitHub 操作を行う。
+description: Tailos の GitHub PR や Issue を調べ、依頼された GitHub 操作を行う。
 ---
 
 # GitHub 操作

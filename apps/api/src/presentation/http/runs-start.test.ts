@@ -3,7 +3,7 @@ import { createRunRoutes } from "./runs.ts";
 
 const id = "aabff0c8-dc59-49b7-9598-19f5be8f5f56";
 const run = { id, status: "queued", errorCode: null };
-const env = { MEGURI_TEST_TOKEN: "test-token" };
+const env = { TAILOS_TEST_TOKEN: "test-token" };
 const readArtifact = async () => null;
 const request = {
   method: "POST",

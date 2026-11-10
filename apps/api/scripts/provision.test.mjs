@@ -6,7 +6,7 @@ afterEach(() => {
 import { ensureD1Database, ensureR2Bucket } from "./provision.mjs";
 
 const database = {
-  name: "meguri",
+  name: "tailos",
   uuid: "fcb7056f-e824-41f1-b447-b78d1408ab63",
 };
 
@@ -15,7 +15,7 @@ test("reuses the exact D1 database name", () => {
     ensureD1Database(database.name, (args, capture) => {
       expect(args).toStrictEqual(["d1", "list", "--json"]);
       expect(capture).toBe(true);
-      return JSON.stringify([{ ...database, name: "meguri-dev" }, database]);
+      return JSON.stringify([{ ...database, name: "tailos-dev" }, database]);
     }),
   ).toBe(database.uuid);
 });
@@ -31,6 +31,7 @@ for (const concurrent of [false, true]) {
           "d1",
           "create",
           database.name,
+          "--location=apac",
           "--no-update-config",
         ]);
         created = true;
@@ -50,7 +51,7 @@ test("does not create a database after a failed lookup", () => {
   ).toThrow(/Cloudflare denied lookup/);
 });
 
-const bucket = { bucket_name: "meguri-run-artifacts" };
+const bucket = { bucket_name: "tailos-run-artifacts" };
 const env = {
   CLOUDFLARE_ACCOUNT_ID: "test-account",
   CLOUDFLARE_API_TOKEN: "test-token",
@@ -64,7 +65,7 @@ test("reuses the exact R2 bucket name in the configured jurisdiction", async () 
   vi.spyOn(globalThis, "fetch").mockImplementation(
     (url, { headers, redirect }) => {
       expect(url).toBe(
-        "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/meguri-run-artifacts",
+        "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/tailos-run-artifacts",
       );
       expect(headers.Authorization).toBe("Bearer test-token");
       expect(headers["cf-r2-jurisdiction"]).toBe("eu");

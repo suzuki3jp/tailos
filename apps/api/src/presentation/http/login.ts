@@ -8,8 +8,8 @@ export function createLoginRoutes(
 ) {
   const loginOrigin = createMiddleware<{ Bindings: Bindings }>(
     async (c, next) => {
-      const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
-      const webOrigin = c.env?.MEGURI_WEB_ORIGIN;
+      const origin = c.env?.TAILOS_PUBLIC_ORIGIN;
+      const webOrigin = c.env?.TAILOS_WEB_ORIGIN;
       if (!origin || !webOrigin || new URL(c.req.url).origin !== origin)
         return c.notFound();
       if (c.req.method === "POST" && c.req.header("Origin") !== webOrigin)
@@ -33,7 +33,7 @@ export function createLoginRoutes(
       const response = await auth.api.signInSocial({
         body: {
           provider: "github",
-          callbackURL: new URL("/login", c.env.MEGURI_WEB_ORIGIN).href,
+          callbackURL: new URL("/login", c.env.TAILOS_WEB_ORIGIN).href,
         },
         headers: c.req.raw.headers,
         asResponse: true,
@@ -57,7 +57,7 @@ export function createLoginRoutes(
       return response.ok
         ? redirectAfterAuth(
             response,
-            new URL("/login", c.env.MEGURI_WEB_ORIGIN).href,
+            new URL("/login", c.env.TAILOS_WEB_ORIGIN).href,
           )
         : response;
     });

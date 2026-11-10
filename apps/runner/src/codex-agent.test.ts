@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
-import type { RunnerJob } from "@meguri/core/runner";
+import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "./agent.ts";
 import { createCodexAgent } from "./codex-agent.ts";
@@ -84,7 +84,7 @@ function testJob(): Extract<RunnerJob, { engine: "codex" }> {
       connectionVersion: randomUUID(),
       accessVersion: randomUUID(),
     },
-    refresh: { url: "https://meguri.example/refresh", bearer: "a".repeat(64) },
+    refresh: { url: "https://tailos.example/refresh", bearer: "a".repeat(64) },
   };
 }
 
@@ -116,7 +116,7 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       job.checkout = {
         repository: "owner/repo",
         baseSha: "a".repeat(40),
-        branch: `meguri/issue-1/${job.runId}`,
+        branch: `tailos/issue-1/${job.runId}`,
         token: "checkout-token",
       };
     }
@@ -124,7 +124,7 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       expect(String(url)).toBe(job.refresh.url);
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
-      expect(headers.get("X-Meguri-Access-Version")).toBe(
+      expect(headers.get("X-Tailos-Access-Version")).toBe(
         job.access.accessVersion,
       );
       return Response.json({

@@ -1,5 +1,5 @@
 {
-  "name": "@meguri/api",
+  "name": "@tailos/api",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,7 @@
     }
   },
   "scripts": {
-    "dev": "pnpm --filter @meguri/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
+    "dev": "pnpm --filter @tailos/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.15",
-    "@meguri/core": "workspace:*",
+    "@tailos/core": "workspace:*",
     "better-auth": "1.7.15",
     "drizzle-orm": "0.45.2",
     "hono": "4.13.10",

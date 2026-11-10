@@ -4,7 +4,7 @@ import {
   type RunnerEvent,
   type ExecutionContext,
   type RunnerStatus,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   pendingPublication,

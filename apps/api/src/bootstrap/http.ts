@@ -73,7 +73,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "*",
     cors({
       origin: (origin, c) =>
-        origin === c.env?.MEGURI_WEB_ORIGIN ? origin : undefined,
+        origin === c.env?.TAILOS_WEB_ORIGIN ? origin : undefined,
       credentials: true,
       allowMethods: ["GET", "POST"],
     }),
@@ -101,7 +101,7 @@ app.route("/api", browserApi);
 app.route("/api/auth", loginRoutes);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
-app.get("/health", (c) => c.json({ status: "ok", service: "meguri-api" }));
+app.get("/health", (c) => c.json({ status: "ok", service: "tailos-api" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);
 app.route("/_internal/triggers", triggerRoutes);

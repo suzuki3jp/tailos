@@ -3,7 +3,7 @@ import { Providers } from "./providers";
 import "./styles.css";
 
 export const metadata = {
-  title: "Meguri",
+  title: "Tailos",
   robots: { index: false, follow: false },
 };
 
@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               href="/"
               className="inline-flex min-h-11 items-center text-lg font-semibold"
             >
-              Meguri
+              Tailos
             </a>
             <nav
               aria-label="メインメニュー"

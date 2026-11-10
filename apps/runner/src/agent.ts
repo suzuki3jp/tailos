@@ -1,4 +1,4 @@
-import type { RunnerJob } from "@meguri/core/runner";
+import type { RunnerJob } from "@tailos/core/runner";
 
 export type AgentResult = { reply: string; headline?: string };
 

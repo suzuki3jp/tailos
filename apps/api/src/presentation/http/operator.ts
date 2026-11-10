@@ -13,8 +13,8 @@ export function createOperatorAuth(
   ) => Promise<{ user: { id: string } } | null>,
 ) {
   return createMiddleware<OperatorEnv>(async (c, next) => {
-    const origin = c.env?.MEGURI_PUBLIC_ORIGIN;
-    const webOrigin = c.env?.MEGURI_WEB_ORIGIN;
+    const origin = c.env?.TAILOS_PUBLIC_ORIGIN;
+    const webOrigin = c.env?.TAILOS_WEB_ORIGIN;
     c.header("Cache-Control", "private, no-store");
     if (
       !origin ||

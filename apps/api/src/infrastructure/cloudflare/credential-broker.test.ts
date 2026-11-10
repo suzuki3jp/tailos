@@ -1,6 +1,6 @@
 import { expect, test, type TestContext } from "vitest";
 import { fileURLToPath } from "node:url";
-import { codexAccessSchema } from "@meguri/core/runner";
+import { codexAccessSchema } from "@tailos/core/runner";
 import * as v from "valibot";
 import { build } from "esbuild";
 import {

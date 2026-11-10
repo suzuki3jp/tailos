@@ -1,6 +1,6 @@
 ---
 name: ccc-review
-description: Meguri の指定された GitHub PR をレビューし、行コメント、Summary、完了ラベルを更新する。Claude Code の GitHub Routine にも対応する。
+description: Tailos の指定された GitHub PR をレビューし、行コメント、Summary、完了ラベルを更新する。Claude Code の GitHub Routine にも対応する。
 disable-model-invocation: true
 argument-hint: "[PR 番号または URL]"
 ---
@@ -9,7 +9,7 @@ argument-hint: "[PR 番号または URL]"
 
 - 手動で `/ccc-review`（Claude Code）または `$ccc-review`（Codex）を呼び出した際に PR 番号か URL が指定されていれば、その PR を対象にする。Claude Code の Routine では、PR の指定がなければ別メッセージで渡される `<github-trigger-context>` の PR を対象にする。
 - `Fired by routine` で起動され、まだ `<github-trigger-context>` が届いていなければ、そのターンは何もせずに終える。コンテキストを受け取ったターンで続ける。手動起動で対象が不明な場合は PR 番号か URL を尋ねる。
-- 対象は `suzuki3jp/meguri` の open PR 1 件に限る。open PR の一覧から対象を探したり、後続の push を監視したりしない。push で起動される Routine は別セッションで処理する。
+- 対象は `suzuki3jp/tailos` の open PR 1 件に限る。open PR の一覧から対象を探したり、後続の push を監視したりしない。push で起動される Routine は別セッションで処理する。
 - 開始時に対象 PR の head SHA を確定する。イベントに head SHA が含まれ、現在の head と異なる場合は終了する。GitHub に書き込む各段階の直前にも PR が open で head SHA が同じことを確認し、変わっていればそこで終了する。
 
 # レビュー

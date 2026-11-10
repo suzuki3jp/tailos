@@ -10,7 +10,7 @@ import {
   type FileChanges,
   type RunnerJob,
   type RunnerPublication,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 import { PublicationFailed, type AgentResult } from "./agent.ts";
 
@@ -29,9 +29,9 @@ export async function runInGitWorkspace(
   remote = `https://github.com/${checkout.repository}.git`,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
   const metadata = await mkdtemp(
-    join(process.env.MEGURI_GIT_STATE_DIR ?? tmpdir(), "meguri-git-"),
+    join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-git-"),
   );
-  const cwd = await mkdtemp(join(tmpdir(), "meguri-repo-")).catch(
+  const cwd = await mkdtemp(join(tmpdir(), "tailos-repo-")).catch(
     async (error) => {
       await rm(metadata, { recursive: true, force: true });
       throw error;
@@ -169,7 +169,7 @@ export async function runInGitWorkspace(
 
     // Check a fresh checkout of the staged snapshot. Untracked build output and
     // dependencies installed or modified by the Agent cannot affect the checks.
-    const verification = await mkdtemp(join(tmpdir(), "meguri-check-"));
+    const verification = await mkdtemp(join(tmpdir(), "tailos-check-"));
     try {
       await git(["checkout-index", "--all", "--prefix=" + verification + sep]);
       const scripts = await readFile(join(verification, "package.json"))

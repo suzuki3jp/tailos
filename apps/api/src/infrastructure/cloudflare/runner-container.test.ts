@@ -55,7 +55,7 @@ test("only the active Run lease can stage the expected work branch without overw
     executionContext: '{"version":1,"engine":"fake"}',
     timeoutMs: 60_000,
   });
-  const branch = `meguri/issue-1/${runId}`;
+  const branch = `tailos/issue-1/${runId}`;
   await DB.prepare(
     "UPDATE runs SET status = 'running', step_state = ? WHERE id = ?",
   )
@@ -112,7 +112,7 @@ async function preparedRun(
     installationId: 19,
     issueNumber: 8,
     defaultBranch: "main",
-    triggerLabel: "meguri:run",
+    triggerLabel: "tailos:run",
   };
   const { runId } = await admitTrigger(DB, {
     source: "test",
@@ -130,7 +130,7 @@ async function preparedRun(
   });
   const pending = {
     kind: "prepared",
-    branch: `meguri/issue-8/${runId}`,
+    branch: `tailos/issue-8/${runId}`,
     sha: "a".repeat(40),
     reply: "Done",
     events: [],
@@ -180,8 +180,8 @@ async function preparedRun(
     ctx as unknown as ConstructorParameters<typeof RunnerContainer>[0],
     {
       DB,
-      MEGURI_GH_APP_ID: "100",
-      MEGURI_GH_APP_PRIVATE_KEY: "unused-test-key",
+      TAILOS_GH_APP_ID: "100",
+      TAILOS_GH_APP_PRIVATE_KEY: "unused-test-key",
     },
   );
   t.onTestFinished(() => {
@@ -327,7 +327,7 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
     installationId: 19,
     issueNumber: 8,
     defaultBranch: "main",
-    triggerLabel: "meguri:run",
+    triggerLabel: "tailos:run",
   };
   const { runId } = await admitTrigger(DB, {
     source: "test",
@@ -345,7 +345,7 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
   });
   const work = {
     kind: "checked" as const,
-    branch: `meguri/issue-8/${runId}`,
+    branch: `tailos/issue-8/${runId}`,
     baseSha: "a".repeat(40),
     tree: "b".repeat(40),
     headline: "fix(api): validate input",
@@ -400,8 +400,8 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
     {
       DB,
       RUN_ARTIFACTS,
-      MEGURI_GH_APP_ID: "100",
-      MEGURI_GH_APP_PRIVATE_KEY: "unused-test-key",
+      TAILOS_GH_APP_ID: "100",
+      TAILOS_GH_APP_PRIVATE_KEY: "unused-test-key",
     },
   );
   expect(await runner.stagePublication(runId, newRunLease(), work)).toBe(false);
@@ -473,9 +473,9 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
     url,
   });
   const objects = await RUN_ARTIFACTS.list({
-    prefix: `meguri-api/v1/runs/${runId}/`,
+    prefix: `tailos-api/v1/runs/${runId}/`,
   });
   expect(objects.objects.map(({ key }) => key)).toEqual([
-    `meguri-api/v1/runs/${runId}/execution.json`,
+    `tailos-api/v1/runs/${runId}/execution.json`,
   ]);
 });

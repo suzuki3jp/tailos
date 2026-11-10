@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { assert, expect, test, type TestContext } from "vitest";
-import { runnerStatusSchema, type RunnerJob } from "@meguri/core/runner";
+import { runnerStatusSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   AgentSandboxUnavailable,

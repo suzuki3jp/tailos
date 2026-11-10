@@ -257,13 +257,13 @@ test("reconciles a late publication checkpoint and retries saving the published 
         installationId: 2,
         issueNumber: 8,
         defaultBranch: "main",
-        triggerLabel: "meguri:run",
+        triggerLabel: "tailos:run",
       },
     }),
   });
   const publication = {
     kind: "pushed",
-    branch: `meguri/issue-8/${runId}`,
+    branch: `tailos/issue-8/${runId}`,
     sha: "a".repeat(40),
     reply: "Completed",
     events: [],

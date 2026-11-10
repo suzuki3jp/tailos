@@ -1,13 +1,25 @@
-import { gitSha, runnerEventSchema } from "@meguri/core/runner";
+import {
+  checkedPublicationFields,
+  gitSha,
+  runnerEventSchema,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 
-export const pendingPublicationSchema = v.strictObject({
+export const legacyPublicationSchema = v.strictObject({
   kind: v.picklist(["prepared", "pushed"]),
   branch: v.pipe(v.string(), v.maxLength(255)),
   sha: gitSha,
   reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
   events: v.pipe(v.array(runnerEventSchema), v.maxLength(20)),
 });
+export const checkedCheckpointSchema = v.strictObject({
+  ...checkedPublicationFields,
+  digest: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+});
+const pendingPublicationSchema = v.union([
+  checkedCheckpointSchema,
+  legacyPublicationSchema,
+]);
 const stateSchema = v.object({
   pendingPublication: v.optional(pendingPublicationSchema),
   publicationStartedAt: v.optional(
@@ -20,6 +32,7 @@ const stateSchema = v.object({
 export const publicationRecoveryMs = 30_000;
 
 export type PendingPublication = v.InferOutput<typeof pendingPublicationSchema>;
+export type LegacyPublication = v.InferOutput<typeof legacyPublicationSchema>;
 
 export function pendingPublication(
   stepState: string | null,

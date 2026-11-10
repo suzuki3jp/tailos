@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@meguri/core/runner";
 import * as v from "valibot";
-import { AgentSandboxUnavailable, type AgentAdapter } from "./agent.ts";
+import {
+  AgentSandboxUnavailable,
+  PublicationFailed,
+  type AgentAdapter,
+} from "./agent.ts";
 import { CodexRpc, type CodexProcess } from "./codex-rpc.ts";
 
 const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
@@ -44,7 +48,11 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
     {
       cwd: directory,
       detached: true,
-      env: { PATH: process.env.PATH, CODEX_HOME: directory },
+      env: {
+        PATH: process.env.PATH,
+        CODEX_HOME: directory,
+        npm_config_verify_deps_before_run: "false",
+      },
       stdio: ["pipe", "pipe", "ignore"],
     },
   );
@@ -72,6 +80,71 @@ export function createCodexAgent(
     },
   };
 }
+
+export async function checkCodexWorkspace(
+  cwd: string,
+  signal: AbortSignal,
+  launch = launchCodex,
+) {
+  const directory = await mkdtemp(join(tmpdir(), "meguri-check-codex-"));
+  try {
+    signal.throwIfAborted();
+    const rpc = new CodexRpc(launch(directory, cwd));
+    const abort = () => rpc.close();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await initialize(rpc);
+      for (const [script, errorCode] of [
+        ["format:check", "format_check_failed"],
+        ["lint", "lint_failed"],
+      ] as const) {
+        signal.throwIfAborted();
+        const result = v.parse(
+          sandboxProbeSchema,
+          await rpc.call("command/exec", {
+            // The npm-installed pnpm launcher is a shell file without a
+            // shebang. The check tools are pinned on PATH in the image.
+            command: [
+              "/bin/sh",
+              "-c",
+              'exec pnpm --config.verify-deps-before-run=false run "$1"',
+              "meguri-check",
+              script,
+            ],
+            cwd,
+            env: {
+              CI: "true",
+              HUSKY: "0",
+              npm_config_script_shell: "/bin/sh",
+            },
+            outputBytesCap: 16 * 1024,
+            timeoutMs: 120_000,
+            sandboxPolicy: { type: "readOnly", networkAccess: false },
+          }),
+        );
+        if (result.exitCode !== 0) throw new PublicationFailed(errorCode);
+      }
+    } finally {
+      signal.removeEventListener("abort", abort);
+      rpc.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function initialize(rpc: CodexRpc) {
+  await rpc.call("initialize", {
+    clientInfo: { name: "meguri", version: "0.1.0" },
+    capabilities: { experimentalApi: true },
+  });
+  rpc.notify("initialized");
+}
+
+const repositoryReplySchema = v.object({
+  reply: v.string(),
+  headline: v.nullable(v.string()),
+});
 
 async function runTurn(
   child: CodexProcess,
@@ -141,11 +214,7 @@ async function runTurn(
 
   try {
     signal.throwIfAborted();
-    await rpc.call("initialize", {
-      clientInfo: { name: "meguri", version: "0.1.0" },
-      capabilities: { experimentalApi: true },
-    });
-    rpc.notify("initialized");
+    await initialize(rpc);
     const probe = v.parse(
       sandboxProbeSchema,
       await rpc.call("command/exec", {
@@ -180,13 +249,44 @@ async function runTurn(
     threadId = thread.thread.id;
     await rpc.call("turn/start", {
       threadId,
-      input: [{ type: "text", text: job.prompt, text_elements: [] }],
+      input: [
+        {
+          type: "text",
+          text: job.checkout
+            ? job.prompt +
+              "\n\nRun pnpm run format:check and pnpm run lint and fix failures before returning. Summarize your work in reply and give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
+            : job.prompt,
+          text_elements: [],
+        },
+      ],
+      ...(job.checkout && {
+        outputSchema: {
+          type: "object",
+          properties: {
+            reply: { type: "string" },
+            headline: { type: ["string", "null"] },
+          },
+          required: ["reply", "headline"],
+          additionalProperties: false,
+        },
+      }),
     });
     await completed;
 
-    for (const secret of sensitive)
-      reply = reply.replaceAll(secret, "[REDACTED]");
-    return reply.slice(0, 8000);
+    const redact = (text: string) => {
+      for (const secret of sensitive)
+        text = text.replaceAll(secret, "[REDACTED]");
+      return text;
+    };
+    if (!job.checkout) return { reply: redact(reply).slice(0, 8000) };
+    const result = v.parse(repositoryReplySchema, JSON.parse(reply));
+    return {
+      reply: redact(result.reply).slice(0, 8000),
+      ...(result.headline !== null &&
+      redact(result.headline) === result.headline
+        ? { headline: result.headline }
+        : {}),
+    };
   } finally {
     signal.removeEventListener("abort", abort);
     rpc.close();

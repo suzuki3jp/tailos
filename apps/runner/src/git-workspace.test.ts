@@ -1,15 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assert, expect, test } from "vitest";
 import { pathToFileURL } from "node:url";
+import { expect, test, vi, type TestContext } from "vitest";
+import { PublicationFailed } from "./agent.ts";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
-test("pushes changes to the assigned branch without changing the base ref or storing credentials", async (t) => {
+async function repository(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "meguri-git-test-"));
   t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
-  const repository = join(directory, "remote.git");
   const seed = join(directory, "seed");
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", args, {
@@ -22,10 +29,15 @@ test("pushes changes to the assigned branch without changing the base ref or sto
       encoding: "utf8",
     }).trim();
 
-  git(directory, "init", "--quiet", "--bare", repository);
   git(directory, "init", "--quiet", "-b", "main", seed);
   await writeFile(join(seed, "README.md"), "base\n");
-  git(seed, "add", "README.md");
+  await writeFile(
+    join(seed, "package.json"),
+    JSON.stringify({
+      scripts: { "format:check": "oxfmt --check .", lint: "oxlint ." },
+    }),
+  );
+  git(seed, "add", ".");
   git(
     seed,
     "-c",
@@ -37,80 +49,170 @@ test("pushes changes to the assigned branch without changing the base ref or sto
     "-m",
     "Base",
   );
-  git(seed, "push", "--quiet", repository, "main");
   const baseSha = git(seed, "rev-parse", "HEAD");
   const branch = "meguri/issue-8/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
-  const checkout = {
-    repository: "owner/private",
+  return {
     baseSha,
     branch,
-    token: "secret-repo-token",
+    run(
+      work: Parameters<typeof runInGitWorkspace>[2],
+      check: Parameters<typeof runInGitWorkspace>[3],
+      stage: Parameters<typeof runInGitWorkspace>[4],
+    ) {
+      return runInGitWorkspace(
+        {
+          repository: "owner/private",
+          baseSha,
+          branch,
+          token: "secret-repo-token",
+        },
+        AbortSignal.timeout(15_000),
+        work,
+        check,
+        stage,
+        pathToFileURL(seed).href,
+      );
+    },
+    refs: () => git(seed, "for-each-ref", "--format=%(refname)"),
   };
-  const remote = pathToFileURL(repository).href;
-  const signal = AbortSignal.timeout(15_000);
+}
 
-  let stagedSha: string | undefined;
-  const result = await runInGitWorkspace(
-    checkout,
-    signal,
-    async (cwd) => {
-      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
-      const pointer = await readFile(join(cwd, ".git"), "utf8");
-      expect(pointer).toMatch(/^gitdir: /);
-      const metadata = pointer.slice("gitdir: ".length).trim();
-      expect(await readFile(join(metadata, "config"), "utf8")).not.toMatch(
-        /secret-repo-token/,
-      );
-      await rm(join(cwd, ".git"));
-      await mkdir(join(cwd, ".git"));
-      await writeFile(
-        join(cwd, ".git", "config"),
-        "[core]\nfsmonitor = /bin/false\n[http]\nproxy = http://127.0.0.1:9\n",
-      );
-      await writeFile(join(cwd, "README.md"), "changed\n");
-      return "Edited README";
-    },
-    remote,
-    async ({ branch: stagedBranch, sha, reply }) => {
-      expect(stagedBranch).toBe(branch);
-      stagedSha = sha;
-      expect(reply).toBe("Edited README");
-      expect(
-        git(
-          repository,
-          "for-each-ref",
-          "--format=%(refname)",
-          `refs/heads/${branch}`,
-        ),
-      ).toBe("");
-    },
-  );
-  expect(result.reply).toBe("Edited README");
-  assert(result.publication.kind === "pushed");
-  expect(stagedSha).toBe(result.publication.sha);
-  expect(git(repository, "rev-parse", "refs/heads/main")).toBe(baseSha);
-  expect(git(repository, "rev-parse", `refs/heads/${branch}`)).toBe(
-    result.publication.sha,
-  );
-  expect(git(repository, "show", `${branch}:README.md`)).toBe("changed");
+const result = { reply: "Renamed README", headline: "docs: rename readme" };
+
+test("checks and stages the same tree, without pushing or storing credentials", async (t) => {
+  const repo = await repository(t);
+  const check = vi.fn(async (cwd: string) => {
+    expect(await readFile(join(cwd, "Guide.md"), "utf8")).toBe("base\n");
+    await expect(readFile(join(cwd, "README.md"))).rejects.toThrow();
+  });
+  const stage = vi.fn(async () => {
+    expect(check).toHaveBeenCalledTimes(1);
+  });
   await expect(
-    runInGitWorkspace(
-      checkout,
-      signal,
+    repo.run(
       async (cwd) => {
         const pointer = await readFile(join(cwd, ".git"), "utf8");
         const metadata = pointer.slice("gitdir: ".length).trim();
+        expect(await readFile(join(metadata, "config"), "utf8")).not.toContain(
+          "secret-repo-token",
+        );
+        await rm(join(cwd, ".git"));
+        await rename(join(cwd, "README.md"), join(cwd, "Guide.md"));
+        return result;
+      },
+      check,
+      stage,
+    ),
+  ).resolves.toEqual({ reply: result.reply, publication: { kind: "checked" } });
+  expect(stage).toHaveBeenCalledExactlyOnceWith({
+    ...result,
+    baseSha: repo.baseSha,
+    branch: repo.branch,
+    tree: expect.stringMatching(/^[a-f0-9]{40}$/),
+    changes: {
+      additions: [
+        {
+          path: "Guide.md",
+          contents: Buffer.from("base\n").toString("base64"),
+        },
+      ],
+      deletions: [{ path: "README.md" }],
+    },
+  });
+  expect(repo.refs()).toBe("refs/heads/main");
+});
+
+test.for(["format_check_failed", "lint_failed"] as const)(
+  "leaves no publication checkpoint after %s",
+  async (errorCode, t) => {
+    const repo = await repository(t);
+    const stage = vi.fn();
+    await expect(
+      repo.run(
+        async (cwd) => {
+          await writeFile(join(cwd, "README.md"), "changed\n");
+          return result;
+        },
+        async () => {
+          throw new PublicationFailed(errorCode);
+        },
+        stage,
+      ),
+    ).rejects.toMatchObject({ code: errorCode });
+    expect(stage).not.toHaveBeenCalled();
+  },
+);
+
+test("fails closed if the Agent changes the verification script or file mode", async (t) => {
+  const repo = await repository(t);
+  const check = vi.fn();
+  const stage = vi.fn();
+  await expect(
+    repo.run(
+      async (cwd) => {
         await writeFile(
-          join(metadata, "config"),
+          join(cwd, "package.json"),
+          '{"scripts":{"format:check":"true","lint":"oxlint ."}}',
+        );
+        return result;
+      },
+      check,
+      stage,
+    ),
+  ).rejects.toMatchObject({ code: "format_check_failed" });
+  await expect(
+    repo.run(
+      async (cwd) => {
+        await chmod(join(cwd, "README.md"), 0o755);
+        return result;
+      },
+      check,
+      stage,
+    ),
+  ).rejects.toMatchObject({ code: "unsupported_changes" });
+  expect(check).not.toHaveBeenCalled();
+  expect(stage).not.toHaveBeenCalled();
+});
+
+test("returns no changes without checking or staging", async (t) => {
+  const repo = await repository(t);
+  const check = vi.fn();
+  const stage = vi.fn();
+  await expect(
+    repo.run(async () => ({ reply: "No work" }), check, stage),
+  ).resolves.toEqual({ reply: "No work", publication: { kind: "no_changes" } });
+  expect(check).not.toHaveBeenCalled();
+  expect(stage).not.toHaveBeenCalled();
+});
+
+test("rejects an invalid headline and changes to trusted Git config before publication", async (t) => {
+  const repo = await repository(t);
+  const check = vi.fn();
+  const stage = vi.fn();
+  await expect(
+    repo.run(
+      async (cwd) => {
+        await writeFile(join(cwd, "README.md"), "changed\n");
+        return { ...result, headline: "Implement GitHub issue\nextra line" };
+      },
+      check,
+      stage,
+    ),
+  ).rejects.toMatchObject({ code: "invalid_change_headline" });
+  await expect(
+    repo.run(
+      async (cwd) => {
+        const pointer = await readFile(join(cwd, ".git"), "utf8");
+        await writeFile(
+          join(pointer.slice("gitdir: ".length).trim(), "config"),
           "[core]\nfsmonitor = /bin/false\n",
         );
-        return "tampered";
+        return result;
       },
-      remote,
+      check,
+      stage,
     ),
-  ).rejects.toThrow(/Git metadata configuration changed/);
-  expect(
-    (await runInGitWorkspace(checkout, signal, async () => "No work", remote))
-      .publication,
-  ).toStrictEqual({ kind: "no_changes" });
+  ).rejects.toThrow("Git metadata configuration changed");
+  expect(check).not.toHaveBeenCalled();
+  expect(stage).not.toHaveBeenCalled();
 });

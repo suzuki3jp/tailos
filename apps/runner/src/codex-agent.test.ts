@@ -42,7 +42,13 @@ const script = `
       reply({ thread: { id: "test-thread" } });
     }
     if (request.method === "turn/start") {
-      if (request.params.input[0].text !== "Answer the prompt") throw new Error("Unexpected turn input");
+      const { input, outputSchema } = request.params;
+      if (mode === "workspaceWrite") {
+        if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
+          throw new Error("Missing repository response schema");
+      } else if (input[0].text !== "Answer the prompt" || outputSchema !== undefined) {
+        throw new Error("Unexpected turn input");
+      }
       reply({});
       send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
     }
@@ -53,7 +59,9 @@ const script = `
       ) throw new Error("Unexpected credential refresh response");
       send({ method: "item/completed", params: {
         threadId: "test-thread",
-        item: { type: "agentMessage", text: "Reply containing new-access" },
+        item: { type: "agentMessage", text: mode === "workspaceWrite"
+          ? JSON.stringify({ reply: "Reply containing new-access", headline: "fix(api): handle refresh" })
+          : "Reply containing new-access" },
       } });
       send({ method: "turn/completed", params: {
         threadId: "test-thread",
@@ -132,7 +140,10 @@ test.for(["readOnly", "workspaceWrite"] as const)(
         AbortSignal.timeout(10_000),
         job.checkout ? process.cwd() : undefined,
       ),
-    ).toBe("Reply containing [REDACTED]");
+    ).toEqual({
+      reply: "Reply containing [REDACTED]",
+      ...(job.checkout && { headline: "fix(api): handle refresh" }),
+    });
   },
 );
 

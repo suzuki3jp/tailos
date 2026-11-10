@@ -5,6 +5,7 @@ import {
 import {
   pendingPublication,
   publicationDeadline,
+  type LegacyPublication,
   type PendingPublication,
 } from "../../application/runs/publication.ts";
 import { GitHubApp } from "../github/app.ts";
@@ -12,7 +13,9 @@ import { seal, unseal, type Sealed } from "../auth/sealed-store.ts";
 import { hashRunLease, matchRunLease, newRunLease } from "../auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
+  fileChangesSchema,
   runnerStatusSchema,
+  type CheckedPublication,
   type ExecutionContext,
   type RunnerJob,
   type RepositoryTarget,
@@ -41,6 +44,17 @@ type RefreshLease = {
   expiresAt: number;
   lastRefreshAt: number;
 };
+
+const publicationKey = (runId: string, digest: string) =>
+  `meguri-api/v1/runs/${runId}/publication-${digest}.json`;
+
+async function publicationDigest(content: string) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(content),
+  );
+  return Buffer.from(bytes).toString("hex");
+}
 
 export class RunnerContainer extends DurableObject<Bindings> {
   async checkHealth(): Promise<boolean> {
@@ -81,6 +95,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     await this.ctx.storage.delete("refreshLease");
+    const digest = await this.ctx.storage.get<string>("publicationDigest");
+    if (digest && this.env.RUN_ARTIFACTS?.delete) {
+      try {
+        await this.env.RUN_ARTIFACTS.delete(publicationKey(runId, digest));
+        await this.ctx.storage.delete("publicationDigest");
+      } catch {
+        // oxlint-disable-next-line no-console -- Record cleanup failures without artifact data.
+        console.warn("Checked publication cleanup failed", { runId });
+      }
+    }
     try {
       if (this.ctx.container?.running) await this.ctx.container.destroy();
     } finally {
@@ -163,7 +187,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   async stagePublication(
     runId: string,
     bearer: string,
-    work: PendingPublication,
+    work: CheckedPublication | LegacyPublication,
   ) {
     const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
     if (
@@ -173,7 +197,42 @@ export class RunnerContainer extends DurableObject<Bindings> {
       !matchRunLease(await hashRunLease(bearer), lease.digest)
     )
       return false;
-    return stageRunPublication(this.env.DB, runId, work);
+    if (work.kind !== "checked")
+      return stageRunPublication(this.env.DB, runId, work);
+    const assigned = await this.env.DB.prepare(
+      `SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?
+       AND json_extract(step_state, '$.branch') = ?
+       AND json_extract(step_state, '$.baseSha') = ?`,
+    )
+      .bind(runId, Date.now(), work.branch, work.baseSha)
+      .first();
+    if (!assigned) return false;
+    const bucket = this.env.RUN_ARTIFACTS;
+    if (!bucket) throw new Error("Checked publication storage unavailable");
+    const { changes, ...checkpoint } = work;
+    const content = JSON.stringify(changes);
+    const digest = await publicationDigest(content);
+    const reserved = await this.ctx.storage.transaction(async (storage) => {
+      const current = await storage.get<string>("publicationDigest");
+      if (current) return current === digest;
+      await storage.put("publicationDigest", digest);
+      return true;
+    });
+    if (!reserved) return false;
+    await bucket.put(publicationKey(runId, digest), content);
+    const staged = await stageRunPublication(this.env.DB, runId, {
+      ...checkpoint,
+      digest,
+    });
+    if (!staged) {
+      const running = await this.env.DB.prepare(
+        "SELECT 1 FROM runs WHERE id = ? AND status = 'running'",
+      )
+        .bind(runId)
+        .first();
+      if (!running) await bucket.delete?.(publicationKey(runId, digest));
+    }
+    return staged;
   }
 
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
@@ -289,7 +348,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         )
           .bind(
             JSON.stringify({
-              version: 1,
+              version: 2,
               baseSha: checkout.baseSha,
               branch: checkout.branch,
             }),
@@ -334,6 +393,31 @@ export class RunnerContainer extends DurableObject<Bindings> {
   ) {
     const target = context.engine === "codex" ? context.repository : undefined;
     const pending = target ? pendingPublication(stepState) : null;
+    if (target && pending?.kind === "checked") {
+      const recoveryDeadline = publicationDeadline(stepState, deadlineAt);
+      const github = this.github;
+      if (!github) throw new Error("GitHub verification unavailable");
+      const object = await this.env.RUN_ARTIFACTS?.get(
+        publicationKey(runId, pending.digest),
+      );
+      const content = await object?.text();
+      if (!content || (await publicationDigest(content)) !== pending.digest)
+        throw new Error("Checked publication unavailable");
+      const changes = v.parse(fileChangesSchema, JSON.parse(content));
+      const sha = await github.commitCheckedWork(
+        target,
+        runId,
+        { ...pending, changes },
+        recoveryDeadline,
+      );
+      if (!sha)
+        return {
+          status: "failed",
+          errorCode: "publication_unconfirmed",
+          events: pending.events,
+        } as const;
+      return this.publish(runId, target, recoveryDeadline, pending, sha);
+    }
     if (target && pending?.kind === "pushed")
       return this.publish(
         runId,
@@ -350,7 +434,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         return { status: "failed", errorCode: "runner_lost" } as const;
       },
     );
-    if (target && pending) {
+    if (target && pending && pending.kind !== "checked") {
       if (status.status === "running" && Date.now() < deadlineAt) return status;
       if (
         !(await beginPublicationReconciliation(
@@ -397,6 +481,12 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { ...status, publicationResult: { kind: "no_changes" as const } };
     }
 
+    if (status.publication.kind !== "pushed")
+      return {
+        status: "failed",
+        errorCode: "publication_unconfirmed",
+      } as const;
+
     const pendingWork = {
       reply: status.reply,
       events: status.events,
@@ -441,14 +531,19 @@ export class RunnerContainer extends DurableObject<Bindings> {
     target: RepositoryTarget,
     deadlineAt: number,
     work: PendingPublication,
+    sha = work.kind === "checked" ? undefined : work.sha,
   ) {
     const github = this.github;
-    if (!github)
+    if (!github || !sha)
       return {
         status: "failed",
         errorCode: "publication_unconfirmed",
       } as const;
-    const url = await github.publish(target, runId, work, deadlineAt);
+    const publication =
+      work.kind === "checked"
+        ? { branch: work.branch, sha, headline: work.headline }
+        : work;
+    const url = await github.publish(target, runId, publication, deadlineAt);
     if (!url)
       return {
         status: "failed",
@@ -463,7 +558,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         kind: "pull_request" as const,
         url,
         branch: work.branch,
-        sha: work.sha,
+        sha,
       },
     };
   }

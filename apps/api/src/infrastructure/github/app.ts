@@ -1,6 +1,10 @@
 import { createPrivateKey } from "node:crypto";
 import { importPKCS8, SignJWT } from "jose";
-import { gitSha, type RepositoryTarget } from "@meguri/core/runner";
+import {
+  gitSha,
+  type CheckedPublication,
+  type RepositoryTarget,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 
 const repoSchema = v.object({ id: v.number(), default_branch: v.string() });
@@ -11,6 +15,19 @@ const issueSchema = v.object({
 });
 const grantSchema = v.object({ token: v.string(), expires_at: v.string() });
 const refSchema = v.object({ object: v.object({ sha: gitSha }) });
+const commitSchema = v.object({
+  sha: gitSha,
+  tree: v.object({ sha: gitSha }),
+  parents: v.array(v.object({ sha: gitSha })),
+  message: v.string(),
+  verification: v.object({ verified: v.literal(true) }),
+});
+const commitMutationSchema = v.object({
+  data: v.object({
+    createCommitOnBranch: v.object({ commit: v.object({ oid: gitSha }) }),
+  }),
+  errors: v.optional(v.tuple([])),
+});
 const pullSchema = v.object({
   html_url: v.pipe(
     v.string(),
@@ -160,7 +177,7 @@ export class GitHubApp {
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
       );
       return {
-        ...(await this.token(target, { contents: "write" })),
+        ...(await this.token(target, { contents: "read" })),
         baseSha: base.object.sha,
         branch: workBranchFor(target, runId),
       };
@@ -196,10 +213,98 @@ export class GitHubApp {
     }
   }
 
+  async commitCheckedWork(
+    target: RepositoryTarget,
+    runId: string,
+    work: Pick<
+      CheckedPublication,
+      "branch" | "baseSha" | "tree" | "headline" | "changes"
+    >,
+    deadlineAt: number,
+  ): Promise<string | null> {
+    const branch = workBranchFor(target, runId);
+    if (work.branch !== branch || branch === target.defaultBranch)
+      throw new Error("Unexpected work branch");
+    const repo = "/repos/" + target.repository;
+    const { token } = await this.token(target, { contents: "write" });
+    const ref = "refs/heads/" + branch;
+    const refPath = `${repo}/git/ref/heads/${encodeURIComponent(branch)}`;
+    const readHead = async () => {
+      const response = await this.request(refPath, token);
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error("GitHub ref verification unavailable");
+      return v.parse(refSchema, await response.json()).object.sha;
+    };
+    const body = `Meguri run: ${runId}`;
+    try {
+      let sha = await readHead();
+      if (sha === null) {
+        if (Date.now() >= deadlineAt) return null;
+        const created = await this.request(`${repo}/git/refs`, token, "POST", {
+          ref,
+          sha: work.baseSha,
+        });
+        if (created.ok) {
+          sha = v.parse(refSchema, await created.json()).object.sha;
+          if (sha !== work.baseSha)
+            throw new Error("Unexpected work branch head");
+        } else if (created.status === 422) {
+          await created.body?.cancel();
+          sha = await readHead();
+        } else {
+          await created.body?.cancel();
+        }
+        if (sha === null)
+          throw new Error("GitHub work branch creation unavailable");
+      }
+      if (sha === work.baseSha) {
+        if (Date.now() >= deadlineAt) return null;
+        const created = v.parse(
+          commitMutationSchema,
+          await this.json("/graphql", token, "POST", {
+            query: `mutation MeguriCommit($input: CreateCommitOnBranchInput!) {
+              createCommitOnBranch(input: $input) { commit { oid } }
+            }`,
+            variables: {
+              input: {
+                branch: {
+                  repositoryNameWithOwner: target.repository,
+                  branchName: branch,
+                },
+                expectedHeadOid: work.baseSha,
+                message: { headline: work.headline, body },
+                fileChanges: work.changes,
+              },
+            },
+          }),
+        );
+        sha = created.data.createCommitOnBranch.commit.oid;
+      }
+
+      // A timed-out mutation can already have advanced the ref. Only adopt the
+      // exact signed commit for this run and verified snapshot.
+      const commit = v.parse(
+        commitSchema,
+        await this.json(`${repo}/git/commits/${sha}`, token),
+      );
+      if (
+        commit.sha !== sha ||
+        commit.tree.sha !== work.tree ||
+        commit.parents.length !== 1 ||
+        commit.parents[0]?.sha !== work.baseSha ||
+        commit.message.trimEnd() !== `${work.headline}\n\n${body}`
+      )
+        throw new Error("GitHub commit does not match checked work");
+      return sha;
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
+  }
+
   async publish(
     target: RepositoryTarget,
     runId: string,
-    publication: { branch: string; sha: string },
+    publication: { branch: string; sha: string; headline?: string },
     deadlineAt = Infinity,
   ) {
     const branch = workBranchFor(target, runId);
@@ -248,7 +353,8 @@ export class GitHubApp {
       const pull = v.parse(
         pullSchema,
         await this.json(`${repo}/pulls`, token, "POST", {
-          title: `Implement issue #${target.issueNumber}`,
+          title:
+            publication.headline ?? `Implement issue #${target.issueNumber}`,
           head: branch,
           base: target.defaultBranch,
           body: `Closes #${target.issueNumber}\n\nCreated by Meguri run \`${runId}\`.`,

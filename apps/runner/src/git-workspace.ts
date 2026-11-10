@@ -1,25 +1,32 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { promisify } from "node:util";
-import type { RunnerJob, RunnerPublication } from "@meguri/core/runner";
+import {
+  changeHeadline,
+  maxPublicationBytes,
+  type CheckedPublication,
+  type FileChanges,
+  type RunnerJob,
+  type RunnerPublication,
+} from "@meguri/core/runner";
+import * as v from "valibot";
+import { PublicationFailed, type AgentResult } from "./agent.ts";
 
 const exec = promisify(execFile);
 type Checkout = NonNullable<
   Extract<RunnerJob, { engine: "codex" }>["checkout"]
 >;
+type CheckedWork = Omit<CheckedPublication, "kind" | "events">;
 
 export async function runInGitWorkspace(
   checkout: Checkout,
   signal: AbortSignal,
-  work: (cwd: string) => Promise<string>,
+  work: (cwd: string) => Promise<AgentResult>,
+  check: (cwd: string) => Promise<void>,
+  stage: (work: CheckedWork) => Promise<void>,
   remote = `https://github.com/${checkout.repository}.git`,
-  beforePush?: (work: {
-    branch: string;
-    sha: string;
-    reply: string;
-  }) => Promise<void>,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
   const metadata = await mkdtemp(
     join(process.env.MEGURI_GIT_STATE_DIR ?? tmpdir(), "meguri-git-"),
@@ -35,10 +42,6 @@ export async function runInGitWorkspace(
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_AUTHOR_NAME: "Meguri",
-    GIT_AUTHOR_EMAIL: "meguri[bot]@users.noreply.github.com",
-    GIT_COMMITTER_NAME: "Meguri",
-    GIT_COMMITTER_EMAIL: "meguri[bot]@users.noreply.github.com",
   };
   const git = async (args: string[], network = false) => {
     const env = network
@@ -73,9 +76,15 @@ export async function runInGitWorkspace(
             "http.followRedirects=false",
             ...args,
           ],
-          { cwd, env, signal, maxBuffer: 1024 * 1024 },
+          {
+            cwd,
+            env,
+            signal,
+            maxBuffer: maxPublicationBytes,
+            encoding: "buffer",
+          },
         )
-      ).stdout.trim();
+      ).stdout;
     } catch {
       // Git errors can carry transport headers or private repository data.
       throw new Error("Repository operation failed");
@@ -97,45 +106,93 @@ export async function runInGitWorkspace(
       true,
     );
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+    const readScripts = (manifest: Buffer) =>
+      v.parse(
+        v.object({ scripts: v.optional(v.record(v.string(), v.string()), {}) }),
+        JSON.parse(manifest.toString()),
+      ).scripts;
+    const baseScripts = await git(["show", checkout.baseSha + ":package.json"])
+      .then(readScripts)
+      .catch(() => null);
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
-    const reply = await work(cwd);
+    const { reply, headline } = await work(cwd);
     if (!(await readFile(configPath)).equals(trustedConfig))
       throw new Error("Git metadata configuration changed");
+
+    await git(["read-tree", checkout.baseSha]);
     await git(["add", "--all"]);
-    const changes = await git([
-      "status",
-      "--porcelain",
-      "--untracked-files=no",
-    ]);
-    if (changes)
-      await git([
-        "commit",
-        "--quiet",
-        "--no-gpg-sign",
-        "-m",
-        "Implement GitHub issue",
-      ]);
-    await git(["merge-base", "--is-ancestor", checkout.baseSha, "HEAD"]);
-    const changedPaths = await git([
-      "diff",
-      "--no-ext-diff",
-      "--name-only",
+    const tree = (await git(["write-tree"])).toString().trim();
+    const paths = await git([
+      "diff-tree",
+      "-r",
+      "-z",
+      "--raw",
+      "--no-renames",
       checkout.baseSha,
-      "HEAD",
+      tree,
     ]);
-    if (!changedPaths) return { reply, publication: { kind: "no_changes" } };
-    const sha = await git(["rev-parse", "HEAD"]);
-    await beforePush?.({ branch: checkout.branch, sha, reply });
+    if (!paths.length) return { reply, publication: { kind: "no_changes" } };
+    const validatedHeadline = v.safeParse(changeHeadline, headline);
+    if (!validatedHeadline.success)
+      throw new PublicationFailed("invalid_change_headline");
+
+    const changes: FileChanges = { additions: [], deletions: [] };
+    const entries = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+      .decode(paths)
+      .split("\0");
+    let size = 0;
+    for (let i = 0; i < entries.length - 1; i += 2) {
+      const [oldMode, newMode, , oid, status] = entries[i]!.slice(1).split(" ");
+      const path = entries[i + 1]!;
+      if (path.split("/").includes("node_modules") || i >= 1024)
+        throw new PublicationFailed("unsupported_changes");
+      if (status === "D") {
+        changes.deletions.push({ path });
+        continue;
+      }
+      // GraphQL cannot specify a mode for a newly added file or change its mode.
+      if (newMode !== "100644" || (status !== "A" && oldMode !== newMode))
+        throw new PublicationFailed("unsupported_changes");
+      const contents = (await git(["cat-file", "blob", oid!])).toString(
+        "base64",
+      );
+      size += contents.length;
+      if (size >= maxPublicationBytes)
+        throw new PublicationFailed("unsupported_changes");
+      changes.additions.push({ path, contents });
+    }
+
+    // Check a fresh checkout of the staged snapshot. Untracked build output and
+    // dependencies installed or modified by the Agent cannot affect the checks.
+    const verification = await mkdtemp(join(tmpdir(), "meguri-check-"));
+    try {
+      await git(["checkout-index", "--all", "--prefix=" + verification + sep]);
+      const scripts = await readFile(join(verification, "package.json"))
+        .then(readScripts)
+        .catch(() => null);
+      if (
+        !baseScripts?.["format:check"] ||
+        baseScripts["format:check"] !== scripts?.["format:check"]
+      )
+        throw new PublicationFailed("format_check_failed");
+      if (!baseScripts.lint || baseScripts.lint !== scripts?.lint)
+        throw new PublicationFailed("lint_failed");
+      await check(verification);
+    } finally {
+      await rm(verification, { recursive: true, force: true });
+    }
+
     signal.throwIfAborted();
-    await git(
-      ["push", "--quiet", remote, `${sha}:refs/heads/${checkout.branch}`],
-      true,
-    );
-    return {
+    await stage({
+      branch: checkout.branch,
+      baseSha: checkout.baseSha,
+      tree,
+      headline: validatedHeadline.output,
       reply,
-      publication: { kind: "pushed", branch: checkout.branch, sha },
-    };
+      changes,
+    });
+    return { reply, publication: { kind: "checked" } };
   } finally {
     await Promise.all([
       rm(cwd, { recursive: true, force: true }),

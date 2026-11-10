@@ -230,7 +230,7 @@ async function storeOutcome(
             version: 1,
             kind: "publication_unconfirmed",
             branch: pending.branch,
-            sha: pending.sha,
+            ...(pending.kind === "checked" ? {} : { sha: pending.sha }),
           })
         : null;
     return failRun(store, runId, outcome.errorCode, finishedAt, result);

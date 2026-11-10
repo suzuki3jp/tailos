@@ -151,9 +151,13 @@ export async function runInGitWorkspace(
         changes.deletions.push({ path });
         continue;
       }
-      // GraphQL cannot specify a mode for a newly added file or change its mode.
-      if (newMode !== "100644" || (status !== "A" && oldMode !== newMode))
-        throw new PublicationFailed("unsupported_changes");
+      // GitHub preserves the mode of an existing regular file and creates new files as 100644.
+      const supported =
+        status === "A"
+          ? newMode === "100644"
+          : oldMode === newMode &&
+            (newMode === "100644" || newMode === "100755");
+      if (!supported) throw new PublicationFailed("unsupported_changes");
       const contents = (await git(["cat-file", "blob", oid!])).toString(
         "base64",
       );

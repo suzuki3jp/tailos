@@ -63,4 +63,6 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 Issue 起点の Run では、対象リポジトリのルートに `format:check` と `lint` の pnpm スクリプトが必要。Runner イメージには Meguri の CI と同じバージョンの pnpm・oxfmt・oxlint を組み込み、ネットワークを閉じたサンドボックスで検査する。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。
 
+既存の実行可能ファイルは、実行ビットを維持したまま内容を更新できる。新規ファイルは非実行モードで作成する必要がある。
+
 ローカル Wrangler と Docker では固定応答のジョブを実行できる。実 Codex のコマンド実行は Linux の内側のサンドボックスを使う。検証した Docker 環境の標準 seccomp 設定では `pivot_root` が拒否されたため、Cloudflare 上では最初のテスト Issue にコマンド実行を伴う小さな変更を指定して確認する。 [Codex のサンドボックス](https://learn.chatgpt.com/docs/sandboxing)

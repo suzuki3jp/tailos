@@ -5,6 +5,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,6 +38,9 @@ async function repository(t: TestContext) {
       scripts: { "format:check": "oxfmt --check .", lint: "oxlint ." },
     }),
   );
+  await writeFile(join(seed, "script.sh"), "#!/bin/sh\nprintf old\n", {
+    mode: 0o755,
+  });
   git(seed, "add", ".");
   git(
     seed,
@@ -122,6 +126,45 @@ test("checks and stages the same tree, without pushing or storing credentials", 
   expect(repo.refs()).toBe("refs/heads/main");
 });
 
+test("checks and stages an existing executable with a content-only edit", async (t) => {
+  const repo = await repository(t);
+  const contents = "#!/bin/sh\nprintf new\n";
+  const check = vi.fn(async (cwd: string) => {
+    const path = join(cwd, "script.sh");
+    expect(await readFile(path, "utf8")).toBe(contents);
+    expect((await stat(path)).mode & 0o100).toBe(0o100);
+  });
+  const stage = vi.fn();
+
+  await expect(
+    repo.run(
+      async (cwd) => {
+        await writeFile(join(cwd, "script.sh"), contents);
+        return {
+          reply: "Updated script",
+          headline: "fix: update script output",
+        };
+      },
+      check,
+      stage,
+    ),
+  ).resolves.toMatchObject({ publication: { kind: "checked" } });
+  expect(check).toHaveBeenCalledTimes(1);
+  expect(stage).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      changes: {
+        additions: [
+          {
+            path: "script.sh",
+            contents: Buffer.from(contents).toString("base64"),
+          },
+        ],
+        deletions: [],
+      },
+    }),
+  );
+});
+
 test.for(["format_check_failed", "lint_failed"] as const)(
   "leaves no publication checkpoint after %s",
   async (errorCode, t) => {
@@ -164,6 +207,18 @@ test("fails closed if the Agent changes the verification script or file mode", a
     repo.run(
       async (cwd) => {
         await chmod(join(cwd, "README.md"), 0o755);
+        return result;
+      },
+      check,
+      stage,
+    ),
+  ).rejects.toMatchObject({ code: "unsupported_changes" });
+  await expect(
+    repo.run(
+      async (cwd) => {
+        await writeFile(join(cwd, "new-script.sh"), "#!/bin/sh\n", {
+          mode: 0o755,
+        });
         return result;
       },
       check,

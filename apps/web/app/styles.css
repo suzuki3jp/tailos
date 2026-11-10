@@ -1,18 +1,17 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console graphite · signature: Session history · v2.0.0 */
-/* Graphite and a single amber action keep attention on the task. System faces cover Japanese text. */
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Warm cream · signature: Session history · v2.0.0 */
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark;
-  --paper: oklch(17% 0.008 250);
-  --panel: oklch(21% 0.009 250);
-  --ink: oklch(95% 0.005 250);
-  --muted: oklch(74% 0.01 250);
-  --rule: oklch(41% 0.012 250);
-  --accent: oklch(82% 0.15 80);
-  --accent-ink: oklch(18% 0.04 75);
-  --signal: oklch(80% 0.1 245);
-  --danger: oklch(78% 0.13 25);
+  color-scheme: light;
+  --paper: #f6f3ee;
+  --panel: #fffcf5;
+  --ink: #211b17;
+  --muted: #63584a;
+  --rule: #ded4c3;
+  --accent: #855333;
+  --accent-ink: #fff9ef;
+  --signal: #365b58;
+  --danger: #a42b2b;
   --body-face: system-ui, sans-serif;
   --code-face: ui-monospace, monospace;
 }
@@ -40,7 +39,7 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--body-face);
-  scrollbar-color: var(--rule) var(--paper);
+  scrollbar-color: var(--muted) var(--paper);
 }
 
 ::selection {
@@ -62,7 +61,7 @@ h2 {
 
 @layer components {
   .action {
-    @apply inline-flex min-h-11 items-center rounded-md border border-rule px-4 py-2 text-sm font-medium hover:border-muted;
+    @apply inline-flex min-h-11 items-center rounded-md border border-muted/75 px-4 py-2 text-sm font-medium hover:border-muted;
   }
 
   .action:active {

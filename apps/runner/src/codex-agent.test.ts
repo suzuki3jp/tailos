@@ -12,6 +12,14 @@ const script = `
   const [workspace, mode, probeJson] = process.argv.slice(1);
   const probeResponse = JSON.parse(probeJson);
   let sandboxReady = false;
+  let githubResponses = 0;
+  const refresh = () => send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
+  const lookup = (id, args, threadId = "test-thread") => send({
+    id, method: "item/tool/call", params: {
+      threadId, turnId: "test-turn", callId: id, namespace: null,
+      tool: "tailos_github_get", arguments: args,
+    },
+  });
   createInterface({ input: process.stdin }).on("line", (line) => {
     const request = JSON.parse(line);
     const reply = (result) => send({ id: request.id, result });
@@ -39,6 +47,9 @@ const script = `
     }
     if (request.method === "thread/start") {
       if (request.params.ephemeral !== true) throw new Error("Expected an ephemeral thread");
+      const tools = request.params.dynamicTools;
+      if (mode === "workspaceWrite" ? tools?.[0]?.name !== "tailos_github_get" : tools !== undefined)
+        throw new Error("Unexpected GitHub tool registration");
       reply({ thread: { id: "test-thread" } });
     }
     if (request.method === "turn/start") {
@@ -48,13 +59,35 @@ const script = `
             !input[0].text.includes("commands you ran and their results") ||
             input[0].text.includes("pnpm run"))
           throw new Error("Expected repository-specific verification instructions");
+        if (!input[0].text.includes("/opt/tailos-checks/node_modules/.bin/pnpm --version") ||
+            !input[0].text.includes("use the bundled executable directly") ||
+            !input[0].text.includes("pnpm_config_pm_on_fail=ignore"))
+          throw new Error("Expected instructions to use the bundled pnpm for verification");
         if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
           throw new Error("Missing repository response schema");
       } else if (input[0].text !== "Answer the prompt" || outputSchema !== undefined) {
         throw new Error("Unexpected turn input");
       }
       reply({});
-      send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
+      lookup("blocked", { kind: "issue", number: 17 }, mode === "workspaceWrite" ? "other-thread" : "test-thread");
+      if (mode === "workspaceWrite") {
+        lookup("invalid", { kind: "issue", number: 17, repository: "other/repo" });
+        lookup("issue", { kind: "issue", number: 17 });
+        lookup("pull_request", { kind: "pull_request", number: 34 });
+      }
+    }
+    if (request.id === "blocked") {
+      if (request.error?.message !== "Request unavailable") throw new Error("Expected lookup rejection");
+      if (mode === "readOnly") refresh();
+    }
+    if (request.id === "invalid") {
+      if (request.result?.success !== false) throw new Error("Expected invalid arguments to fail");
+    }
+    if (request.id === "issue" || request.id === "pull_request") {
+      const text = request.result?.contentItems[0]?.text;
+      if (request.result?.success !== true || JSON.parse(text).title !== request.id || text.includes("checkout-token"))
+        throw new Error("Unexpected GitHub tool response");
+      if (++githubResponses === 2) refresh();
     }
     if (request.id === "refresh") {
       if (
@@ -113,7 +146,7 @@ function launchStub(
 }
 
 test.for(["readOnly", "workspaceWrite"] as const)(
-  "probes the %s sandbox and refreshes credentials without exposing them in the reply",
+  "probes the %s sandbox, scopes GitHub reads and refreshes credentials",
   async (mode) => {
     const job = testJob();
     if (mode === "workspaceWrite") {
@@ -125,8 +158,27 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       };
     }
     const agent = createCodexAgent(launchStub(mode), async (url, init) => {
-      expect(String(url)).toBe(job.refresh.url);
       const headers = new Headers(init?.headers);
+      if (String(url) !== job.refresh.url) {
+        expect(job.checkout).toBeDefined();
+        expect(init?.method).toBe("GET");
+        expect(init?.redirect).toBe("error");
+        expect(headers.get("Authorization")).toBe("Bearer checkout-token");
+        const issue =
+          String(url) === "https://api.github.com/repos/owner/repo/issues/17";
+        if (!issue)
+          expect(String(url)).toBe(
+            "https://api.github.com/repos/owner/repo/pulls/34",
+          );
+        return Response.json({
+          number: issue ? 17 : 34,
+          title: issue ? "issue" : "pull_request",
+          state: "open",
+          body: null,
+          html_url: "https://github.com/owner/repo",
+          unexpected: "checkout-token",
+        });
+      }
       expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
       expect(headers.get("X-Tailos-Access-Version")).toBe(
         job.access.accessVersion,

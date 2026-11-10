@@ -25,9 +25,10 @@ export class CodexRpc {
   private nextId = 0;
   private failure?: Error;
   onNotification: (method: string, params: unknown) => void = () => {};
-  onRequest: (method: string) => Promise<unknown> = async () => {
-    throw new Error("Unsupported request");
-  };
+  onRequest: (method: string, params: unknown) => Promise<unknown> =
+    async () => {
+      throw new Error("Unsupported request");
+    };
   onFailure: (error: Error) => void = () => {};
 
   constructor(child: CodexProcess) {
@@ -49,7 +50,7 @@ export class CodexRpc {
       const message = v.parse(messageSchema, JSON.parse(line));
       if (message.method && message.id !== undefined) {
         const id = message.id;
-        void this.onRequest(message.method)
+        void this.onRequest(message.method, message.params)
           .then(
             (result) => this.send({ id, result }),
             () =>

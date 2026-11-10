@@ -6,6 +6,11 @@ import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import { AgentSandboxUnavailable, type AgentAdapter } from "./agent.ts";
 import { CodexRpc, type CodexProcess } from "./codex-rpc.ts";
+import {
+  getGitHubItem,
+  githubTool,
+  githubToolCallSchema,
+} from "./github-tool.ts";
 
 const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
 const sandboxProbeSchema = v.object({
@@ -48,6 +53,7 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
         PATH: process.env.PATH,
         CODEX_HOME: directory,
         npm_config_verify_deps_before_run: "false",
+        pnpm_config_verify_deps_before_run: "false",
       },
       stdio: ["pipe", "pipe", "ignore"],
     },
@@ -113,7 +119,13 @@ async function runTurn(
 
   const completed = new Promise<void>((resolve, reject) => {
     rpc.onFailure = reject;
-    rpc.onRequest = async (method) => {
+    rpc.onRequest = async (method, params) => {
+      if (method === "item/tool/call" && job.checkout && threadId) {
+        const call = v.parse(githubToolCallSchema, params);
+        if (call.threadId !== threadId)
+          throw new Error("Unexpected tool thread");
+        return getGitHubItem(job.checkout, call.arguments, signal, http);
+      }
       if (method !== "account/chatgptAuthTokens/refresh")
         throw new Error("Interactive requests are disabled");
 
@@ -188,6 +200,7 @@ async function runTurn(
         ephemeral: true,
         approvalPolicy: "never",
         sandbox: job.checkout ? "workspace-write" : "read-only",
+        ...(job.checkout && { dynamicTools: [githubTool] }),
       }),
     );
     threadId = thread.thread.id;
@@ -198,7 +211,11 @@ async function runTurn(
           type: "text",
           text: job.checkout
             ? job.prompt +
-              "\n\nUse the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
+              "\n\nUse tailos_github_get to look up issues or pull requests in the target repository when needed. " +
+              "Use the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
+              "For pnpm repositories, run /opt/tailos-checks/node_modules/.bin/pnpm --version from outside the checkout to check the Runner's bundled version. " +
+              "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
+              "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
               "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
               "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
               "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."

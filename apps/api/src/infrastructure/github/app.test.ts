@@ -138,7 +138,7 @@ test("scopes app grants to one repository and protects the default branch and gi
   expect(permissions).toStrictEqual([
     { contents: "read", issues: "read" },
     { contents: "read", issues: "read" },
-    { contents: "read" },
+    { contents: "read", issues: "read", pull_requests: "read" },
   ]);
 });
 

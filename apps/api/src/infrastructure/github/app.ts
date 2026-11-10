@@ -177,7 +177,11 @@ export class GitHubApp {
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
       );
       return {
-        ...(await this.token(target, { contents: "read" })),
+        ...(await this.token(target, {
+          contents: "read",
+          issues: "read",
+          pull_requests: "read",
+        })),
         baseSha: base.object.sha,
         branch: workBranchFor(target, runId),
       };

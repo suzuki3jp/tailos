@@ -1,9 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { apiOrigin } from "../../api-origin.ts";
-import { api } from "../api";
-import { RequestState } from "../request-state";
+import { apiOrigin } from "@/api-origin.ts";
+import { api } from "@/app/api";
+import { RequestState } from "@/app/request-state";
 
 export function Account() {
   const account = useQuery({

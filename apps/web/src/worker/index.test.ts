@@ -1,12 +1,12 @@
 import { afterEach, assert, expect, test, vi } from "vitest";
-import worker from "./index.ts";
+import worker from "@/worker/index.ts";
 
 const render = vi.hoisted(() =>
   vi.fn<(request: Request) => Promise<Response>>(),
 );
 
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
-vi.mock("../api-origin.ts", () => ({
+vi.mock("@/api-origin.ts", () => ({
   apiOrigin: "https://api.tailos.example",
 }));
 

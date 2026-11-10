@@ -1,10 +1,13 @@
 import { expect, test, vi } from "vitest";
 
-import { createTestBindings, createTestDb } from "../d1/testing.ts";
-import { admitTrigger } from "../d1/trigger-admission.ts";
-import { hashRunLease, newRunLease } from "../auth/run-lease.ts";
-import { GitHubApp } from "../github/app.ts";
-import { RunnerContainer } from "./runner-container.ts";
+import {
+  createTestBindings,
+  createTestDb,
+} from "@/infrastructure/d1/testing.ts";
+import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
+import { GitHubApp } from "@/infrastructure/github/app.ts";
+import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {

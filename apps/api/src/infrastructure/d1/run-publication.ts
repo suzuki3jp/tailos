@@ -2,7 +2,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type {
   LegacyPublication,
   PendingPublication,
-} from "../../application/runs/publication.ts";
+} from "@/application/runs/publication.ts";
 
 export async function stageRunPublication(
   db: D1Database,

@@ -1,29 +1,29 @@
-import { validSignature } from "../infrastructure/github/webhook-signature.ts";
-import { createOperatorAuth } from "../presentation/http/middlewares/operator.ts";
+import { validSignature } from "@/infrastructure/github/webhook-signature.ts";
+import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts";
 import {
   createLoginAuth,
   findOperatorUserId,
   getOperatorSession,
-} from "../infrastructure/auth/login.ts";
-import { findActiveRun } from "../infrastructure/d1/active-run.ts";
-import { findOwnedRun } from "../infrastructure/d1/owned-runs.ts";
-import { readRunArtifact } from "../infrastructure/r2/run-artifacts.ts";
-import { checkRunnerHealth } from "../infrastructure/cloudflare/runner-health.ts";
-import { runStarter } from "../infrastructure/cloudflare/run-start.ts";
-import { createRunnerHealthRoutes } from "../presentation/http/handlers/runner-health/runner-health.ts";
-import { admitTrigger } from "../infrastructure/d1/trigger-admission.ts";
+} from "@/infrastructure/auth/login.ts";
+import { findActiveRun } from "@/infrastructure/d1/active-run.ts";
+import { findOwnedRun } from "@/infrastructure/d1/owned-runs.ts";
+import { readRunArtifact } from "@/infrastructure/r2/run-artifacts.ts";
+import { checkRunnerHealth } from "@/infrastructure/cloudflare/runner-health.ts";
+import { runStarter } from "@/infrastructure/cloudflare/run-start.ts";
+import { createRunnerHealthRoutes } from "@/presentation/http/handlers/runner-health/runner-health.ts";
+import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { Hono } from "hono";
 import type { ApplyGlobalResponse } from "hono/client";
 import { cors } from "hono/cors";
-import { createGithubWebhook } from "../presentation/http/handlers/github-webhook/github-webhook.ts";
-import { createConnectRoutes } from "../presentation/http/handlers/connect/connect.ts";
-import { createLoginRoutes } from "../presentation/http/handlers/login/login.ts";
-import { createRefreshRoutes } from "../presentation/http/handlers/refresh/refresh.ts";
-import { type Bindings } from "../bindings.ts";
-import { createRunRoutes } from "../presentation/http/handlers/runs/runs.ts";
-import { createSessionRoutes } from "../presentation/http/handlers/sessions/sessions.ts";
-import { d1Sessions } from "../infrastructure/d1/sessions.ts";
-import { createTriggerRoutes } from "../presentation/http/handlers/triggers/triggers.ts";
+import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
+import { createConnectRoutes } from "@/presentation/http/handlers/connect/connect.ts";
+import { createLoginRoutes } from "@/presentation/http/handlers/login/login.ts";
+import { createRefreshRoutes } from "@/presentation/http/handlers/refresh/refresh.ts";
+import { type Bindings } from "@/bindings.ts";
+import { createRunRoutes } from "@/presentation/http/handlers/runs/runs.ts";
+import { createSessionRoutes } from "@/presentation/http/handlers/sessions/sessions.ts";
+import { d1Sessions } from "@/infrastructure/d1/sessions.ts";
+import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/triggers.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 

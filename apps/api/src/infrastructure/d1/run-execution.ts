@@ -4,11 +4,11 @@ import {
   type RunInput,
   type RunStatus,
   type RunStore,
-} from "../../application/runs/advance-run.ts";
+} from "@/application/runs/advance-run.ts";
 import {
   writeRunArtifacts,
   type RunArtifactsBucket,
-} from "../r2/run-artifacts.ts";
+} from "@/infrastructure/r2/run-artifacts.ts";
 
 function d1RunStore(db: D1Database): RunStore {
   return {

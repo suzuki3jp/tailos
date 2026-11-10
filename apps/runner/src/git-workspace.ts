@@ -12,7 +12,7 @@ import {
   type RunnerPublication,
 } from "@tailos/core/runner";
 import * as v from "valibot";
-import { PublicationFailed, type AgentResult } from "./agent.ts";
+import { PublicationFailed, type AgentResult } from "@/agent.ts";
 
 const exec = promisify(execFile);
 type Checkout = NonNullable<

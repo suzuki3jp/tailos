@@ -1,8 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Providers } from "./providers";
-import "./styles.css";
+import { Providers } from "@/app/providers";
+import "@/app/styles.css";
 
 export const metadata = {
   title: "Tailos",

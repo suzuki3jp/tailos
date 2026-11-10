@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, test, vi, type TestContext } from "vitest";
-import { runInGitWorkspace } from "./git-workspace.ts";
+import { runInGitWorkspace } from "@/git-workspace.ts";
 
 async function repository(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "tailos-git-test-"));

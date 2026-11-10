@@ -1,16 +1,24 @@
 import {
   beginPublicationReconciliation,
   stageRunPublication,
-} from "../d1/run-publication.ts";
+} from "@/infrastructure/d1/run-publication.ts";
 import {
   pendingPublication,
   publicationDeadline,
   type LegacyPublication,
   type PendingPublication,
-} from "../../application/runs/publication.ts";
-import { GitHubApp } from "../github/app.ts";
-import { seal, unseal, type Sealed } from "../auth/sealed-store.ts";
-import { hashRunLease, matchRunLease, newRunLease } from "../auth/run-lease.ts";
+} from "@/application/runs/publication.ts";
+import { GitHubApp } from "@/infrastructure/github/app.ts";
+import {
+  seal,
+  unseal,
+  type Sealed,
+} from "@/infrastructure/auth/sealed-store.ts";
+import {
+  hashRunLease,
+  matchRunLease,
+  newRunLease,
+} from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
   fileChangesSchema,
@@ -21,12 +29,12 @@ import {
   type RepositoryTarget,
 } from "@tailos/core/runner";
 import * as v from "valibot";
-import type { Bindings } from "../../bindings.ts";
-import { advanceRun } from "../d1/run-execution.ts";
+import type { Bindings } from "@/bindings.ts";
+import { advanceRun } from "@/infrastructure/d1/run-execution.ts";
 import {
   type RunnerDriver,
   type RunRequest,
-} from "../../application/runs/advance-run.ts";
+} from "@/application/runs/advance-run.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 

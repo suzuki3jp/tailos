@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory";
-import type { Bindings } from "../../../bindings.ts";
+import type { Bindings } from "@/bindings.ts";
 
 export const loginOrigin = createMiddleware<{ Bindings: Bindings }>(
   async (c, next) => {

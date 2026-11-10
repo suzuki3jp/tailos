@@ -1,6 +1,6 @@
 import { assert, expect, test } from "vitest";
-import { createTestDb } from "../../../../infrastructure/d1/testing.ts";
-import app from "../../../../bootstrap/http.ts";
+import { createTestDb } from "@/infrastructure/d1/testing.ts";
+import app from "@/bootstrap/http.ts";
 
 test("a configured operator can create and read a standalone session in message order", async (t) => {
   const db = await createTestDb(t);

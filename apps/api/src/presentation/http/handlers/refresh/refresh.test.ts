@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
-import { createTestDb } from "../../../../infrastructure/d1/testing.ts";
-import app from "../../../../bootstrap/http.ts";
-import { admitTrigger } from "../../../../infrastructure/d1/trigger-admission.ts";
-import { newRunLease } from "../../../../infrastructure/auth/run-lease.ts";
+import { createTestDb } from "@/infrastructure/d1/testing.ts";
+import app from "@/bootstrap/http.ts";
+import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+import { newRunLease } from "@/infrastructure/auth/run-lease.ts";
 
 test("a refresh request reaches the run's lease verifier only for active runs", async (t) => {
   const db = await createTestDb(t);

@@ -1,4 +1,4 @@
-import type { WriteRunArtifacts } from "./artifacts.ts";
+import type { WriteRunArtifacts } from "@/application/runs/artifacts.ts";
 import {
   executionContextSchema,
   type RunnerEvent,
@@ -10,7 +10,7 @@ import {
   pendingPublication,
   publicationDeadline,
   type PendingPublication,
-} from "./publication.ts";
+} from "@/application/runs/publication.ts";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunInput = {

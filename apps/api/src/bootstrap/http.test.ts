@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import app from "@/bootstrap/http.ts";
+import app from "#api/bootstrap/http.ts";
 
 test("the Worker serves the health endpoint", async () => {
   const response = await app.request("/health");

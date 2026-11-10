@@ -3,11 +3,14 @@ import { expect, test, vi } from "vitest";
 import {
   createTestBindings,
   createTestDb,
-} from "@/infrastructure/d1/testing.ts";
-import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
-import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
-import { GitHubApp } from "@/infrastructure/github/app.ts";
-import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+} from "#api/infrastructure/d1/testing.ts";
+import { admitTrigger } from "#api/infrastructure/d1/trigger-admission.ts";
+import {
+  hashRunLease,
+  newRunLease,
+} from "#api/infrastructure/auth/run-lease.ts";
+import { GitHubApp } from "#api/infrastructure/github/app.ts";
+import { RunnerContainer } from "#api/infrastructure/cloudflare/runner-container.ts";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {

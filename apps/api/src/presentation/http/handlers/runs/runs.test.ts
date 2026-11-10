@@ -1,9 +1,9 @@
 import { assert, expect, test } from "vitest";
-import { createTestBindings } from "@/infrastructure/d1/testing.ts";
-import app from "@/bootstrap/http.ts";
-import { smokeOwnerId } from "@/presentation/http/middlewares/smoke-auth.ts";
-import { advanceRun } from "@/infrastructure/d1/run-execution.ts";
-import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+import { createTestBindings } from "#api/infrastructure/d1/testing.ts";
+import app from "#api/bootstrap/http.ts";
+import { smokeOwnerId } from "#api/presentation/http/middlewares/smoke-auth.ts";
+import { advanceRun } from "#api/infrastructure/d1/run-execution.ts";
+import { admitTrigger } from "#api/infrastructure/d1/trigger-admission.ts";
 
 const trigger = {
   source: "test",

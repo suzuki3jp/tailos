@@ -2,6 +2,9 @@
   "name": "@tailos/core",
   "private": true,
   "type": "module",
+  "imports": {
+    "#core/*": "./src/*"
+  },
   "exports": {
     "./runner": "./src/runner.ts"
   },

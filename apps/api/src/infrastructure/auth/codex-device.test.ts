@@ -3,8 +3,8 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   CodexDeviceAuth,
   ReauthenticationRequired,
-} from "@/infrastructure/auth/codex-device.ts";
-import { TransientDevicePollError } from "@/application/auth/device.ts";
+} from "#api/infrastructure/auth/codex-device.ts";
+import { TransientDevicePollError } from "#api/application/auth/device.ts";
 
 test("exchanges a device code, verifies its account, and preserves rotated credentials", async () => {
   const issuer = "https://auth.openai.com";

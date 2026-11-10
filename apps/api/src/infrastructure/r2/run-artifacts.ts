@@ -1,4 +1,4 @@
-import type { TerminalResult } from "@/application/runs/artifacts.ts";
+import type { TerminalResult } from "#api/application/runs/artifacts.ts";
 import { runnerEventSchema, type RunnerEvent } from "@tailos/core/runner";
 import * as v from "valibot";
 

@@ -3,9 +3,9 @@ import type {
   DurableObjectNamespace,
 } from "@cloudflare/workers-types";
 
-import type { ConnectionControl } from "@/application/auth/device.ts";
-import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
-import type { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+import type { ConnectionControl } from "#api/application/auth/device.ts";
+import type { RunArtifactsBucket } from "#api/infrastructure/r2/run-artifacts.ts";
+import type { RunnerContainer } from "#api/infrastructure/cloudflare/runner-container.ts";
 
 export type Bindings = {
   DB: D1Database;

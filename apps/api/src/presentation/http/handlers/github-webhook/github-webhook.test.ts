@@ -3,9 +3,9 @@ import { assert, expect, test, vi } from "vitest";
 import {
   createTestOperator,
   testLoginBindings,
-} from "@/infrastructure/auth/testing.ts";
-import { createTestDb } from "@/infrastructure/d1/testing.ts";
-import app from "@/bootstrap/http.ts";
+} from "#api/infrastructure/auth/testing.ts";
+import { createTestDb } from "#api/infrastructure/d1/testing.ts";
+import app from "#api/bootstrap/http.ts";
 
 test("accepts a signed private issue event once and rejects unauthorized actors", async (t) => {
   const db = await createTestDb(t);

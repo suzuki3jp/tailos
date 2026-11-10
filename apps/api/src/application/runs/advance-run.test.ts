@@ -1,11 +1,11 @@
 import { assert, expect, test } from "vitest";
-import { createTestDb } from "@/infrastructure/d1/testing.ts";
-import { advanceRun } from "@/infrastructure/d1/run-execution.ts";
+import { createTestDb } from "#api/infrastructure/d1/testing.ts";
+import { advanceRun } from "#api/infrastructure/d1/run-execution.ts";
 import {
   type RunnerDriver,
   type RunRequest,
-} from "@/application/runs/advance-run.ts";
-import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+} from "#api/application/runs/advance-run.ts";
+import { admitTrigger } from "#api/infrastructure/d1/trigger-admission.ts";
 
 const unexpectedPoll = async () => {
   throw new Error("Unexpected poll");

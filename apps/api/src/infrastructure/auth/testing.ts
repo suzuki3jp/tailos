@@ -1,9 +1,9 @@
 import { assert } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 import { drizzle } from "drizzle-orm/d1";
-import { authAccounts, users } from "@/infrastructure/d1/schema.ts";
-import type { Bindings } from "@/bindings.ts";
-import { createLoginAuth } from "@/infrastructure/auth/login.ts";
+import { authAccounts, users } from "#api/infrastructure/d1/schema.ts";
+import type { Bindings } from "#api/bindings.ts";
+import { createLoginAuth } from "#api/infrastructure/auth/login.ts";
 
 export function testLoginBindings(DB: Bindings["DB"]) {
   return {

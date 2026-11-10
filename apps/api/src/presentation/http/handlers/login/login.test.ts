@@ -1,10 +1,10 @@
 import { assert, expect, test, vi } from "vitest";
-import { createTestDb } from "@/infrastructure/d1/testing.ts";
-import app from "@/bootstrap/http.ts";
+import { createTestDb } from "#api/infrastructure/d1/testing.ts";
+import app from "#api/bootstrap/http.ts";
 import {
   createLoginAuth,
   findOperatorUserId,
-} from "@/infrastructure/auth/login.ts";
+} from "#api/infrastructure/auth/login.ts";
 
 test("GitHub login authenticates the configured account and persists only the Tailos session", async (t) => {
   const DB = await createTestDb(t);

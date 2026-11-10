@@ -2,6 +2,9 @@
   "name": "@tailos/api",
   "private": true,
   "type": "module",
+  "imports": {
+    "#api/*": "./src/*"
+  },
   "exports": {
     "./browser": {
       "types": "./src/bootstrap/http.ts"

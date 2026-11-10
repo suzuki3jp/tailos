@@ -1,8 +1,8 @@
-import { listDueRunIds } from "@/infrastructure/d1/run-recovery.ts";
+import { listDueRunIds } from "#api/infrastructure/d1/run-recovery.ts";
 import { expect, test } from "vitest";
-import { createTestDb } from "@/infrastructure/d1/testing.ts";
-import { rescheduleDueRuns } from "@/application/runs/recovery.ts";
-import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+import { createTestDb } from "#api/infrastructure/d1/testing.ts";
+import { rescheduleDueRuns } from "#api/application/runs/recovery.ts";
+import { admitTrigger } from "#api/infrastructure/d1/trigger-admission.ts";
 
 test("reschedules overdue work after the original alarm request was lost", async (t) => {
   const db = await createTestDb(t);

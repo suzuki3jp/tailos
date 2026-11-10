@@ -60,7 +60,7 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 対象リポジトリに App をインストールし、Repository permissions を **Issues: Read**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://api.tailos.app/webhooks/github` とし、`Issues` イベントを購読する。
 
-既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents 権限に限定される。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
+既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents・Issues・Pull requests の読み取りに限定される。Agent は Runner のツールを使って Issue と PR を番号で参照できる。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 
 デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果に含まれる `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。
 

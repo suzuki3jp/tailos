@@ -29,8 +29,8 @@ flowchart LR
     DO -->|内部 HTTP| Runner[apps/runner · Cloudflare Containers]
     DO --> D1
     DO --> R2[(R2 · ログと成果物)]
-    Runner -->|作業ブランチへ push| GitHub
-    API -->|PR 作成| GitHub
+    Runner -->|検査済み差分を預ける| API
+    API -->|署名付きコミットと PR を作成| GitHub
 ```
 
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
@@ -118,7 +118,7 @@ Run 完了時は、確定した Agent の返答と Run の結果を一緒に保�
 
 ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Meguri が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
 
-GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命のインストールトークンを渡し、取得と作業ブランチへの push を許可する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
+GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命の読み取りトークンを渡す。Runner はステージ済みスナップショットのコピーで `pnpm run format:check` と `pnpm run lint` を実行する。API は検査済み差分を使って GitHub App で署名付きコミットを作り、署名・親・tree を照合してから PR を作る。英語の Conventional Commits の見出しをコミットと PR で共有する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 
 ## ローカル開発とデプロイ
 
@@ -149,5 +149,5 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 | フェーズ | 作るもの | 完了条件 |
 | --- | --- | --- |
 | 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
-| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチへの push と PR 作成を行う | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
+| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチに署名付きコミットを作成し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
 | 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `meguri.suzuki3.jp` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |

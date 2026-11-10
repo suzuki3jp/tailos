@@ -1,8 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import {
+  checkedPublicationSchema,
+  maxPublicationBytes,
   runnerJobSchema,
   runnerStatusSchema,
+  type CheckedPublication,
   type RunnerEvent,
   type RunnerJob,
   type RunnerStatus,
@@ -11,9 +14,10 @@ import * as v from "valibot";
 import {
   AgentSandboxUnavailable,
   fakeAgent,
+  PublicationFailed,
   type AgentAdapter,
 } from "./agent.ts";
-import { codexAgent } from "./codex-agent.ts";
+import { checkCodexWorkspace, codexAgent } from "./codex-agent.ts";
 import { runInGitWorkspace } from "./git-workspace.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
@@ -44,13 +48,22 @@ function json(response: ServerResponse, code: number, body: object) {
 
 async function stagePublication(
   job: Extract<RunnerJob, { engine: "codex" }>,
-  work: { branch: string; sha: string; reply: string },
+  work: Omit<CheckedPublication, "kind" | "events">,
   events: RunnerEvent[],
   signal: AbortSignal,
 ) {
   const url = new URL("publication", job.refresh.url);
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("Invalid publication URL");
+  const body = JSON.stringify(
+    v.parse(checkedPublicationSchema, {
+      kind: "checked",
+      ...work,
+      events: [...events, { type: "job_succeeded", at: Date.now() }],
+    }),
+  );
+  if (Buffer.byteLength(body) > maxPublicationBytes)
+    throw new PublicationFailed("unsupported_changes");
   const response = await fetch(url, {
     method: "POST",
     redirect: "error",
@@ -58,11 +71,7 @@ async function stagePublication(
       Authorization: `Bearer ${job.refresh.bearer}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      kind: "prepared",
-      ...work,
-      events: [...events, { type: "job_succeeded", at: Date.now() }],
-    }),
+    body,
     signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
   });
   await response.body?.cancel();
@@ -87,10 +96,10 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
             input.checkout,
             signal,
             (cwd) => agent.run(input, signal, cwd),
-            undefined,
+            (cwd) => checkCodexWorkspace(cwd, signal),
             (work) => stagePublication(input, work, events, signal),
           )
-        : { reply: await agent.run(input, signal) };
+        : { reply: (await agent.run(input, signal)).reply };
     signal.throwIfAborted();
     job.state = v.parse(runnerStatusSchema, {
       status: "succeeded",
@@ -102,7 +111,9 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
     const errorCode =
       error instanceof AgentSandboxUnavailable
         ? "sandbox_unavailable"
-        : "agent_failed";
+        : error instanceof PublicationFailed
+          ? error.code
+          : "agent_failed";
     job.state = {
       status: "failed",
       errorCode: signal.aborted ? "deadline_exceeded" : errorCode,

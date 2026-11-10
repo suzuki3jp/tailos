@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { pendingPublicationSchema } from "../../application/runs/publication.ts";
+import { legacyPublicationSchema } from "../../application/runs/publication.ts";
+import {
+  checkedPublicationSchema,
+  maxPublicationBytes,
+} from "@meguri/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "../../bindings.ts";
 
@@ -40,7 +44,7 @@ export function createRefreshRoutes(
 
   refreshRoutes.post(
     "/:runId/publication",
-    bodyLimit({ maxSize: 64 * 1024 }),
+    bodyLimit({ maxSize: maxPublicationBytes }),
     async (c) => {
       c.header("Cache-Control", "no-store");
       const runId = v.safeParse(uuid, c.req.param("runId"));
@@ -51,10 +55,10 @@ export function createRefreshRoutes(
         return c.json({ error: "invalid_lease" }, 401);
 
       const work = v.safeParse(
-        pendingPublicationSchema,
+        v.union([checkedPublicationSchema, legacyPublicationSchema]),
         await c.req.json().catch(() => null),
       );
-      if (!work.success || work.output.kind !== "prepared")
+      if (!work.success || work.output.kind === "pushed")
         return c.json({ error: "invalid_publication" }, 400);
       try {
         const run = await findActiveRun(c.env, runId.output, Date.now());

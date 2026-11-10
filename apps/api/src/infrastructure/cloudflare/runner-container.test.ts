@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 
-import { createTestDb } from "../d1/testing.ts";
+import { createTestBindings, createTestDb } from "../d1/testing.ts";
 import { admitTrigger } from "../d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "../auth/run-lease.ts";
 import { GitHubApp } from "../github/app.ts";
@@ -317,4 +317,165 @@ test("keeps polling after a temporary status failure before the prepared Run dea
       .bind(runId)
       .first("status"),
   ).toBe("running");
+});
+
+test("publishes the checked snapshot after the Runner is gone and cleans up its staged files", async (t) => {
+  const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
+  const target = {
+    repository: "owner/private",
+    repositoryId: 42,
+    installationId: 19,
+    issueNumber: 8,
+    defaultBranch: "main",
+    triggerLabel: "meguri:run",
+  };
+  const { runId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "delivery",
+    concurrencyKey: "target",
+    ownerId: "owner",
+    prompt: "Make changes",
+    timeoutMs: 60_000,
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "codex",
+      connectionId: "codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
+      repository: target,
+    }),
+  });
+  const work = {
+    kind: "checked" as const,
+    branch: `meguri/issue-8/${runId}`,
+    baseSha: "a".repeat(40),
+    tree: "b".repeat(40),
+    headline: "fix(api): validate input",
+    reply: "Done",
+    events: [{ type: "job_succeeded" as const, at: Date.now() }],
+    changes: {
+      additions: [{ path: "handler.ts", contents: "Cg==" }],
+      deletions: [],
+    },
+  };
+  const { branch, baseSha } = work;
+  await DB.prepare(
+    "UPDATE runs SET status = 'running', step_state = ? WHERE id = ?",
+  )
+    .bind(JSON.stringify({ version: 2, branch, baseSha }), runId)
+    .run();
+
+  const bearer = newRunLease();
+  const values = new Map<string, unknown>([
+    ["runId", runId],
+    [
+      "refreshLease",
+      {
+        runId,
+        digest: await hashRunLease(bearer),
+        expiresAt: Date.now() + 60_000,
+      },
+    ],
+  ]);
+  const records = {
+    async get(key: string) {
+      return values.get(key);
+    },
+    async put(key: string, value: unknown) {
+      values.set(key, value);
+    },
+    async delete(key: string) {
+      return values.delete(key);
+    },
+  };
+  const storage = {
+    ...records,
+    async transaction<T>(
+      fn: (store: typeof records) => Promise<T>,
+    ): Promise<T> {
+      return fn(records);
+    },
+    async setAlarm() {},
+  };
+  const runner = new RunnerContainer(
+    { storage } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS,
+      MEGURI_GH_APP_ID: "100",
+      MEGURI_GH_APP_PRIVATE_KEY: "unused-test-key",
+    },
+  );
+  expect(await runner.stagePublication(runId, newRunLease(), work)).toBe(false);
+  expect(
+    await runner.stagePublication(runId, bearer, {
+      ...work,
+      baseSha: "e".repeat(40),
+    }),
+  ).toBe(false);
+  expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
+  expect(
+    await runner.stagePublication(runId, bearer, {
+      ...work,
+      tree: "e".repeat(40),
+    }),
+  ).toBe(false);
+  expect(
+    await runner.stagePublication(runId, bearer, {
+      kind: "prepared",
+      branch,
+      sha: "d".repeat(40),
+      reply: "Legacy",
+      events: [],
+    }),
+  ).toBe(false);
+
+  const sha = "c".repeat(40);
+  const commit = vi
+    .spyOn(GitHubApp.prototype, "commitCheckedWork")
+    .mockRejectedValueOnce(new Error("Signing response unavailable"))
+    .mockResolvedValueOnce(sha);
+  const url = "https://github.com/owner/private/pull/9";
+  const publish = vi
+    .spyOn(GitHubApp.prototype, "publish")
+    .mockResolvedValue(url);
+  t.onTestFinished(() => {
+    commit.mockRestore();
+    publish.mockRestore();
+  });
+  await runner.alarm();
+  expect(publish).not.toHaveBeenCalled();
+  await runner.alarm();
+  expect(commit).toHaveBeenLastCalledWith(
+    target,
+    runId,
+    expect.objectContaining(work),
+    expect.any(Number),
+  );
+  expect(publish).toHaveBeenCalledExactlyOnceWith(
+    target,
+    runId,
+    {
+      branch,
+      sha,
+      headline: work.headline,
+    },
+    expect.any(Number),
+  );
+  const stored = await DB.prepare(
+    "SELECT status, result FROM runs WHERE id = ?",
+  )
+    .bind(runId)
+    .first<{ status: string; result: string }>();
+  expect(stored?.status).toBe("succeeded");
+  expect(JSON.parse(stored!.result)).toMatchObject({
+    kind: "pull_request",
+    sha,
+    branch,
+    url,
+  });
+  const objects = await RUN_ARTIFACTS.list({
+    prefix: `meguri-api/v1/runs/${runId}/`,
+  });
+  expect(objects.objects.map(({ key }) => key)).toEqual([
+    `meguri-api/v1/runs/${runId}/execution.json`,
+  ]);
 });

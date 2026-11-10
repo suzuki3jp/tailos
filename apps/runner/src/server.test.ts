@@ -53,7 +53,7 @@ test("executes the selected agent once and rejects a different job", async (t) =
   const origin = await listen(t, {
     async run(job) {
       calls++;
-      return `Received ${job.prompt}`;
+      return { reply: `Received ${job.prompt}` };
     },
   });
   const job: RunnerJob = {
@@ -89,7 +89,7 @@ test("cancels an active adapter at the job deadline", async (t) => {
       signal = deadline;
       await once(deadline, "abort");
       deadline.throwIfAborted();
-      return "unexpected";
+      return { reply: "unexpected" };
     },
   });
   const job: RunnerJob = {
@@ -117,7 +117,7 @@ test("cancels an active adapter at the job deadline", async (t) => {
 test("reports out-of-contract replies as agent failures", async (t) => {
   const origin = await listen(t, {
     async run() {
-      return "";
+      return { reply: "" };
     },
   });
   const job: RunnerJob = {

@@ -7,10 +7,57 @@ const repositoryName = v.pipe(
 );
 export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
-const workBranch = v.pipe(
+export const workBranch = v.pipe(
   v.string(),
   v.regex(/^meguri\/issue-[1-9][0-9]*\/[a-f0-9-]{36}$/),
 );
+export const changeHeadline = v.pipe(
+  v.string(),
+  v.maxLength(100),
+  v.check((headline) => !/[\r\n]/.test(headline)),
+  v.regex(
+    /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([a-z0-9./_-]+\))?!?: [!-~](?:[ -~]*[!-~])?$/,
+  ),
+);
+const gitPath = v.pipe(
+  v.string(),
+  v.maxLength(4096),
+  v.check((path) =>
+    path
+      .split("/")
+      .every(
+        (part) =>
+          part !== "" &&
+          part !== "." &&
+          part !== ".." &&
+          part.toLowerCase() !== ".git" &&
+          !part.includes("\0"),
+      ),
+  ),
+);
+export const maxPublicationBytes = 4 * 1024 * 1024;
+export const fileChangesSchema = v.strictObject({
+  additions: v.pipe(
+    v.array(
+      v.strictObject({
+        path: gitPath,
+        contents: v.pipe(
+          v.string(),
+          v.regex(
+            /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
+          ),
+        ),
+      }),
+    ),
+    v.maxLength(512),
+  ),
+  deletions: v.pipe(
+    v.array(v.strictObject({ path: gitPath })),
+    v.maxLength(512),
+  ),
+});
+export type FileChanges = v.InferOutput<typeof fileChangesSchema>;
+
 const repositoryTarget = v.strictObject({
   repository: repositoryName,
   repositoryId: positiveId,
@@ -82,6 +129,7 @@ const events = v.pipe(v.array(runnerEventSchema), v.maxLength(20));
 
 const runnerPublicationSchema = v.variant("kind", [
   v.strictObject({ kind: v.literal("no_changes") }),
+  v.strictObject({ kind: v.literal("checked") }),
   v.strictObject({
     kind: v.literal("pushed"),
     branch: workBranch,
@@ -103,6 +151,10 @@ export const runnerStatusSchema = v.variant("status", [
       "agent_failed",
       "deadline_exceeded",
       "sandbox_unavailable",
+      "format_check_failed",
+      "lint_failed",
+      "invalid_change_headline",
+      "unsupported_changes",
     ]),
     events,
   }),
@@ -110,6 +162,21 @@ export const runnerStatusSchema = v.variant("status", [
 
 export type RunnerJob = v.InferOutput<typeof runnerJobSchema>;
 export type RunnerStatus = v.InferOutput<typeof runnerStatusSchema>;
+
+export const checkedPublicationFields = {
+  kind: v.literal("checked"),
+  branch: workBranch,
+  baseSha: gitSha,
+  tree: gitSha,
+  headline: changeHeadline,
+  reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
+  events,
+};
+export const checkedPublicationSchema = v.strictObject({
+  ...checkedPublicationFields,
+  changes: fileChangesSchema,
+});
+export type CheckedPublication = v.InferOutput<typeof checkedPublicationSchema>;
 
 export type RunnerEvent = v.InferOutput<typeof runnerEventSchema>;
 

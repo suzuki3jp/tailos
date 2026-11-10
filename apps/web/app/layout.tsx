@@ -5,6 +5,16 @@ import "./styles.css";
 export const metadata = {
   title: "Tailos",
   robots: { index: false, follow: false },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      {
+        url: "/favicon-dark.ico",
+        sizes: "16x16 32x32 48x48",
+        media: "(prefers-color-scheme: dark)",
+      },
+    ],
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -13,11 +23,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <header className="border-b border-rule">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 px-5 py-2 sm:px-8">
-            <a
-              href="/"
-              className="inline-flex min-h-11 items-center text-lg font-semibold"
-            >
-              Tailos
+            <a href="/" className="inline-flex min-h-11 items-center">
+              <img
+                src="/tailos-wordmark.png"
+                alt="Tailos"
+                width={264}
+                height={158}
+                className="h-auto w-22"
+              />
             </a>
             <nav
               aria-label="メインメニュー"

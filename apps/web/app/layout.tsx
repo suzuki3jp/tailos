@@ -23,8 +23,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ja">
       <body>
-        <header className="border-b border-rule">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 px-5 py-2 sm:px-8">
+        <header className="h-11 border-b border-rule">
+          <div className="mx-auto flex h-full max-w-5xl items-center justify-between gap-x-6 px-5 sm:px-8">
             <Link href="/" className="inline-flex min-h-11 items-center">
               <Image
                 src="/tailos-wordmark.png"
@@ -32,7 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 width={88}
                 height={53}
                 loading="eager"
-                className="h-auto w-22"
+                className="h-9 w-auto"
               />
             </Link>
             <nav

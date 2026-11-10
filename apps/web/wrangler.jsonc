@@ -8,4 +8,5 @@
   "preview_urls": false,
   "routes": [{ "pattern": "tailos.app", "custom_domain": true }],
   "assets": { "binding": "ASSETS" },
+  "images": { "binding": "IMAGES" },
 }

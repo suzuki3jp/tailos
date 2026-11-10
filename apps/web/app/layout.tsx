@@ -1,3 +1,5 @@
+import Image from "next/image";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { Providers } from "./providers";
 import "./styles.css";
@@ -23,31 +25,32 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <header className="border-b border-rule">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 px-5 py-2 sm:px-8">
-            <a href="/" className="inline-flex min-h-11 items-center">
-              <img
+            <Link href="/" className="inline-flex min-h-11 items-center">
+              <Image
                 src="/tailos-wordmark.png"
                 alt="Tailos"
-                width={264}
-                height={158}
+                width={88}
+                height={53}
+                loading="eager"
                 className="h-auto w-22"
               />
-            </a>
+            </Link>
             <nav
               aria-label="メインメニュー"
               className="flex gap-5 text-sm text-muted"
             >
-              <a
+              <Link
                 href="/connect"
                 className="inline-flex min-h-11 items-center hover:text-ink"
               >
                 ChatGPT 接続
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/login"
                 className="inline-flex min-h-11 items-center hover:text-ink"
               >
                 アカウント
-              </a>
+              </Link>
             </nav>
           </div>
         </header>

@@ -1,7 +1,10 @@
 import { Hono } from "hono";
-import type { createOperatorAuth, OperatorEnv } from "./operator.ts";
-import type { Bindings } from "../../bindings.ts";
-import { codexConnectionId } from "../../application/auth/device.ts";
+import type {
+  createOperatorAuth,
+  OperatorEnv,
+} from "../../middlewares/operator.ts";
+import type { Bindings } from "../../../../bindings.ts";
+import { codexConnectionId } from "../../../../application/auth/device.ts";
 
 type ConnectEnv = {
   Bindings: Bindings;

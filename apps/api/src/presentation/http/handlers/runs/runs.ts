@@ -1,8 +1,8 @@
-import type { TerminalResult } from "../../application/runs/artifacts.ts";
+import type { TerminalResult } from "../../../../application/runs/artifacts.ts";
 import { Hono } from "hono";
 import * as v from "valibot";
-import { smokeAuth, smokeOwnerId } from "./smoke-auth.ts";
-import { type Bindings } from "../../bindings.ts";
+import { smokeAuth, smokeOwnerId } from "../../middlewares/smoke-auth.ts";
+import { type Bindings } from "../../../../bindings.ts";
 
 const runIdSchema = v.pipe(v.string(), v.uuid());
 const artifactSchema = v.picklist(["events.ndjson", "result.json"]);

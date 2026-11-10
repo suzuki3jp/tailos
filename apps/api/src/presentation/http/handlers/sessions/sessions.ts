@@ -1,14 +1,17 @@
 import {
   createSession,
   type SessionStore,
-} from "../../application/sessions/create-session.ts";
-import type { createOperatorAuth, OperatorEnv } from "./operator.ts";
+} from "../../../../application/sessions/create-session.ts";
+import type {
+  createOperatorAuth,
+  OperatorEnv,
+} from "../../middlewares/operator.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 
-import { smokeAuth, smokeOwnerId } from "./smoke-auth.ts";
-import { type Bindings } from "../../bindings.ts";
+import { smokeAuth, smokeOwnerId } from "../../middlewares/smoke-auth.ts";
+import { type Bindings } from "../../../../bindings.ts";
 
 const sessionInput = v.strictObject({
   messages: v.pipe(

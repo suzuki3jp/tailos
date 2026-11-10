@@ -4,7 +4,7 @@ import {
   gitSha,
   type CheckedPublication,
   type RepositoryTarget,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 
 const repoSchema = v.object({ id: v.number(), default_branch: v.string() });
@@ -52,7 +52,7 @@ export type GitHubCheckout = {
 };
 
 export const workBranchFor = (target: RepositoryTarget, runId: string) =>
-  `meguri/issue-${target.issueNumber}/${runId}`;
+  `tailos/issue-${target.issueNumber}/${runId}`;
 
 export class GitHubApp {
   private readonly config: GitHubConfig;
@@ -80,7 +80,7 @@ export class GitHubApp {
         Authorization: "Bearer " + token,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2026-03-10",
-        "User-Agent": "Meguri",
+        "User-Agent": "Tailos",
         "Content-Type": "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -235,7 +235,7 @@ export class GitHubApp {
       if (!response.ok) throw new Error("GitHub ref verification unavailable");
       return v.parse(refSchema, await response.json()).object.sha;
     };
-    const body = `Meguri run: ${runId}`;
+    const body = `Tailos run: ${runId}`;
     try {
       let sha = await readHead();
       if (sha === null) {
@@ -262,7 +262,7 @@ export class GitHubApp {
         const created = v.parse(
           commitMutationSchema,
           await this.json("/graphql", token, "POST", {
-            query: `mutation MeguriCommit($input: CreateCommitOnBranchInput!) {
+            query: `mutation TailosCommit($input: CreateCommitOnBranchInput!) {
               createCommitOnBranch(input: $input) { commit { oid } }
             }`,
             variables: {
@@ -357,7 +357,7 @@ export class GitHubApp {
             publication.headline ?? `Implement issue #${target.issueNumber}`,
           head: branch,
           base: target.defaultBranch,
-          body: `Closes #${target.issueNumber}\n\nCreated by Meguri run \`${runId}\`.`,
+          body: `Closes #${target.issueNumber}\n\nCreated by Tailos run \`${runId}\`.`,
         }),
       );
       if (

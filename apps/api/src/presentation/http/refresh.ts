@@ -4,7 +4,7 @@ import { legacyPublicationSchema } from "../../application/runs/publication.ts";
 import {
   checkedPublicationSchema,
   maxPublicationBytes,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "../../bindings.ts";
 
@@ -24,7 +24,7 @@ export function createRefreshRoutes(
     const runId = v.safeParse(uuid, c.req.param("runId"));
     const authorization = c.req.header("Authorization") ?? "";
     const bearer = runnerBearer.exec(authorization)?.[1];
-    const rejected = v.safeParse(uuid, c.req.header("X-Meguri-Access-Version"));
+    const rejected = v.safeParse(uuid, c.req.header("X-Tailos-Access-Version"));
     if (!runId.success || !bearer || !rejected.success || !c.env.RUNNER)
       return c.json({ error: "invalid_lease" }, 401);
 

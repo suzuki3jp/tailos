@@ -1,5 +1,5 @@
 import type { TerminalResult } from "../../application/runs/artifacts.ts";
-import { runnerEventSchema, type RunnerEvent } from "@meguri/core/runner";
+import { runnerEventSchema, type RunnerEvent } from "@tailos/core/runner";
 import * as v from "valibot";
 
 export type RunArtifactsBucket = {
@@ -27,7 +27,7 @@ const artifactSchema = v.strictObject({
   events: v.pipe(v.array(runnerEventSchema), v.maxLength(20)),
 });
 
-const key = (runId: string) => `meguri-api/v1/runs/${runId}/execution.json`;
+const key = (runId: string) => `tailos-api/v1/runs/${runId}/execution.json`;
 
 export async function writeRunArtifacts(
   bucket: RunArtifactsBucket,
@@ -58,7 +58,9 @@ export async function readRunArtifact(
   file: "result.json" | "events.ndjson",
   terminal: TerminalResult,
 ): Promise<Response | null> {
-  const object = await bucket.get(key(runId));
+  const object =
+    (await bucket.get(key(runId))) ??
+    (await bucket.get(`meguri-api/v1/runs/${runId}/execution.json`));
   if (!object) return null;
 
   const record = v.parse(artifactSchema, JSON.parse(await object.text()));

@@ -21,7 +21,7 @@ const target = {
   installationId: 19,
   issueNumber: 8,
   defaultBranch: "main",
-  triggerLabel: "meguri:run",
+  triggerLabel: "tailos:run",
 };
 const sha = "a".repeat(40);
 const pullUrl = "https://github.com/owner/private/pull/32";
@@ -105,7 +105,7 @@ test("scopes app grants to one repository and protects the default branch and gi
       if (url.pathname.endsWith("/issues/8"))
         return Response.json({
           state: "open",
-          labels: [{ name: "meguri:run" }],
+          labels: [{ name: "tailos:run" }],
         });
       if (url.pathname.endsWith("/rules/branches/main")) {
         return Response.json(
@@ -291,7 +291,7 @@ test("reconciles a lost signing response only for the verified commit with the e
             branchName: work.branch,
           },
           expectedHeadOid: work.baseSha,
-          message: { headline: work.headline, body: "Meguri run: " + runId },
+          message: { headline: work.headline, body: "Tailos run: " + runId },
           fileChanges: work.changes,
         });
         mutations++;
@@ -303,7 +303,7 @@ test("reconciles a lost signing response only for the verified commit with the e
           sha: signedSha,
           tree: { sha: tree },
           parents: [{ sha: work.baseSha }],
-          message: work.headline + "\n\nMeguri run: " + runId,
+          message: work.headline + "\n\nTailos run: " + runId,
           verification: { verified },
         });
       expect(url.pathname).toBe("/installation/token");

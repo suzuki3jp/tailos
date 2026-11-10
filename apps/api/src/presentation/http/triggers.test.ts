@@ -1,4 +1,4 @@
-import { executionContextSchema } from "@meguri/core/runner";
+import { executionContextSchema } from "@tailos/core/runner";
 import { parse } from "valibot";
 import {
   createTestOperator,
@@ -12,7 +12,7 @@ import app from "../../bootstrap/http.ts";
 test("concurrent events coalesce, while redelivery stays bound after completion", async (t) => {
   const db = await createTestDb(t);
   const token = "local-test-credential";
-  const env = { DB: db, MEGURI_TEST_TOKEN: token };
+  const env = { DB: db, TAILOS_TEST_TOKEN: token };
   const headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -91,9 +91,9 @@ test("concurrent events coalesce, while redelivery stays bound after completion"
 
 test("Codex smoke triggers require an operator and select that user's connection", async (t) => {
   const DB = await createTestDb(t);
-  const env = { ...testLoginBindings(DB), MEGURI_TEST_TOKEN: "test-token" };
+  const env = { ...testLoginBindings(DB), TAILOS_TEST_TOKEN: "test-token" };
   const send = (
-    bindings: { DB: typeof DB; MEGURI_TEST_TOKEN: string } = env,
+    bindings: { DB: typeof DB; TAILOS_TEST_TOKEN: string } = env,
     engine = "codex",
   ) =>
     app.request(
@@ -113,7 +113,7 @@ test("Codex smoke triggers require an operator and select that user's connection
 
   const unconfigured = await send({
     DB,
-    MEGURI_TEST_TOKEN: env.MEGURI_TEST_TOKEN,
+    TAILOS_TEST_TOKEN: env.TAILOS_TEST_TOKEN,
   });
   expect(unconfigured.status).toBe(503);
   const denied = await send();
@@ -175,7 +175,7 @@ test.each(["started", "coalesced"] as const)(
           prompt: "Work",
         }),
       },
-      { MEGURI_TEST_TOKEN: "test-token" },
+      { TAILOS_TEST_TOKEN: "test-token" },
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toStrictEqual(admission);

@@ -2,7 +2,7 @@ import {
   checkedPublicationFields,
   gitSha,
   runnerEventSchema,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 
 export const legacyPublicationSchema = v.strictObject({

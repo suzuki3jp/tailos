@@ -1,3 +1,3 @@
 export function GET() {
-  return Response.json({ status: "ok", service: "meguri-web" });
+  return Response.json({ status: "ok", service: "tailos-web" });
 }

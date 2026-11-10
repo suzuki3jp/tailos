@@ -42,7 +42,7 @@ test("a refresh request reaches the run's lease verifier only for active runs", 
         method: "POST",
         headers: {
           Authorization: "Bearer " + token,
-          "X-Meguri-Access-Version": accessVersion,
+          "X-Tailos-Access-Version": accessVersion,
         },
       },
       env,

@@ -13,12 +13,13 @@ env:
   HUSKY: "0"
 
 concurrency:
-  group: meguri-api-production
+  group: tailos-api-production
   queue: max
 
 jobs:
   revision:
     if: >-
+      vars.TAILOS_D1_DATABASE_ID != '' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
@@ -45,7 +46,7 @@ jobs:
     if: needs.revision.outputs.deploy == 'true'
     environment:
       name: production
-      url: https://api.meguri.suzuki3.jp
+      url: https://api.tailos.app
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -61,32 +62,34 @@ jobs:
           cache: true
       - run: pnpm install --frozen-lockfile
       - name: Deploy to Cloudflare
-        run: pnpm --filter @meguri/api run deploy
+        run: pnpm --filter @tailos/api run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
-          MEGURI_PROJECTS: ${{ vars.MEGURI_PROJECTS }}
-          MEGURI_GH_APP_ID: ${{ vars.MEGURI_GH_APP_ID }}
-          MEGURI_GH_APP_PRIVATE_KEY: ${{ secrets.MEGURI_GH_APP_PRIVATE_KEY }}
-          MEGURI_GH_WEBHOOK_SECRET: ${{ secrets.MEGURI_GH_WEBHOOK_SECRET }}
+          TAILOS_D1_DATABASE_ID: ${{ vars.TAILOS_D1_DATABASE_ID }}
+          TAILOS_CREDENTIALS_FROM_WORKER: ${{ vars.TAILOS_CREDENTIALS_FROM_WORKER }}
+          TAILOS_PROJECTS: ${{ vars.TAILOS_PROJECTS }}
+          TAILOS_GH_APP_ID: ${{ vars.TAILOS_GH_APP_ID }}
+          TAILOS_GH_APP_PRIVATE_KEY: ${{ secrets.TAILOS_GH_APP_PRIVATE_KEY }}
+          TAILOS_GH_WEBHOOK_SECRET: ${{ secrets.TAILOS_GH_WEBHOOK_SECRET }}
           CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
-          MEGURI_GITHUB_OAUTH_CLIENT_ID: ${{ vars.MEGURI_GITHUB_OAUTH_CLIENT_ID }}
-          MEGURI_OPERATOR_GITHUB_ID: ${{ vars.MEGURI_OPERATOR_GITHUB_ID }}
-          MEGURI_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.MEGURI_GITHUB_OAUTH_CLIENT_SECRET }}
+          TAILOS_GITHUB_OAUTH_CLIENT_ID: ${{ vars.TAILOS_GITHUB_OAUTH_CLIENT_ID }}
+          TAILOS_OPERATOR_GITHUB_ID: ${{ vars.TAILOS_OPERATOR_GITHUB_ID }}
+          TAILOS_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.TAILOS_GITHUB_OAUTH_CLIENT_SECRET }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
       - name: Verify the deployed Worker
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 12 --retry-all-errors \
-            --retry-delay 10 --max-time 8 https://api.meguri.suzuki3.jp/health |
-            jq -e '.status == "ok" and .service == "meguri-api"'
+            --retry-delay 10 --max-time 8 https://api.tailos.app/health |
+            jq -e '.status == "ok" and .service == "tailos-api"'
 
   web:
     name: Deploy Web
     needs: api
     environment:
       name: production-web
-      url: https://meguri.suzuki3.jp
+      url: https://tailos.app
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -102,7 +105,7 @@ jobs:
           cache: true
       - run: pnpm install --frozen-lockfile
       - name: Build Web Worker
-        run: pnpm --filter @meguri/web run build
+        run: pnpm --filter @tailos/web run build
       - name: Recheck the current main revision
         id: revision
         shell: bash
@@ -118,7 +121,7 @@ jobs:
           fi
       - name: Deploy Web to Cloudflare
         if: steps.revision.outputs.deploy == 'true'
-        run: pnpm --filter @meguri/web exec wrangler deploy
+        run: pnpm --filter @tailos/web exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -126,8 +129,8 @@ jobs:
         if: steps.revision.outputs.deploy == 'true'
         run: |
           for attempt in {1..12}; do
-            if curl --fail --silent --show-error --max-time 8 https://meguri.suzuki3.jp/health |
-              jq -e '.status == "ok" and .service == "meguri-web"'; then
+            if curl --fail --silent --show-error --max-time 8 https://tailos.app/health |
+              jq -e '.status == "ok" and .service == "tailos-web"'; then
               exit 0
             fi
             sleep 10

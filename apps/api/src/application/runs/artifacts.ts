@@ -1,4 +1,4 @@
-import type { RunnerEvent } from "@meguri/core/runner";
+import type { RunnerEvent } from "@tailos/core/runner";
 
 export type TerminalResult =
   | { status: "succeeded" }

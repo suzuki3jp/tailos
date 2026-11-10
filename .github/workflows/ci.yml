@@ -53,4 +53,4 @@ jobs:
 
       - name: Build the Web Worker
         if: matrix.check == 'typecheck'
-        run: pnpm --filter @meguri/web run build
+        run: pnpm --filter @tailos/web run build

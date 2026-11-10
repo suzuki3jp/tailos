@@ -2,7 +2,7 @@ import type { AdmitTrigger } from "../../application/triggers/admit-trigger.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
-import type { ExecutionContext } from "@meguri/core/runner";
+import type { ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "../../application/auth/device.ts";
 import type { Bindings } from "../../bindings.ts";
 import { projectsSchema } from "../../application/triggers/projects.ts";
@@ -50,12 +50,12 @@ export function createGithubWebhook(
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
-    const secret = c.env?.MEGURI_GH_WEBHOOK_SECRET;
+    const secret = c.env?.TAILOS_GH_WEBHOOK_SECRET;
     if (
       !secret ||
       !c.env.PROJECTS ||
-      !c.env.MEGURI_GH_APP_ID ||
-      !c.env.MEGURI_GH_APP_PRIVATE_KEY
+      !c.env.TAILOS_GH_APP_ID ||
+      !c.env.TAILOS_GH_APP_PRIVATE_KEY
     )
       return c.notFound();
 
@@ -120,7 +120,7 @@ export function createGithubWebhook(
     } satisfies ExecutionContext;
     const prompt = [
       `Implement GitHub issue #${data.issue.number} in ${target.repository}.`,
-      "Make the required changes, run relevant checks, and summarize the result. Meguri handles publishing.",
+      "Make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
       "",
       data.issue.title.slice(0, 240),
       (data.issue.body ?? "").slice(0, 3200),

@@ -8,12 +8,12 @@ import { createLoginAuth } from "./login.ts";
 export function testLoginBindings(DB: Bindings["DB"]) {
   return {
     DB,
-    MEGURI_PUBLIC_ORIGIN: "https://api.meguri.example",
-    MEGURI_WEB_ORIGIN: "https://meguri.example",
+    TAILOS_PUBLIC_ORIGIN: "https://api.tailos.example",
+    TAILOS_WEB_ORIGIN: "https://tailos.example",
     BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
-    MEGURI_GITHUB_OAUTH_CLIENT_ID: "test-client",
-    MEGURI_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
-    MEGURI_OPERATOR_GITHUB_ID: "123",
+    TAILOS_GITHUB_OAUTH_CLIENT_ID: "test-client",
+    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
+    TAILOS_OPERATOR_GITHUB_ID: "123",
   };
 }
 
@@ -36,7 +36,7 @@ export async function createTestOperator(
       id: crypto.randomUUID(),
       userId: id,
       providerId: "github",
-      accountId: env.MEGURI_OPERATOR_GITHUB_ID,
+      accountId: env.TAILOS_OPERATOR_GITHUB_ID,
       createdAt: now,
       updatedAt: now,
     }),

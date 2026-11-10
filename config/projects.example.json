@@ -4,7 +4,7 @@
     "repository": "OWNER/REPOSITORY",
     "repositoryId": 123456789,
     "installationId": 12345678,
-    "triggerLabel": "meguri:run",
+    "triggerLabel": "tailos:run",
     "allowedActors": ["github-login"],
     "maxRunMinutes": 30
   }

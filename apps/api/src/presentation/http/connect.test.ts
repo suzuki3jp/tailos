@@ -10,8 +10,8 @@ import type { ConnectionStatus } from "../../application/auth/device.ts";
 test("protects the device code and requires a POST from the Web origin to change connection state", async (t) => {
   const login = testLoginBindings(await createTestDb(t));
   const { id, cookie } = await createTestOperator(login);
-  const origin = login.MEGURI_WEB_ORIGIN;
-  const path = login.MEGURI_PUBLIC_ORIGIN + "/api/connect";
+  const origin = login.TAILOS_WEB_ORIGIN;
+  const path = login.TAILOS_PUBLIC_ORIGIN + "/api/connect";
   let status: ConnectionStatus = { state: "disconnected" };
   let starts = 0;
   const env = {

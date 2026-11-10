@@ -1,6 +1,6 @@
 ---
 name: review
-description: Meguri のコード変更をレビューする。作業ツリーの差分や PR について、テスト、TypeScript、構成、パフォーマンス、セキュリティを確認する。
+description: Tailos のコード変更をレビューする。作業ツリーの差分や PR について、テスト、TypeScript、構成、パフォーマンス、セキュリティを確認する。
 ---
 
 # レビューのステップ

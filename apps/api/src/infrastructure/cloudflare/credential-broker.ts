@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "../../bindings.ts";
-import type { CodexAccess } from "@meguri/core/runner";
+import type { CodexAccess } from "@tailos/core/runner";
 import {
   CodexDeviceAuth,
   CodexDeviceError,
@@ -17,6 +17,7 @@ import {
 import { seal, unseal, type Sealed } from "../auth/sealed-store.ts";
 import * as v from "valibot";
 
+// The transferred namespace uses these values as AES-GCM associated data.
 const pendingContext = "meguri:codex:default:pending:v1";
 const credentialContext = "meguri:codex:default:credentials:v1";
 

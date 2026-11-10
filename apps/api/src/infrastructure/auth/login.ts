@@ -17,12 +17,12 @@ const authPath = "/api/auth";
 const loginPath = "/login";
 
 export function createLoginAuth(env: Bindings) {
-  const origin = env.MEGURI_PUBLIC_ORIGIN;
-  const webOrigin = env.MEGURI_WEB_ORIGIN;
+  const origin = env.TAILOS_PUBLIC_ORIGIN;
+  const webOrigin = env.TAILOS_WEB_ORIGIN;
   const secret = env.BETTER_AUTH_SECRET;
-  const clientId = env.MEGURI_GITHUB_OAUTH_CLIENT_ID;
-  const clientSecret = env.MEGURI_GITHUB_OAUTH_CLIENT_SECRET;
-  const githubId = env.MEGURI_OPERATOR_GITHUB_ID;
+  const clientId = env.TAILOS_GITHUB_OAUTH_CLIENT_ID;
+  const clientSecret = env.TAILOS_GITHUB_OAUTH_CLIENT_SECRET;
+  const githubId = env.TAILOS_OPERATOR_GITHUB_ID;
   if (
     !origin ||
     !webOrigin ||
@@ -89,7 +89,7 @@ export function createLoginAuth(env: Bindings) {
 }
 
 export async function findOperatorUserId(env: Bindings) {
-  const githubId = env.MEGURI_OPERATOR_GITHUB_ID;
+  const githubId = env.TAILOS_OPERATOR_GITHUB_ID;
   if (!githubId) return null;
   const [account] = await drizzle(env.DB)
     .select({ userId: authAccounts.userId })

@@ -1,10 +1,10 @@
-export function readLoginConfig(env, origin = env.MEGURI_PUBLIC_ORIGIN) {
+export function readLoginConfig(env, origin = env.TAILOS_PUBLIC_ORIGIN) {
   const vars = {
-    MEGURI_GITHUB_OAUTH_CLIENT_ID: env.MEGURI_GITHUB_OAUTH_CLIENT_ID,
-    MEGURI_OPERATOR_GITHUB_ID: env.MEGURI_OPERATOR_GITHUB_ID,
+    TAILOS_GITHUB_OAUTH_CLIENT_ID: env.TAILOS_GITHUB_OAUTH_CLIENT_ID,
+    TAILOS_OPERATOR_GITHUB_ID: env.TAILOS_OPERATOR_GITHUB_ID,
   };
   const secrets = {
-    MEGURI_GITHUB_OAUTH_CLIENT_SECRET: env.MEGURI_GITHUB_OAUTH_CLIENT_SECRET,
+    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: env.TAILOS_GITHUB_OAUTH_CLIENT_SECRET,
     BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
   };
   const settings = [...Object.values(vars), ...Object.values(secrets)];
@@ -12,7 +12,7 @@ export function readLoginConfig(env, origin = env.MEGURI_PUBLIC_ORIGIN) {
 
   if (
     !settings.every(Boolean) ||
-    !/^[1-9]\d*$/.test(vars.MEGURI_OPERATOR_GITHUB_ID) ||
+    !/^[1-9]\d*$/.test(vars.TAILOS_OPERATOR_GITHUB_ID) ||
     secrets.BETTER_AUTH_SECRET.length < 32
   ) {
     throw new Error(
@@ -22,8 +22,8 @@ export function readLoginConfig(env, origin = env.MEGURI_PUBLIC_ORIGIN) {
   const publicUrl = URL.parse(origin || "");
   if (publicUrl?.protocol !== "https:" || publicUrl.origin !== origin) {
     throw new Error(
-      "Set MEGURI_PUBLIC_ORIGIN to the HTTPS origin of the Worker.",
+      "Set TAILOS_PUBLIC_ORIGIN to the HTTPS origin of the Worker.",
     );
   }
-  return { vars: { ...vars, MEGURI_PUBLIC_ORIGIN: origin }, secrets };
+  return { vars: { ...vars, TAILOS_PUBLIC_ORIGIN: origin }, secrets };
 }

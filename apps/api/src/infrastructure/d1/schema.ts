@@ -119,7 +119,7 @@ export const triggerEvents = sqliteTable(
   ],
 );
 
-// Provider accounts can change independently of the user ID used by Meguri data.
+// Provider accounts can change independently of the user ID used by Tailos data.
 export const users = sqliteTable("users", {
   id: text().primaryKey().notNull(),
   name: text().notNull(),

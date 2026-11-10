@@ -9,7 +9,7 @@ import {
   type RunnerEvent,
   type RunnerJob,
   type RunnerStatus,
-} from "@meguri/core/runner";
+} from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   AgentSandboxUnavailable,

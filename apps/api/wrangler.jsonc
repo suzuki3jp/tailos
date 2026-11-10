@@ -1,12 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "meguri-api",
+  "name": "tailos-api",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-06",
   "workers_dev": true,
   "vars": {
-    "MEGURI_PUBLIC_ORIGIN": "http://localhost:8787",
-    "MEGURI_WEB_ORIGIN": "http://localhost:3000",
+    "TAILOS_PUBLIC_ORIGIN": "http://localhost:8787",
+    "TAILOS_WEB_ORIGIN": "http://localhost:3000",
   },
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
@@ -17,12 +17,12 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "meguri",
+      "database_name": "tailos",
       "database_id": "00000000-0000-0000-0000-000000000000",
     },
   ],
   "r2_buckets": [
-    { "binding": "RUN_ARTIFACTS", "bucket_name": "meguri-run-artifacts" },
+    { "binding": "RUN_ARTIFACTS", "bucket_name": "tailos-run-artifacts" },
   ],
   "triggers": { "crons": ["* * * * *"] },
   "durable_objects": {

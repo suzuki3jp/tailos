@@ -27,30 +27,30 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
       title: "Fix an issue",
       body: "Private issue details",
     },
-    label: { name: "meguri:run" },
+    label: { name: "tailos:run" },
     sender: { login: "allowed-user" },
   };
   const env = {
     ...testLoginBindings(db),
     RUNNER: { getByName: () => ({ schedule }) },
-    MEGURI_GH_WEBHOOK_SECRET: "test-secret",
-    MEGURI_GH_APP_ID: "100",
-    MEGURI_GH_APP_PRIVATE_KEY: "unused-until-run",
+    TAILOS_GH_WEBHOOK_SECRET: "test-secret",
+    TAILOS_GH_APP_ID: "100",
+    TAILOS_GH_APP_PRIVATE_KEY: "unused-until-run",
     PROJECTS: JSON.stringify([
       {
         id: "private-project",
         repository: "owner/private",
         repositoryId: 42,
         installationId: 19,
-        triggerLabel: "meguri:run",
+        triggerLabel: "tailos:run",
         allowedActors: ["allowed-user"],
       },
     ]),
   };
-  const send = (payload: object, secret = env.MEGURI_GH_WEBHOOK_SECRET) => {
+  const send = (payload: object, secret = env.TAILOS_GH_WEBHOOK_SECRET) => {
     const body = JSON.stringify(payload);
     return app.request(
-      "https://meguri.example/webhooks/github",
+      "https://tailos.example/webhooks/github",
       {
         method: "POST",
         body,
@@ -105,7 +105,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
   expect(
     await db.prepare("SELECT count(*) AS count FROM runs").first("count"),
   ).toBe(1);
-  const path = `https://api.meguri.example/api/sessions/${data.sessionId}`;
+  const path = `https://api.tailos.example/api/sessions/${data.sessionId}`;
   expect((await app.request(path, undefined, env)).status).toBe(401);
   const view = await app.request(
     path,
@@ -121,7 +121,7 @@ test("accepts a signed private issue event once and rejects unauthorized actors"
     .bind("other-session", crypto.randomUUID(), Date.now())
     .run();
   const another = await app.request(
-    "https://api.meguri.example/api/sessions/other-session",
+    "https://api.tailos.example/api/sessions/other-session",
     { headers: { Cookie: operator.cookie } },
     env,
   );

@@ -18,7 +18,7 @@ const trigger = {
 test("authorizes a run's R2 events and result and excludes chat content", async (t) => {
   const env = {
     ...(await createTestBindings(t)),
-    MEGURI_TEST_TOKEN: "local-smoke",
+    TAILOS_TEST_TOKEN: "local-smoke",
   };
   const { runId } = await admitTrigger(env.DB, trigger);
   const failed = await admitTrigger(env.DB, {
@@ -79,6 +79,16 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
     (await app.request(path(runId, "execution.json"), { headers }, env)).status,
   ).toBe(404);
 
+  // A bucket copy preserves the original object keys from Meguri.
+  const newKey = `tailos-api/v1/runs/${runId}/execution.json`;
+  const artifact = await env.RUN_ARTIFACTS.get(newKey);
+  assert(artifact);
+  await env.RUN_ARTIFACTS.put(
+    `meguri-api/v1/runs/${runId}/execution.json`,
+    await artifact.text(),
+  );
+  await env.RUN_ARTIFACTS.delete(newKey);
+
   const events = await app.request(
     path(runId, "events.ndjson"),
     { headers },
@@ -105,7 +115,7 @@ test("authorizes a run's R2 events and result and excludes chat content", async 
 test("an unreadable artifact returns a fixed error without exposing its contents", async (t) => {
   const env = {
     ...(await createTestBindings(t)),
-    MEGURI_TEST_TOKEN: "local-smoke",
+    TAILOS_TEST_TOKEN: "local-smoke",
   };
   const { runId } = await admitTrigger(env.DB, trigger);
   await advanceRun(
@@ -120,7 +130,7 @@ test("an unreadable artifact returns a fixed error without exposing its contents
     env.RUN_ARTIFACTS,
   );
   await env.RUN_ARTIFACTS.put(
-    `meguri-api/v1/runs/${runId}/execution.json`,
+    `tailos-api/v1/runs/${runId}/execution.json`,
     "sensitive invalid json",
   );
 
@@ -138,7 +148,7 @@ test("an unreadable artifact returns a fixed error without exposing its contents
 test("the public artifact result reflects D1 if persisting the agent reply fails", async (t) => {
   const env = {
     ...(await createTestBindings(t)),
-    MEGURI_TEST_TOKEN: "local-smoke",
+    TAILOS_TEST_TOKEN: "local-smoke",
   };
   const { runId } = await admitTrigger(env.DB, trigger);
   await env.DB.prepare(`CREATE TRIGGER reject_artifact_reply BEFORE INSERT ON session_messages

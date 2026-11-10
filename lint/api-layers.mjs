@@ -1,5 +1,5 @@
 /**
- * Meguri API import boundaries
+ * Tailos API import boundaries
  *
  *                      worker / bootstrap
  *                      /                \
@@ -12,7 +12,7 @@
  * modules may connect presentation to infrastructure. Cloudflare Bindings
  * are available to presentation and infrastructure as a type-only import.
  *
- * Application modules can import shared contracts from @meguri/core and
+ * Application modules can import shared contracts from @tailos/core and
  * use Valibot. Presentation keeps HTTP dependencies such as Hono, and
  * infrastructure owns platform and provider SDKs.
  *
@@ -34,7 +34,7 @@ const layers = new Set([
 const sdk =
   /^(?:@cloudflare\/|cloudflare:|drizzle-orm(?:\/|$)|@better-auth\/|better-auth(?:\/|$)|jose(?:\/|$))/;
 const testModule = /(?:\.test|[/\\]testing)(?:\.[cm]?[jt]sx?)?$/;
-const applicationPackage = /^(?:@meguri\/core(?:\/|$)|valibot$)/;
+const applicationPackage = /^(?:@tailos\/core(?:\/|$)|valibot$)/;
 
 function area(path) {
   const within = relative(sourceRoot, path).replaceAll("\\", "/");
@@ -53,7 +53,7 @@ const layerImports = {
 };
 
 export default {
-  meta: { name: "meguri" },
+  meta: { name: "tailos" },
   rules: {
     "api-layers": {
       create(context) {

@@ -193,7 +193,7 @@ importers:
       '@better-auth/drizzle-adapter':
         specifier: 1.7.15
         version: 1.7.15(@better-auth/core@1.7.15(@better-auth/utils@0.5.1)(@better-fetch/fetch@1.3.3)(better-call@1.4.4(zod@4.6.7))(jose@6.2.14)(kysely@0.29.8)(nanostores@1.5.5))(@better-auth/utils@0.5.1)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20261006.1)(kysely@0.29.8))
-      '@meguri/core':
+      '@tailos/core':
         specifier: workspace:*
         version: link:../../packages/core
       better-auth:
@@ -236,7 +236,7 @@ importers:
 
   apps/runner:
     dependencies:
-      '@meguri/core':
+      '@tailos/core':
         specifier: workspace:*
         version: link:../../packages/core
       valibot:
@@ -277,7 +277,7 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261101.1
         version: 5.20261101.1
-      '@meguri/api':
+      '@tailos/api':
         specifier: workspace:*
         version: link:../api
       '@tailwindcss/vite':

@@ -1,9 +1,9 @@
 {
-  "name": "@meguri/root",
+  "name": "@tailos/root",
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter @meguri/api run dev",
+    "dev": "pnpm --filter @tailos/api run dev",
     "lint": "oxlint --no-error-on-unmatched-pattern .",
     "lint:commits": "commitlint --default-config",
     "format": "oxfmt --write .",

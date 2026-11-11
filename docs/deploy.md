@@ -67,6 +67,8 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設定を参照し、作業ディレクトリで適用できる整形・lint・テストなどを実行する。実行結果と、実行できなかった検証の理由を返答に記載する。Runner イメージには Tailos 自体を検証するための pnpm・oxfmt・oxlint を組み込む。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。
 
+チェックアウトを伴う Run では、Codex のサンドボックス内でネットワークを利用できる。ホーム・一時領域・キャッシュ・pnpm のロック用領域・ユーザー用ツールの配置先を Run ごとに作成し、作業ディレクトリと合わせて書き込みを許可する。Agent は依存取得や検証のコマンドを選んで実行できる。これらの領域は Codex の認証用ディレクトリと分け、Run 終了時に削除する。
+
 既存の実行可能ファイルは、実行ビットを維持したまま内容を更新できる。新規ファイルは非実行モードで作成する必要がある。
 
 ローカル Wrangler と Docker では固定応答のジョブを実行できる。実 Codex のコマンド実行は Linux の内側のサンドボックスを使う。検証した Docker 環境の標準 seccomp 設定では `pivot_root` が拒否されたため、Cloudflare 上では最初のテスト Issue にコマンド実行を伴う小さな変更を指定して確認する。 [Codex のサンドボックス](https://learn.chatgpt.com/docs/sandboxing)

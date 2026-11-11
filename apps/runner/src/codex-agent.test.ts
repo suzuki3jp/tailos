@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { expect, test } from "vitest";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { expect, test, vi } from "vitest";
 import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
@@ -12,6 +15,7 @@ const script = `
   const [workspace, mode, probeJson] = process.argv.slice(1);
   const probeResponse = JSON.parse(probeJson);
   let sandboxReady = false;
+  let probePolicy;
   let githubResponses = 0;
   const refresh = () => send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
   const lookup = (id, args, threadId = "test-thread") => send({
@@ -30,10 +34,14 @@ const script = `
         command.join(" ") !== "/bin/true" || cwd !== workspace ||
         sandboxPolicy.type !== mode ||
         (mode === "workspaceWrite" && (
-          sandboxPolicy.excludeSlashTmp !== true || sandboxPolicy.excludeTmpdirEnvVar !== true
+          sandboxPolicy.excludeSlashTmp !== true || sandboxPolicy.excludeTmpdirEnvVar !== true ||
+          sandboxPolicy.networkAccess !== true ||
+          sandboxPolicy.writableRoots[0] !== workspace ||
+          !sandboxPolicy.writableRoots[1].endsWith("/environment")
         ))
       ) throw new Error("Unexpected sandbox probe");
       sandboxReady = probeResponse.result?.exitCode === 0;
+      probePolicy = sandboxPolicy;
       send({ id: request.id, ...probeResponse });
     }
     if (request.method === "account/login/start") {
@@ -53,6 +61,8 @@ const script = `
       reply({ thread: { id: "test-thread" } });
     }
     if (request.method === "turn/start") {
+      if (JSON.stringify(request.params.sandboxPolicy) !== JSON.stringify(probePolicy))
+        throw new Error("Turn permissions must match the probed sandbox");
       const { input, outputSchema } = request.params;
       if (mode === "workspaceWrite") {
         if (!input[0].text.includes("repository instructions and CI configuration") ||
@@ -210,6 +220,61 @@ test("rejects the job before login if Codex cannot start its command sandbox", a
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(AgentSandboxUnavailable);
+});
+
+test("launches checkout commands with a writable, disposable environment and network access", async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), "tailos-launch-test-"));
+  t.onTestFinished(() => rm(fixture, { recursive: true, force: true }));
+  t.onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  const capture = join(fixture, "launch.json");
+  await writeFile(
+    join(fixture, "codex"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const env = process.env;
+const environment = path.dirname(env.HOME);
+for (const dir of ["home", "tmp", "runtime", "cache", "tools/bin"]) {
+  fs.writeFileSync(path.join(environment, dir, "probe"), "writable");
+}
+fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ args, env }));
+process.argv = ["node", ${JSON.stringify(process.cwd())}, "workspaceWrite", JSON.stringify({ result: { exitCode: 1 } })];
+${script}`,
+    { mode: 0o755 },
+  );
+  vi.stubEnv("PATH", [fixture, process.env.PATH].join(delimiter));
+  vi.stubEnv("TAILOS_TEST_SECRET", "must-not-reach-child");
+  const job = testJob();
+  job.checkout = {
+    repository: "owner/repo",
+    baseSha: "a".repeat(40),
+    branch: `tailos/issue-1/${job.runId}`,
+    token: "checkout-token",
+  };
+
+  await expect(
+    createCodexAgent().run(job, AbortSignal.timeout(10_000), process.cwd()),
+  ).rejects.toThrow(AgentSandboxUnavailable);
+
+  const { env } = JSON.parse(await readFile(capture, "utf8"));
+  const environment = dirname(env.HOME);
+  expect(env.TMPDIR).toBe(join(environment, "tmp"));
+  expect(env.XDG_RUNTIME_DIR).toBe(join(environment, "runtime"));
+  expect(env.XDG_CACHE_HOME).toBe(join(environment, "cache"));
+  expect(env.PNPM_HOME).toBe(join(environment, "tools"));
+  expect(env.npm_config_prefix).toBe(env.PNPM_HOME);
+  expect(env.PATH.split(delimiter).slice(0, 2)).toEqual([
+    join(environment, "tools", "bin"),
+    join(environment, "tools"),
+  ]);
+  expect(resolve(env.CODEX_HOME)).not.toBe(resolve(environment));
+  expect(env.TAILOS_TEST_SECRET).toBeUndefined();
+  await expect(stat(dirname(environment))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 test("preserves an RPC rejection from the sandbox probe", async () => {

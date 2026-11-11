@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
@@ -25,8 +25,12 @@ const completedSchema = v.object({
   turn: v.object({ status: v.string() }),
 });
 
-type LaunchCodex = (directory: string, workspace: string) => CodexProcess;
-const launchCodex: LaunchCodex = (directory, workspace) =>
+type LaunchCodex = (
+  directory: string,
+  workspace: string,
+  environment?: string,
+) => CodexProcess;
+const launchCodex: LaunchCodex = (directory, workspace, environment) =>
   spawn(
     "codex",
     [
@@ -54,6 +58,19 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
         CODEX_HOME: directory,
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
+        ...(environment && {
+          HOME: join(environment, "home"),
+          TMPDIR: join(environment, "tmp"),
+          XDG_RUNTIME_DIR: join(environment, "runtime"),
+          XDG_CACHE_HOME: join(environment, "cache"),
+          PNPM_HOME: join(environment, "tools"),
+          npm_config_prefix: join(environment, "tools"),
+          PATH: [
+            join(environment, "tools", "bin"),
+            join(environment, "tools"),
+            process.env.PATH,
+          ].join(delimiter),
+        }),
       },
       stdio: ["pipe", "pipe", "ignore"],
     },
@@ -66,18 +83,28 @@ export function createCodexAgent(
   return {
     async run(job, signal, cwd) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
-      const directory = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      const directory = join(root, "codex");
+      const environment = job.checkout ? join(root, "environment") : undefined;
       try {
         signal.throwIfAborted();
+        await mkdir(directory);
+        if (environment)
+          await Promise.all(
+            ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
+              mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
+            ),
+          );
         return await runTurn(
-          launch(directory, cwd ?? directory),
+          launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
           job,
           signal,
           http,
+          environment,
         );
       } finally {
-        await rm(directory, { recursive: true, force: true });
+        await rm(root, { recursive: true, force: true });
       }
     },
   };
@@ -102,7 +129,17 @@ async function runTurn(
   job: Extract<RunnerJob, { engine: "codex" }>,
   signal: AbortSignal,
   http: typeof fetch,
+  environment?: string,
 ) {
+  const sandboxPolicy = environment
+    ? {
+        type: "workspaceWrite" as const,
+        writableRoots: [cwd, environment],
+        networkAccess: true,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: true,
+      }
+    : { type: "readOnly" as const };
   const rpc = new CodexRpc(child);
   const abort = () => rpc.close();
   signal.addEventListener("abort", abort, { once: true });
@@ -177,13 +214,7 @@ async function runTurn(
         command: ["/bin/true"],
         cwd,
         timeoutMs: 5_000,
-        sandboxPolicy: job.checkout
-          ? {
-              type: "workspaceWrite",
-              excludeSlashTmp: true,
-              excludeTmpdirEnvVar: true,
-            }
-          : { type: "readOnly" },
+        sandboxPolicy,
       }),
     );
     if (probe.exitCode !== 0) {
@@ -206,6 +237,7 @@ async function runTurn(
     threadId = thread.thread.id;
     await rpc.call("turn/start", {
       threadId,
+      sandboxPolicy,
       input: [
         {
           type: "text",

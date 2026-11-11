@@ -6,6 +6,7 @@
     "installationId": 12345678,
     "triggerLabel": "tailos:run",
     "allowedActors": ["github-login"],
+    "agentNetworkAccess": false,
     "maxRunMinutes": 30
   }
 ]

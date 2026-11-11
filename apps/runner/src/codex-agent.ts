@@ -30,8 +30,23 @@ type LaunchCodex = (
   workspace: string,
   environment?: string,
 ) => CodexProcess;
-const launchCodex: LaunchCodex = (directory, workspace, environment) =>
-  spawn(
+const launchCodex: LaunchCodex = (directory, workspace, environment) => {
+  const shellEnvironment = environment
+    ? {
+        HOME: join(environment, "home"),
+        TMPDIR: join(environment, "tmp"),
+        XDG_RUNTIME_DIR: join(environment, "runtime"),
+        XDG_CACHE_HOME: join(environment, "cache"),
+        PNPM_HOME: join(environment, "tools"),
+        npm_config_prefix: join(environment, "tools"),
+        PATH: [
+          join(environment, "tools", "bin"),
+          join(environment, "tools"),
+          process.env.PATH,
+        ].join(delimiter),
+      }
+    : {};
+  return spawn(
     "codex",
     [
       "app-server",
@@ -47,6 +62,10 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) =>
       "sandbox_workspace_write.exclude_slash_tmp=true",
       "-c",
       "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+      ...Object.entries(shellEnvironment).flatMap(([name, value]) => [
+        "-c",
+        `shell_environment_policy.set.${name}=${JSON.stringify(value)}`,
+      ]),
       "-c",
       `projects={${JSON.stringify(workspace)}={trust_level="untrusted"}}`,
     ],
@@ -58,23 +77,13 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) =>
         CODEX_HOME: directory,
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
-        ...(environment && {
-          HOME: join(environment, "home"),
-          TMPDIR: join(environment, "tmp"),
-          XDG_RUNTIME_DIR: join(environment, "runtime"),
-          XDG_CACHE_HOME: join(environment, "cache"),
-          PNPM_HOME: join(environment, "tools"),
-          npm_config_prefix: join(environment, "tools"),
-          PATH: [
-            join(environment, "tools", "bin"),
-            join(environment, "tools"),
-            process.env.PATH,
-          ].join(delimiter),
-        }),
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
       },
       stdio: ["pipe", "pipe", "ignore"],
     },
   );
+};
 
 export function createCodexAgent(
   launch = launchCodex,
@@ -135,7 +144,7 @@ async function runTurn(
     ? {
         type: "workspaceWrite" as const,
         writableRoots: [cwd, environment],
-        networkAccess: true,
+        networkAccess: job.checkout?.agentNetworkAccess === true,
         excludeSlashTmp: true,
         excludeTmpdirEnvVar: true,
       }

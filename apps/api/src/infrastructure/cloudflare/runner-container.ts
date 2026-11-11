@@ -375,6 +375,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         baseSha: checkout.baseSha,
         branch: checkout.branch,
         token: checkout.token,
+        agentNetworkAccess: target.agentNetworkAccess ?? false,
       };
     }
     const port = await this.startRunner(job.deadlineAt, job.engine === "codex");

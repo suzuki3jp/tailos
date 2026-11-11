@@ -12,6 +12,7 @@ const project = v.strictObject({
   installationId: id,
   triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
   allowedActors: v.pipe(v.array(v.string()), v.minLength(1), v.maxLength(100)),
+  agentNetworkAccess: v.optional(v.boolean(), false),
   maxRunMinutes: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(30)),
     30,

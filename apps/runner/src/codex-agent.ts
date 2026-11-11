@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
-import { AgentSandboxUnavailable, type AgentAdapter } from "./agent.ts";
-import { CodexRpc, type CodexProcess } from "./codex-rpc.ts";
+import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
+import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import {
   getGitHubItem,
   githubTool,
   githubToolCallSchema,
-} from "./github-tool.ts";
+} from "@/github-tool.ts";
 
 const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
 const sandboxProbeSchema = v.object({

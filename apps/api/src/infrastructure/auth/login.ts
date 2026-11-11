@@ -1,4 +1,4 @@
-import type { LoginAuth } from "../../application/auth/login.ts";
+import type { LoginAuth } from "@/application/auth/login.ts";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth/minimal";
 import { github } from "better-auth/social-providers";
@@ -9,8 +9,8 @@ import {
   authVerifications,
   loginSessions,
   users,
-} from "../d1/schema.ts";
-import type { Bindings } from "../../bindings.ts";
+} from "@/infrastructure/d1/schema.ts";
+import type { Bindings } from "@/bindings.ts";
 
 const providerId = "github";
 const authPath = "/api/auth";

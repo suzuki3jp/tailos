@@ -13,7 +13,7 @@
     "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b --stopBuildOnErrors"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.15",

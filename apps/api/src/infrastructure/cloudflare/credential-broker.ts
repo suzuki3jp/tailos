@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Bindings } from "../../bindings.ts";
+import type { Bindings } from "@/bindings.ts";
 import type { CodexAccess } from "@tailos/core/runner";
 import {
   CodexDeviceAuth,
@@ -7,14 +7,18 @@ import {
   ReauthenticationRequired,
   codexCredentialsSchema,
   type CodexCredentials,
-} from "../auth/codex-device.ts";
+} from "@/infrastructure/auth/codex-device.ts";
 import {
   TransientDevicePollError,
   type DeviceAuthAdapter,
   type ConnectionStatus,
   type DeviceChallenge,
-} from "../../application/auth/device.ts";
-import { seal, unseal, type Sealed } from "../auth/sealed-store.ts";
+} from "@/application/auth/device.ts";
+import {
+  seal,
+  unseal,
+  type Sealed,
+} from "@/infrastructure/auth/sealed-store.ts";
 import * as v from "valibot";
 
 // The transferred namespace uses these values as AES-GCM associated data.

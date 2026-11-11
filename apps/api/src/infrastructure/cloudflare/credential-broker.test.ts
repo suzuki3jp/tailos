@@ -14,9 +14,9 @@ async function createBroker(t: TestContext, openAIStatus = 530) {
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
       contents: `
-        import { CodexDeviceAuth, ReauthenticationRequired } from "../auth/codex-device.ts";
-        import { CredentialBroker } from "./credential-broker.ts";
-        import { TransientDevicePollError } from "../../application/auth/device.ts";
+        import { CodexDeviceAuth, ReauthenticationRequired } from "@/infrastructure/auth/codex-device.ts";
+        import { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
+        import { TransientDevicePollError } from "@/application/auth/device.ts";
 
         export class TestBroker extends CredentialBroker {
           decision = "pending";

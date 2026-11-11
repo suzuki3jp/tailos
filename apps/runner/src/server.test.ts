@@ -7,9 +7,9 @@ import {
   AgentSandboxUnavailable,
   fakeAgent,
   type AgentAdapter,
-} from "./agent.ts";
-import { codexAgent } from "./codex-agent.ts";
-import { createRunnerServer } from "./server.ts";
+} from "@/agent.ts";
+import { codexAgent } from "@/codex-agent.ts";
+import { createRunnerServer } from "@/server.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
   const server = createRunnerServer({

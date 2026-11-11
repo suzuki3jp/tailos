@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 import vinext from "vinext";
 
 export default defineConfig({
+  resolve: { tsconfigPaths: true },
   plugins: [
     tailwindcss(),
     vinext({

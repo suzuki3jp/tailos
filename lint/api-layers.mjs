@@ -25,6 +25,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sourceRoot = fileURLToPath(new URL("../apps/api/src/", import.meta.url));
+const sourceAlias = "@/";
 const layers = new Set([
   "application",
   "presentation",
@@ -73,8 +74,13 @@ export default {
               report(node, "Use a static import path in API layers.");
             return;
           }
-          if (specifier.startsWith(".") || isAbsolute(specifier)) {
-            const target = resolve(dirname(filename), specifier);
+          let target;
+          if (specifier.startsWith(sourceAlias)) {
+            target = resolve(sourceRoot, specifier.slice(sourceAlias.length));
+          } else if (specifier.startsWith(".") || isAbsolute(specifier)) {
+            target = resolve(dirname(filename), specifier);
+          }
+          if (target) {
             if (testModule.test(target)) {
               report(
                 node,

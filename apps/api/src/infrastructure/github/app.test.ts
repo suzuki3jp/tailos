@@ -7,7 +7,7 @@ import {
   convertV4MiniflareOptions,
 } from "miniflare";
 import { assert, expect, test } from "vitest";
-import { GitHubApp, workBranchFor } from "./app.ts";
+import { GitHubApp, workBranchFor } from "@/infrastructure/github/app.ts";
 
 const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
   .privateKey.export({
@@ -31,7 +31,7 @@ test("sends authenticated GitHub requests from Workers without following redirec
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
       contents: `
-        import { GitHubApp } from "./app.ts";
+        import { GitHubApp } from "@/infrastructure/github/app.ts";
         export default {
           async fetch(request, env) {
             const github = new GitHubApp({ appId: "100", privateKey: env.TEST_PRIVATE_KEY });

@@ -16,9 +16,9 @@ import {
   fakeAgent,
   PublicationFailed,
   type AgentAdapter,
-} from "./agent.ts";
-import { codexAgent } from "./codex-agent.ts";
-import { runInGitWorkspace } from "./git-workspace.ts";
+} from "@/agent.ts";
+import { codexAgent } from "@/codex-agent.ts";
+import { runInGitWorkspace } from "@/git-workspace.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 

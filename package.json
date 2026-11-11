@@ -8,8 +8,8 @@
     "lint:commits": "commitlint --default-config",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "test": "pnpm -r --if-present run test",
-    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "node --test lint/api-layers.test.mjs && pnpm -r --if-present run test",
+    "typecheck": "tsc -b --stopBuildOnErrors",
     "prepare": "husky"
   },
   "devDependencies": {

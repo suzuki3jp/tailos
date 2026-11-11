@@ -4,7 +4,16 @@
     "module": "NodeNext",
     "allowImportingTsExtensions": true,
     "lib": ["ES2022"],
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../../packages/core"
+    }
+  ]
 }

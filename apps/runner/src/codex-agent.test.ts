@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "vitest";
 import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
-import { AgentSandboxUnavailable } from "./agent.ts";
-import { createCodexAgent } from "./codex-agent.ts";
+import { AgentSandboxUnavailable } from "@/agent.ts";
+import { createCodexAgent } from "@/codex-agent.ts";
 
 const script = `
   const { createInterface } = require("node:readline");

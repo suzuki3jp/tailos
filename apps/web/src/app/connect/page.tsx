@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
-import { RequestState } from "../request-state";
+import { api } from "@/app/api";
+import { RequestState } from "@/app/request-state";
 
 const queryKey = ["connection"];
 

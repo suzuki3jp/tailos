@@ -1,4 +1,4 @@
-import { Account } from "./account";
+import { Account } from "@/app/login/account";
 
 export default async function LoginPage({
   searchParams,

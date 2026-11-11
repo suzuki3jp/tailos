@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { createTestDb } from "./testing.ts";
-import { admitTrigger } from "./trigger-admission.ts";
+import { createTestDb } from "@/infrastructure/d1/testing.ts";
+import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 
 test("admission rolls back its writes if the origin event cannot be stored", async (t) => {
   const db = await createTestDb(t);

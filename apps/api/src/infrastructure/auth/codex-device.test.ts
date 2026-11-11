@@ -1,7 +1,10 @@
 import { assert, expect, test } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { CodexDeviceAuth, ReauthenticationRequired } from "./codex-device.ts";
-import { TransientDevicePollError } from "../../application/auth/device.ts";
+import {
+  CodexDeviceAuth,
+  ReauthenticationRequired,
+} from "@/infrastructure/auth/codex-device.ts";
+import { TransientDevicePollError } from "@/application/auth/device.ts";
 
 test("exchanges a device code, verifies its account, and preserves rotated credentials", async () => {
   const issuer = "https://auth.openai.com";

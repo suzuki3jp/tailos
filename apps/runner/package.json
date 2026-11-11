@@ -5,7 +5,7 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/runner.mjs",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b --stopBuildOnErrors"
   },
   "devDependencies": {
     "@types/node": "22.19.0",

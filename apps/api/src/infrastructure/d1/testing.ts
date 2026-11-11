@@ -2,7 +2,10 @@ import { readFile, readdir } from "node:fs/promises";
 import type { TestContext } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
-export async function createTestBindings(t: TestContext) {
+export async function createTestBindings(t: TestContext): Promise<{
+  DB: Awaited<ReturnType<Miniflare["getD1Database"]>>;
+  RUN_ARTIFACTS: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
+}> {
   const worker = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,

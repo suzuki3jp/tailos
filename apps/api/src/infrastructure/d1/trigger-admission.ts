@@ -3,7 +3,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type {
   Admission,
   TriggerAdmission,
-} from "#api/application/triggers/admit-trigger.ts";
+} from "@/application/triggers/admit-trigger.ts";
 
 export async function admitTrigger(
   db: D1Database,

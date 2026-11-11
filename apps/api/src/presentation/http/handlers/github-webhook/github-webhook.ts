@@ -1,11 +1,11 @@
-import type { AdmitTrigger } from "#api/application/triggers/admit-trigger.ts";
+import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import type { ExecutionContext } from "@tailos/core/runner";
-import { codexConnectionId } from "#api/application/auth/device.ts";
-import type { Bindings } from "#api/bindings.ts";
-import { projectsSchema } from "#api/application/triggers/projects.ts";
+import { codexConnectionId } from "@/application/auth/device.ts";
+import type { Bindings } from "@/bindings.ts";
+import { projectsSchema } from "@/application/triggers/projects.ts";
 
 const id = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repository = v.pipe(

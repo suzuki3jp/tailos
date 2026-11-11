@@ -1,7 +1,7 @@
-import { loginOrigin } from "#api/presentation/http/middlewares/login-origin.ts";
+import { loginOrigin } from "@/presentation/http/middlewares/login-origin.ts";
 import { Hono } from "hono";
-import type { Bindings } from "#api/bindings.ts";
-import type { LoginAuth } from "#api/application/auth/login.ts";
+import type { Bindings } from "@/bindings.ts";
+import type { LoginAuth } from "@/application/auth/login.ts";
 
 export function createLoginRoutes(
   createLoginAuth: (env: Bindings) => LoginAuth | null,

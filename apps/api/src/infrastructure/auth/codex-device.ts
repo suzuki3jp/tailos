@@ -4,7 +4,7 @@ import {
   TransientDevicePollError,
   type DeviceAuthAdapter,
   type DeviceChallenge,
-} from "#api/application/auth/device.ts";
+} from "@/application/auth/device.ts";
 
 const issuer = "https://auth.openai.com";
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";

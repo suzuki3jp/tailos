@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { seal, unseal } from "#api/infrastructure/auth/sealed-store.ts";
+import { seal, unseal } from "@/infrastructure/auth/sealed-store.ts";
 
 test("seals credentials to their intended connection and rejects a different key", async () => {
   const key = Buffer.alloc(32, 4).toString("base64");

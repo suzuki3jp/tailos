@@ -7,7 +7,7 @@
     "build": "vite build",
     "deploy": "pnpm run build && wrangler deploy",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b --stopBuildOnErrors"
   },
   "dependencies": {
     "@tanstack/react-query": "5.105.3",

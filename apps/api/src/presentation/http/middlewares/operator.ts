@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory";
-import type { Bindings } from "#api/bindings.ts";
+import type { Bindings } from "@/bindings.ts";
 
 export type OperatorEnv = {
   Bindings: Bindings;

@@ -9,7 +9,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "node --test lint/api-layers.test.mjs && pnpm -r --if-present run test",
-    "typecheck": "pnpm -r --if-present run typecheck",
+    "typecheck": "tsc -b --stopBuildOnErrors",
     "prepare": "husky"
   },
   "devDependencies": {

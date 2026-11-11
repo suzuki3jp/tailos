@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { Bindings } from "#api/bindings.ts";
-import { smokeAuth } from "#api/presentation/http/middlewares/smoke-auth.ts";
+import type { Bindings } from "@/bindings.ts";
+import { smokeAuth } from "@/presentation/http/middlewares/smoke-auth.ts";
 
 export function createRunnerHealthRoutes(
   check: (env: Bindings) => Promise<boolean> | undefined,

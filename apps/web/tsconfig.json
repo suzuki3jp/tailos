@@ -9,7 +9,13 @@
     "types": ["vite/client", "@cloudflare/workers-types", "vinext/types"],
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "noEmit": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "references": [
+    {
+      "path": "../api"
+    }
+  ]
 }

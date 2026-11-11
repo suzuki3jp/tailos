@@ -21,18 +21,18 @@ function lintImport(specifier) {
 }
 
 test("allows a presentation module to import application code by alias", () => {
-  assert.deepEqual(lintImport("#api/application/runs/artifacts.ts"), []);
+  assert.deepEqual(lintImport("@/application/runs/artifacts.ts"), []);
 });
 
 test("rejects an aliased import from presentation into infrastructure", () => {
-  const specifier = "#api/infrastructure/d1/sessions.ts";
+  const specifier = "@/infrastructure/d1/sessions.ts";
   assert.deepEqual(lintImport(specifier), [
     `API presentation cannot import infrastructure (${specifier}).`,
   ]);
 });
 
 test("rejects aliased test fixtures in production modules", () => {
-  const specifier = "#api/presentation/http/testing.ts";
+  const specifier = "@/presentation/http/testing.ts";
   assert.deepEqual(lintImport(specifier), [
     `Production API modules cannot import test modules (${specifier}).`,
   ]);

@@ -25,7 +25,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sourceRoot = fileURLToPath(new URL("../apps/api/src/", import.meta.url));
-const sourceAlias = "#api/";
+const sourceAlias = "@/";
 const layers = new Set([
   "application",
   "presentation",

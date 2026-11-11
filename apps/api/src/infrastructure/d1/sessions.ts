@@ -1,12 +1,8 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { and, asc, eq, exists } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import type { SessionStore } from "#api/application/sessions/create-session.ts";
-import {
-  runs,
-  sessionMessages,
-  sessions,
-} from "#api/infrastructure/d1/schema.ts";
+import type { SessionStore } from "@/application/sessions/create-session.ts";
+import { runs, sessionMessages, sessions } from "@/infrastructure/d1/schema.ts";
 
 export function d1Sessions(database: D1Database) {
   const db = drizzle(database);

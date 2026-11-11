@@ -3,11 +3,11 @@ import { parse } from "valibot";
 import {
   createTestOperator,
   testLoginBindings,
-} from "#api/infrastructure/auth/testing.ts";
+} from "@/infrastructure/auth/testing.ts";
 import { assert, expect, test, vi } from "vitest";
-import { createTriggerRoutes } from "#api/presentation/http/handlers/triggers/triggers.ts";
-import { createTestDb } from "#api/infrastructure/d1/testing.ts";
-import app from "#api/bootstrap/http.ts";
+import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/triggers.ts";
+import { createTestDb } from "@/infrastructure/d1/testing.ts";
+import app from "@/bootstrap/http.ts";
 
 test("concurrent events coalesce, while redelivery stays bound after completion", async (t) => {
   const db = await createTestDb(t);

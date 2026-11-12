@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
@@ -30,9 +30,28 @@ const completedSchema = v.object({
   turn: v.object({ status: v.string() }),
 });
 
-type LaunchCodex = (directory: string, workspace: string) => CodexProcess;
-const launchCodex: LaunchCodex = (directory, workspace) =>
-  spawn(
+type LaunchCodex = (
+  directory: string,
+  workspace: string,
+  environment?: string,
+) => CodexProcess;
+const launchCodex: LaunchCodex = (directory, workspace, environment) => {
+  const shellEnvironment = environment
+    ? {
+        HOME: join(environment, "home"),
+        TMPDIR: join(environment, "tmp"),
+        XDG_RUNTIME_DIR: join(environment, "runtime"),
+        XDG_CACHE_HOME: join(environment, "cache"),
+        PNPM_HOME: join(environment, "tools"),
+        npm_config_prefix: join(environment, "tools"),
+        PATH: [
+          join(environment, "tools", "bin"),
+          join(environment, "tools"),
+          process.env.PATH,
+        ].join(delimiter),
+      }
+    : {};
+  return spawn(
     "codex",
     [
       "app-server",
@@ -48,6 +67,10 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
       "sandbox_workspace_write.exclude_slash_tmp=true",
       "-c",
       "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+      ...Object.entries(shellEnvironment).flatMap(([name, value]) => [
+        "-c",
+        `shell_environment_policy.set.${name}=${JSON.stringify(value)}`,
+      ]),
       "-c",
       `projects={${JSON.stringify(workspace)}={trust_level="untrusted"}}`,
     ],
@@ -59,10 +82,13 @@ const launchCodex: LaunchCodex = (directory, workspace) =>
         CODEX_HOME: directory,
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
       },
       stdio: ["pipe", "pipe", "ignore"],
     },
   );
+};
 
 export function createCodexAgent(
   launch = launchCodex,
@@ -71,19 +97,29 @@ export function createCodexAgent(
   return {
     async run(job, signal, cwd, diagnostics) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
-      const directory = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      const directory = join(root, "codex");
+      const environment = job.checkout ? join(root, "environment") : undefined;
       try {
         signal.throwIfAborted();
+        await mkdir(directory);
+        if (environment)
+          await Promise.all(
+            ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
+              mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
+            ),
+          );
         return await runTurn(
-          launch(directory, cwd ?? directory),
+          launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
           job,
           signal,
           http,
+          environment,
           diagnostics,
         );
       } finally {
-        await rm(directory, { recursive: true, force: true });
+        await rm(root, { recursive: true, force: true });
       }
     },
   };
@@ -108,8 +144,18 @@ async function runTurn(
   job: Extract<RunnerJob, { engine: "codex" }>,
   signal: AbortSignal,
   http: typeof fetch,
+  environment?: string,
   diagnostics?: Diagnostics,
 ) {
+  const sandboxPolicy = environment
+    ? {
+        type: "workspaceWrite" as const,
+        writableRoots: [cwd, environment],
+        networkAccess: job.checkout?.agentNetworkAccess === true,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: true,
+      }
+    : { type: "readOnly" as const };
   const rpc = new CodexRpc(child);
   const abort = () => rpc.close();
   signal.addEventListener("abort", abort, { once: true });
@@ -303,13 +349,7 @@ async function runTurn(
         command: ["/bin/true"],
         cwd,
         timeoutMs: 5_000,
-        sandboxPolicy: job.checkout
-          ? {
-              type: "workspaceWrite",
-              excludeSlashTmp: true,
-              excludeTmpdirEnvVar: true,
-            }
-          : { type: "readOnly" },
+        sandboxPolicy,
       }),
     );
     if (probe.exitCode !== 0) {
@@ -353,6 +393,7 @@ async function runTurn(
     if (inputSpan) diagnostics?.end(inputSpan);
     await rpc.call("turn/start", {
       threadId,
+      sandboxPolicy,
       input: [
         {
           type: "text",

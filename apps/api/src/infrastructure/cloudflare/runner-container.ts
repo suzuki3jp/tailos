@@ -534,6 +534,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         baseSha: checkout.baseSha,
         branch: checkout.branch,
         token: checkout.token,
+        agentNetworkAccess: target.agentNetworkAccess ?? false,
       };
     }
     const port = await observeRun(this.env.DB, request.runId, "container", () =>

@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { expect, test } from "vitest";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { expect, test, vi } from "vitest";
 import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
@@ -11,9 +14,11 @@ import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
 const script = `
   const { createInterface } = require("node:readline");
   const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
-  const [workspace, mode, probeJson] = process.argv.slice(1);
+  const [workspace, mode, probeJson, networkJson = "false"] = process.argv.slice(1);
   const probeResponse = JSON.parse(probeJson);
+  const networkAccess = JSON.parse(networkJson);
   let sandboxReady = false;
+  let probePolicy;
   let githubResponses = 0;
   const refresh = () => send({ id: "refresh", method: "account/chatgptAuthTokens/refresh", params: {} });
   const lookup = (id, args, threadId = "test-thread") => send({
@@ -32,10 +37,14 @@ const script = `
         command.join(" ") !== "/bin/true" || cwd !== workspace ||
         sandboxPolicy.type !== mode ||
         (mode === "workspaceWrite" && (
-          sandboxPolicy.excludeSlashTmp !== true || sandboxPolicy.excludeTmpdirEnvVar !== true
+          sandboxPolicy.excludeSlashTmp !== true || sandboxPolicy.excludeTmpdirEnvVar !== true ||
+          sandboxPolicy.networkAccess !== networkAccess ||
+          sandboxPolicy.writableRoots[0] !== workspace ||
+          !sandboxPolicy.writableRoots[1].endsWith("/environment")
         ))
       ) throw new Error("Unexpected sandbox probe");
       sandboxReady = probeResponse.result?.exitCode === 0;
+      probePolicy = sandboxPolicy;
       send({ id: request.id, ...probeResponse });
     }
     if (request.method === "account/login/start") {
@@ -55,6 +64,8 @@ const script = `
       reply({ thread: { id: "test-thread" } });
     }
     if (request.method === "turn/start") {
+      if (JSON.stringify(request.params.sandboxPolicy) !== JSON.stringify(probePolicy))
+        throw new Error("Turn permissions must match the probed sandbox");
       const { input, outputSchema } = request.params;
       if (mode === "workspaceWrite") {
         if (!input[0].text.includes("repository instructions and CI configuration") ||
@@ -140,11 +151,19 @@ function launchStub(
     | { error: { code: number; message: string } } = {
     result: { exitCode: 0 },
   },
+  networkAccess = false,
 ) {
   return (cwd: string, workspace: string) =>
     spawn(
       process.execPath,
-      ["-e", script, workspace, mode, JSON.stringify(probeResponse)],
+      [
+        "-e",
+        script,
+        workspace,
+        mode,
+        JSON.stringify(probeResponse),
+        JSON.stringify(networkAccess),
+      ],
       {
         cwd,
         detached: true,
@@ -153,9 +172,14 @@ function launchStub(
     );
 }
 
-test.for(["readOnly", "workspaceWrite"] as const)(
-  "probes the %s sandbox, scopes GitHub reads and refreshes credentials",
-  async (mode) => {
+test.for([
+  ["readOnly", undefined],
+  ["workspaceWrite", undefined],
+  ["workspaceWrite", false],
+  ["workspaceWrite", true],
+] as const)(
+  "enforces project network opt-in, scopes GitHub reads and refreshes credentials (%s)",
+  async ([mode, agentNetworkAccess]) => {
     const job = testJob();
     if (mode === "workspaceWrite") {
       job.checkout = {
@@ -163,40 +187,46 @@ test.for(["readOnly", "workspaceWrite"] as const)(
         baseSha: "a".repeat(40),
         branch: `tailos/issue-1/${job.runId}`,
         token: "checkout-token",
+        agentNetworkAccess,
       };
     }
-    const agent = createCodexAgent(launchStub(mode), async (url, init) => {
-      const headers = new Headers(init?.headers);
-      if (String(url) !== job.refresh.url) {
-        expect(job.checkout).toBeDefined();
-        expect(init?.method).toBe("GET");
-        expect(init?.redirect).toBe("error");
-        expect(headers.get("Authorization")).toBe("Bearer checkout-token");
-        const issue =
-          String(url) === "https://api.github.com/repos/owner/repo/issues/17";
-        if (!issue)
-          expect(String(url)).toBe(
-            "https://api.github.com/repos/owner/repo/pulls/34",
-          );
+    const agent = createCodexAgent(
+      launchStub(mode, undefined, agentNetworkAccess === true),
+      async (url, init) => {
+        const headers = new Headers(init?.headers);
+        if (String(url) !== job.refresh.url) {
+          expect(job.checkout).toBeDefined();
+          expect(init?.method).toBe("GET");
+          expect(init?.redirect).toBe("error");
+          expect(headers.get("Authorization")).toBe("Bearer checkout-token");
+          const issue =
+            String(url) === "https://api.github.com/repos/owner/repo/issues/17";
+          if (!issue)
+            expect(String(url)).toBe(
+              "https://api.github.com/repos/owner/repo/pulls/34",
+            );
+          return Response.json({
+            number: issue ? 17 : 34,
+            title: issue ? "issue" : "pull_request",
+            state: "open",
+            body: null,
+            html_url: "https://github.com/owner/repo",
+            unexpected: "checkout-token",
+          });
+        }
+        expect(headers.get("Authorization")).toBe(
+          "Bearer " + job.refresh.bearer,
+        );
+        expect(headers.get("X-Tailos-Access-Version")).toBe(
+          job.access.accessVersion,
+        );
         return Response.json({
-          number: issue ? 17 : 34,
-          title: issue ? "issue" : "pull_request",
-          state: "open",
-          body: null,
-          html_url: "https://github.com/owner/repo",
-          unexpected: "checkout-token",
+          ...job.access,
+          accessToken: "new-access",
+          accessVersion: randomUUID(),
         });
-      }
-      expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
-      expect(headers.get("X-Tailos-Access-Version")).toBe(
-        job.access.accessVersion,
-      );
-      return Response.json({
-        ...job.access,
-        accessToken: "new-access",
-        accessVersion: randomUUID(),
-      });
-    });
+      },
+    );
 
     expect(
       await agent.run(
@@ -262,6 +292,71 @@ test("records effective input and command results without refreshed credentials"
   );
   expect(command?.attributes.exitCode).toBe(0);
   expect(command?.body).toContain("checks passed [REDACTED]");
+});
+
+test("keeps the disposable command environment out of the app-server environment", async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), "tailos-launch-test-"));
+  t.onTestFinished(() => rm(fixture, { recursive: true, force: true }));
+  t.onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  const capture = join(fixture, "launch.json");
+  await writeFile(
+    join(fixture, "codex"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const env = process.env;
+const shellEnvironment = Object.fromEntries(args.filter(arg => arg.startsWith("shell_environment_policy.set.")).map(arg => {
+  const index = arg.indexOf("=");
+  return [arg.slice("shell_environment_policy.set.".length, index), JSON.parse(arg.slice(index + 1))];
+}));
+const environment = path.dirname(shellEnvironment.HOME);
+for (const dir of ["home", "tmp", "runtime", "cache", "tools/bin"]) {
+  fs.writeFileSync(path.join(environment, dir, "probe"), "writable");
+}
+fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({ shellEnvironment, env }));
+process.argv = ["node", ${JSON.stringify(process.cwd())}, "workspaceWrite", JSON.stringify({ result: { exitCode: 1 } })];
+${script}`,
+    { mode: 0o755 },
+  );
+  vi.stubEnv("PATH", [fixture, process.env.PATH].join(delimiter));
+  vi.stubEnv("TAILOS_TEST_SECRET", "must-not-reach-child");
+  const job = testJob();
+  job.checkout = {
+    repository: "owner/repo",
+    baseSha: "a".repeat(40),
+    branch: `tailos/issue-1/${job.runId}`,
+    token: "checkout-token",
+  };
+
+  await expect(
+    createCodexAgent().run(job, AbortSignal.timeout(10_000), process.cwd()),
+  ).rejects.toThrow(AgentSandboxUnavailable);
+
+  const { shellEnvironment, env } = JSON.parse(await readFile(capture, "utf8"));
+  const environment = dirname(shellEnvironment.HOME);
+  expect(shellEnvironment.TMPDIR).toBe(join(environment, "tmp"));
+  expect(shellEnvironment.XDG_RUNTIME_DIR).toBe(join(environment, "runtime"));
+  expect(shellEnvironment.XDG_CACHE_HOME).toBe(join(environment, "cache"));
+  expect(shellEnvironment.PNPM_HOME).toBe(join(environment, "tools"));
+  expect(shellEnvironment.npm_config_prefix).toBe(shellEnvironment.PNPM_HOME);
+  expect(shellEnvironment.PATH.split(delimiter).slice(0, 2)).toEqual([
+    join(environment, "tools", "bin"),
+    join(environment, "tools"),
+  ]);
+  expect(resolve(env.CODEX_HOME)).not.toBe(resolve(environment));
+  expect(env.HOME).toBeUndefined();
+  expect(env.TMPDIR).toBeUndefined();
+  expect(env.XDG_RUNTIME_DIR).toBeUndefined();
+  expect(env.XDG_CACHE_HOME).toBeUndefined();
+  expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
+  expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
+  expect(env.TAILOS_TEST_SECRET).toBeUndefined();
+  await expect(stat(dirname(environment))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 test("preserves an RPC rejection from the sandbox probe", async () => {

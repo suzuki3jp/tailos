@@ -66,6 +66,7 @@ const repositoryTarget = v.strictObject({
   issueNumber: positiveId,
   defaultBranch: branch,
   triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
+  agentNetworkAccess: v.optional(v.boolean()),
 });
 
 export const executionContextSchema = v.variant("engine", [
@@ -110,6 +111,7 @@ export const runnerJobSchema = v.variant("engine", [
         baseSha: gitSha,
         branch: workBranch,
         token: secret,
+        agentNetworkAccess: v.optional(v.boolean()),
       }),
     ),
     refresh: v.strictObject({

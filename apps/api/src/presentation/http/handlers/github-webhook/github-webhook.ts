@@ -169,6 +169,7 @@ export function createGithubWebhook(
         issueNumber: data.issue.number,
         defaultBranch: data.repository.default_branch,
         triggerLabel: target.triggerLabel,
+        agentNetworkAccess: target.agentNetworkAccess,
       },
     } satisfies ExecutionContext;
     const prompt = [

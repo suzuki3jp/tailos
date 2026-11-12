@@ -1,9 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import {
-  diagnosticBatchSchema,
-  maxDiagnosticBatch,
-} from "@tailos/core/diagnostics";
+import { DiagnosticBatch, maxDiagnosticBatch } from "@tailos/core/diagnostics";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
 
@@ -26,7 +23,7 @@ export function createDiagnosticIngestRoutes(
       if (!runId.success || !bearer || !c.env.RUNNER)
         return c.json({ error: "invalid_lease" }, 401);
       const batch = v.safeParse(
-        diagnosticBatchSchema,
+        DiagnosticBatch,
         await c.req.json().catch(() => null),
       );
       if (!batch.success) return c.json({ error: "invalid_diagnostics" }, 400);

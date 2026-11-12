@@ -1,12 +1,11 @@
 import {
-  diagnosticBatchSchema,
+  DiagnosticBatch,
   maxDiagnosticBatch,
   maxDiagnosticBody,
   maxDiagnosticBytes,
   maxDiagnosticEvents,
   type Diagnostics,
   type DiagnosticAttributes,
-  type DiagnosticBatch,
   type DiagnosticRecord,
 } from "@tailos/core/diagnostics";
 import type { RunnerJob } from "@tailos/core/runner";
@@ -247,7 +246,7 @@ export class RunnerDiagnostics implements Diagnostics {
       if (url.protocol !== "https:" || url.username || url.password)
         return "retry";
       // Validate before sending; failures never serialize the rejected input.
-      v.parse(diagnosticBatchSchema, JSON.parse(body));
+      v.parse(DiagnosticBatch, JSON.parse(body));
       const response = await this.http(url, {
         method: "POST",
         redirect: "error",

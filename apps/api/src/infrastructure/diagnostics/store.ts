@@ -1,13 +1,12 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import {
-  diagnosticBatchSchema,
+  DiagnosticBatch,
   diagnosticBodyRetentionMs,
   diagnosticGraceMs,
   diagnosticRetentionMs,
   maxDiagnosticBatch,
   maxDiagnosticBytes,
   runTraceId,
-  type DiagnosticBatch,
   type DiagnosticAttributes,
 } from "@tailos/core/diagnostics";
 import { redactDiagnosticBody } from "@tailos/diagnostics";
@@ -69,7 +68,7 @@ export async function ingestDiagnostics(
   input: DiagnosticBatch,
   secrets: Iterable<string> = [],
 ) {
-  const batch = v.parse(diagnosticBatchSchema, input);
+  const batch = v.parse(DiagnosticBatch, input);
   if (batch.producerId !== producerId)
     throw new Error("Diagnostic producer mismatch");
   const records = [];

@@ -21,8 +21,8 @@ import {
 } from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
-  fileChangesSchema,
-  runnerStatusSchema,
+  FileChanges,
+  RunnerStatus,
   type CheckedPublication,
   type ExecutionContext,
   type RunnerJob,
@@ -573,7 +573,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       const content = await object?.text();
       if (!content || (await publicationDigest(content)) !== pending.digest)
         throw new Error("Checked publication unavailable");
-      const changes = v.parse(fileChangesSchema, JSON.parse(content));
+      const changes = v.parse(FileChanges, JSON.parse(content));
       const sha = await observeRun(
         this.env.DB,
         runId,
@@ -700,7 +700,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await reply.body?.cancel();
       throw new Error("Runner status unavailable");
     }
-    return v.parse(runnerStatusSchema, await reply.json());
+    return v.parse(RunnerStatus, await reply.json());
   }
 
   private async publish(

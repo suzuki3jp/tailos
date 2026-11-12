@@ -1,5 +1,5 @@
 import type { TerminalResult } from "@/application/runs/artifacts.ts";
-import { runnerEventSchema, type RunnerEvent } from "@tailos/core/runner";
+import { RunnerEvent } from "@tailos/core/runner";
 import * as v from "valibot";
 
 export type RunArtifactsBucket = {
@@ -29,7 +29,7 @@ const artifactSchema = v.strictObject({
     v.strictObject({ status: v.literal("succeeded") }),
     v.strictObject({ status: v.literal("failed"), errorCode: v.string() }),
   ]),
-  events: v.pipe(v.array(runnerEventSchema), v.maxLength(20)),
+  events: v.pipe(v.array(RunnerEvent), v.maxLength(20)),
 });
 
 const key = (runId: string) => `tailos-api/v1/runs/${runId}/execution.json`;

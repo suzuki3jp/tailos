@@ -20,7 +20,7 @@ export const diagnosticGraceMs = 120_000;
 export const diagnosticRetentionMs = 90 * 24 * 60 * 60_000;
 export const diagnosticBodyRetentionMs = 30 * 24 * 60 * 60_000;
 
-export const diagnosticContextSchema = v.strictObject({
+export const DiagnosticContext = v.strictObject({
   traceId: id,
   parentSpanId: id,
   producerId: v.pipe(v.string(), v.uuid()),
@@ -28,9 +28,9 @@ export const diagnosticContextSchema = v.strictObject({
   bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
   expiresAt: timestamp,
 });
-export type DiagnosticContext = v.InferOutput<typeof diagnosticContextSchema>;
+export type DiagnosticContext = v.InferOutput<typeof DiagnosticContext>;
 
-export const diagnosticAttributesSchema = v.strictObject({
+export const DiagnosticAttributes = v.strictObject({
   operation: v.optional(
     v.picklist([
       "request",
@@ -95,11 +95,9 @@ export const diagnosticAttributesSchema = v.strictObject({
   ),
   dropped: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(0))),
 });
-export type DiagnosticAttributes = v.InferOutput<
-  typeof diagnosticAttributesSchema
->;
+export type DiagnosticAttributes = v.InferOutput<typeof DiagnosticAttributes>;
 
-export const diagnosticRecordSchema = v.strictObject({
+export const DiagnosticRecord = v.strictObject({
   eventId: v.pipe(v.string(), v.uuid()),
   spanId: id,
   parentSpanId: v.optional(id),
@@ -117,15 +115,15 @@ export const diagnosticRecordSchema = v.strictObject({
     "output",
     "capture.truncated",
   ]),
-  attributes: diagnosticAttributesSchema,
+  attributes: DiagnosticAttributes,
   body: v.optional(v.pipe(v.string(), v.maxLength(maxDiagnosticBody))),
 });
-export type DiagnosticRecord = v.InferOutput<typeof diagnosticRecordSchema>;
-export const diagnosticBatchSchema = v.strictObject({
+export type DiagnosticRecord = v.InferOutput<typeof DiagnosticRecord>;
+export const DiagnosticBatch = v.strictObject({
   version: v.literal(1),
   batchId: v.pipe(v.string(), v.uuid()),
   producerId: v.pipe(v.string(), v.uuid()),
-  records: v.pipe(v.array(diagnosticRecordSchema), v.maxLength(32)),
+  records: v.pipe(v.array(DiagnosticRecord), v.maxLength(32)),
   completed: v.optional(
     v.strictObject({
       lastSeq: v.pipe(
@@ -138,9 +136,9 @@ export const diagnosticBatchSchema = v.strictObject({
     }),
   ),
 });
-export type DiagnosticBatch = v.InferOutput<typeof diagnosticBatchSchema>;
+export type DiagnosticBatch = v.InferOutput<typeof DiagnosticBatch>;
 export const parseDiagnosticBatch = (input: unknown) =>
-  v.parse(diagnosticBatchSchema, input);
+  v.parse(DiagnosticBatch, input);
 
 export const runTraceId = (runId: string) => `run/${runId}`;
 

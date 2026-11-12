@@ -1,14 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import {
-  checkedPublicationSchema,
+  CheckedPublication,
   maxPublicationBytes,
-  runnerJobSchema,
-  runnerStatusSchema,
-  type CheckedPublication,
+  RunnerJob,
+  RunnerStatus,
   type RunnerEvent,
-  type RunnerJob,
-  type RunnerStatus,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
@@ -57,7 +54,7 @@ async function stagePublication(
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("Invalid publication URL");
   const body = JSON.stringify(
-    v.parse(checkedPublicationSchema, {
+    v.parse(CheckedPublication, {
       kind: "checked",
       ...work,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
@@ -130,7 +127,7 @@ async function execute(
               .reply,
           };
     signal.throwIfAborted();
-    terminal = v.parse(runnerStatusSchema, {
+    terminal = v.parse(RunnerStatus, {
       status: "succeeded",
       ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
@@ -179,7 +176,7 @@ export function createRunnerServer(
         return;
       }
       if (request.method === "POST" && request.url === "/job") {
-        const parsed = v.safeParse(runnerJobSchema, await readJson(request));
+        const parsed = v.safeParse(RunnerJob, await readJson(request));
         if (
           !parsed.success ||
           parsed.output.deadlineAt > Date.now() + 30 * 60_000

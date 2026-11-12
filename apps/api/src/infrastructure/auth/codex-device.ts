@@ -32,7 +32,7 @@ const identitySchema = v.object({
   }),
 });
 
-export const codexCredentialsSchema = v.strictObject({
+export const CodexCredentials = v.strictObject({
   accessToken: nonempty,
   refreshToken: nonempty,
   idToken: nonempty,
@@ -40,7 +40,7 @@ export const codexCredentialsSchema = v.strictObject({
   planType: v.optional(nonempty),
   expiresAt: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
 });
-export type CodexCredentials = v.InferOutput<typeof codexCredentialsSchema>;
+export type CodexCredentials = v.InferOutput<typeof CodexCredentials>;
 
 export class ReauthenticationRequired extends Error {}
 

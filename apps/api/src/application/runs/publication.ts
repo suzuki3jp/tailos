@@ -1,27 +1,27 @@
 import {
   checkedPublicationFields,
   gitSha,
-  runnerEventSchema,
+  RunnerEvent,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 
-export const legacyPublicationSchema = v.strictObject({
+export const LegacyPublication = v.strictObject({
   kind: v.picklist(["prepared", "pushed"]),
   branch: v.pipe(v.string(), v.maxLength(255)),
   sha: gitSha,
   reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
-  events: v.pipe(v.array(runnerEventSchema), v.maxLength(20)),
+  events: v.pipe(v.array(RunnerEvent), v.maxLength(20)),
 });
 export const checkedCheckpointSchema = v.strictObject({
   ...checkedPublicationFields,
   digest: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
 });
-const pendingPublicationSchema = v.union([
+export const PendingPublication = v.union([
   checkedCheckpointSchema,
-  legacyPublicationSchema,
+  LegacyPublication,
 ]);
 const stateSchema = v.object({
-  pendingPublication: v.optional(pendingPublicationSchema),
+  pendingPublication: v.optional(PendingPublication),
   publicationStartedAt: v.optional(
     v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
   ),
@@ -31,8 +31,8 @@ const stateSchema = v.object({
 // short window to reconcile GitHub and D1 after an ambiguous response.
 export const publicationRecoveryMs = 30_000;
 
-export type PendingPublication = v.InferOutput<typeof pendingPublicationSchema>;
-export type LegacyPublication = v.InferOutput<typeof legacyPublicationSchema>;
+export type PendingPublication = v.InferOutput<typeof PendingPublication>;
+export type LegacyPublication = v.InferOutput<typeof LegacyPublication>;
 
 export function pendingPublication(
   stepState: string | null,

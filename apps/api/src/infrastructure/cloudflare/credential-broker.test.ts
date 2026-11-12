@@ -1,6 +1,6 @@
 import { expect, test, type TestContext } from "vitest";
 import { fileURLToPath } from "node:url";
-import { codexAccessSchema } from "@tailos/core/runner";
+import { CodexAccess } from "@tailos/core/runner";
 import * as v from "valibot";
 import { build } from "esbuild";
 import {
@@ -194,7 +194,7 @@ test("serializes access rotation and invalidates a revoked connection", async (t
     state: "connected",
   });
 
-  const initial = v.parse(codexAccessSchema, await rpc("issueAccess"));
+  const initial = v.parse(CodexAccess, await rpc("issueAccess"));
   expect(initial.accessToken).toBe("rotated-access-1");
   expect(await rpc("issueAccess")).toStrictEqual(initial);
   expect(
@@ -212,7 +212,7 @@ test("serializes access rotation and invalidates a revoked connection", async (t
     rpc("issueAccess", rejected),
     rpc("issueAccess", rejected),
   ]);
-  const left = v.parse(codexAccessSchema, leftResponse);
+  const left = v.parse(CodexAccess, leftResponse);
   expect(left).toStrictEqual(right);
   expect(left.accessToken).toBe("rotated-access-2");
   expect(left.accessVersion).not.toBe(initial.accessVersion);

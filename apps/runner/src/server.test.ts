@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { assert, expect, test, vi, type TestContext } from "vitest";
 import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
-import { runnerStatusSchema, type RunnerJob } from "@tailos/core/runner";
+import { RunnerStatus, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   AgentSandboxUnavailable,
@@ -71,7 +71,7 @@ function diagnosticJob(deadlineAt: number): RunnerJob {
 async function terminalStatus(origin: string, runId: string) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const result = v.parse(
-      runnerStatusSchema,
+      RunnerStatus,
       await (await fetch(`${origin}/job/${runId}`)).json(),
     );
     if (result.status !== "running") return result;
@@ -156,7 +156,7 @@ test("executes the selected agent once and rejects a different job", async (t) =
   );
   expect(calls).toBe(1);
   const result = v.parse(
-    runnerStatusSchema,
+    RunnerStatus,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
   assert(result.status === "succeeded");
@@ -188,7 +188,7 @@ test("cancels an active adapter at the job deadline", async (t) => {
   assert(signal);
   if (!signal.aborted) await once(signal, "abort");
   const result = v.parse(
-    runnerStatusSchema,
+    RunnerStatus,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
   assert(result.status === "failed");
@@ -214,7 +214,7 @@ test("reports out-of-contract replies as agent failures", async (t) => {
   };
   expect((await sendJob(origin, job)).status).toBe(202);
   const result = v.parse(
-    runnerStatusSchema,
+    RunnerStatus,
     await (await fetch(`${origin}/job/${job.runId}`)).json(),
   );
   assert(result.status === "failed");
@@ -240,7 +240,7 @@ test("reports a sandbox startup failure as a failed job", async (t) => {
   };
   expect((await sendJob(origin, job)).status).toBe(202);
   const response = await fetch(`${origin}/job/${job.runId}`);
-  expect(v.parse(runnerStatusSchema, await response.json())).toMatchObject({
+  expect(v.parse(RunnerStatus, await response.json())).toMatchObject({
     status: "failed",
     errorCode: "sandbox_unavailable",
   });

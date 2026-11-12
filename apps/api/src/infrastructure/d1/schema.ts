@@ -225,6 +225,23 @@ export const users = sqliteTable("users", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const mcpKeys = sqliteTable(
+  "mcp_keys",
+  {
+    id: text().primaryKey().notNull(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    prefix: text().notNull(),
+    sha256: text().notNull().unique(),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    revokedAt: integer("revoked_at"),
+  },
+  (t) => [index("mcp_key_owner").on(t.ownerId, t.createdAt)],
+);
+
 export const authAccounts = sqliteTable(
   "auth_accounts",
   {

@@ -46,6 +46,9 @@ export function Account() {
     <div className="space-y-4">
       <p className="text-signal">GitHub でログイン済みです。</p>
       <div className="flex flex-wrap gap-3">
+        <a href="/mcp" className="action">
+          MCP キーを管理
+        </a>
         {data.connectEnabled && (
           <a href="/connect" className="action action-primary">
             ChatGPT 接続を開く

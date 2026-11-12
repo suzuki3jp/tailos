@@ -50,7 +50,7 @@ function setup(t) {
       privateMode: (fs.statSync(secretsPath).mode & 511) === 384,
     };
     record({
-      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.BETTER_AUTH_SECRET || process.env.TAILOS_GITHUB_OAUTH_CLIENT_SECRET || process.env.CREDENTIAL_ENCRYPTION_KEY || process.env.TAILOS_MCP_READ_KEY_CONFIG),
+      command: args.slice(0, args.indexOf("--config")), config, runtime, secretInEnvironment: Boolean(process.env.BETTER_AUTH_SECRET || process.env.TAILOS_GITHUB_OAUTH_CLIENT_SECRET || process.env.CREDENTIAL_ENCRYPTION_KEY),
     });
   `,
   );
@@ -63,7 +63,7 @@ function setup(t) {
     fs.appendFileSync("capture.ndjson", JSON.stringify({
       command: process.argv.slice(2),
       secretInEnvironment: Object.keys(process.env).some((name) =>
-        /^(CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|TAILOS_GITHUB_OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY|TAILOS_GH_APP_PRIVATE_KEY|TAILOS_GH_WEBHOOK_SECRET|TAILOS_MCP_READ_KEY_CONFIG)$/.test(name),
+        /^(CLOUDFLARE_API_TOKEN|BETTER_AUTH_SECRET|TAILOS_GITHUB_OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY|TAILOS_GH_APP_PRIVATE_KEY|TAILOS_GH_WEBHOOK_SECRET)$/.test(name),
       ),
     }) + "\\n");
     if (fs.existsSync("fail-build")) process.exit(1);
@@ -226,31 +226,6 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(misconfigured.status).not.toBe(0);
   expect(misconfigured.stderr).toMatch(/GitHub projects require/);
   expect(readCalls().length).toBe(calls.length);
-});
-
-test("deploy validates MCP key metadata, isolates its secret, and disables MCP when removed", (t) => {
-  const { cwd, runDeploy, readCalls } = setup(t);
-  for (const marker of ["database", "bucket"])
-    writeFileSync(join(cwd, marker), "");
-  const keyConfig = JSON.stringify({
-    version: 1,
-    ownerId: "306443bc-60f2-4ce4-b356-310abbe634fd",
-    sha256: "a".repeat(64),
-    expiresAt: 1,
-  });
-  const invalid = runDeploy({ TAILOS_MCP_READ_KEY_CONFIG: "{}" });
-  expect(invalid.status).not.toBe(0);
-  expect(invalid.stderr).toContain("requires valid key metadata");
-  const enabled = runDeploy({ TAILOS_MCP_READ_KEY_CONFIG: keyConfig });
-  expect(enabled.status, enabled.stderr).toBe(0);
-  const calls = readCalls();
-  expect(calls.at(-1).config.vars.TAILOS_MCP_ENABLED).toBe("true");
-  expect(calls.at(-1).config.vars.TAILOS_MCP_READ_KEY_CONFIG).toBeUndefined();
-  expect(calls.at(-1).runtime.names).toContain("TAILOS_MCP_READ_KEY_CONFIG");
-  for (const call of calls) expect(call.secretInEnvironment).not.toBe(true);
-  const disabled = runDeploy();
-  expect(disabled.status, disabled.stderr).toBe(0);
-  expect(readCalls().at(-1).config.vars.TAILOS_MCP_ENABLED).toBe("false");
 });
 
 test("deploy never migrates when the Runner cannot build", (t) => {

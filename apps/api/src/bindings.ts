@@ -24,6 +24,4 @@ export type Bindings = {
   TAILOS_GITHUB_OAUTH_CLIENT_ID?: string;
   TAILOS_GITHUB_OAUTH_CLIENT_SECRET?: string;
   TAILOS_OPERATOR_GITHUB_ID?: string;
-  TAILOS_MCP_ENABLED?: string;
-  TAILOS_MCP_READ_KEY_CONFIG?: string;
 };

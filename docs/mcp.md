@@ -14,19 +14,23 @@ Authorization: Bearer <apiKey>
 
 OAuth の自動ログインは実装していない。このエンドポイントの Bearer は事前に発行した API key であり、GitHub、ChatGPT、smoke API の資格情報とは交換できない。ブラウザの Cookie も受け付けない。Origin がある場合は、設定した API または Web の Origin と一致する必要がある。ブラウザから任意 Origin で呼ぶための CORS は公開しない。
 
-## キーの発行と有効化
+## Web からキーを発行する
 
-1. 運用者が Web に一度 GitHub ログインし、Tailos ユーザーを作成する。
-2. `apps/api` で `pnpm exec wrangler d1 execute DB --remote --command "SELECT user_id FROM auth_accounts WHERE provider_id = 'github' AND account_id = '<TAILOS_OPERATOR_GITHUB_ID>'"` を実行し、運用者の Tailos user UUID を確認する。
-3. リポジトリのルートから `pnpm --filter @tailos/api mcp:key <Tailos user UUID>` を実行する。キーは256ビットの乱数で、既定の有効期間は30日。末尾に日数を指定できる（1〜90日）。コマンドは API key と、その SHA-256・所有者・有効期限を含む設定を出力し、デプロイや書き込みは行わない。
-4. 出力の `TAILOS_MCP_READ_KEY_CONFIG` の文字列値を GitHub Actions の `production` Environment Secret に登録する。`apiKey` は MCP クライアントだけに登録する。発行コマンドの出力をリポジトリや CI ログに保存しない。
-5. 通常の API デプロイで有効になる。デプロイ処理は設定を Worker Secret に保存し、`TAILOS_MCP_ENABLED=true` を設定する。サーバーには API key の平文を保存しない。
+1. [Tailos](https://tailos.app/login) に GitHub でログインする。
+2. メニューの **MCP 接続**（`/mcp`）を開く。
+3. 用途が分かるキー名と有効期間（7日・30日・90日）を選び、**キーを発行**を押す。
+4. 表示されたキーをコピーし、Agent の API key / Bearer token に設定する。平文のキーは発行直後だけ表示され、画面を閉じると再表示できない。
+5. 同じ画面の接続先 URL を MCP クライアントに登録する。発行した時点で使え、キーごとのサーバー設定やデプロイは不要。
 
-キーは1個の運用者 UUID に固定され、毎リクエストで現在の GitHub 運用者との対応も照合する。GitHub の運用者を切り替えても、旧キーに新運用者の閲覧権限を移さない。スコープは所有する Session・Run と、Web で同じ運用者が閲覧できる diagnostics の read のみ。diagnostics は運用者向けの既存権限に従い、所有者未確定の受付 Trace も含む。
+一覧ではキー名、識別用の先頭部分、発行日と有効期限を確認できる。使わなくなったキーは **失効** を押すとすぐに使えなくなる。更新するときは新しいキーを発行して Agent の設定を置き換え、旧キーを失効する。未失効のキーは期限切れを含めて20件まで作成できる。
 
-更新・ローテーションは新しく発行して同じ Secret を置き換え、デプロイする。旧キーはその時点で無効になる。即時失効は `apps/api` で `pnpm exec wrangler secret delete TAILOS_MCP_READ_KEY_CONFIG` を実行し、再デプロイで戻らないよう GitHub の Secret も削除する。GitHub の Secret が未設定のデプロイでは `TAILOS_MCP_ENABLED=false` にするため、以前の Worker Secret が残っていても受け付けない。期限はデプロイと独立して毎回検査する。
+サーバーは D1 の `mcp_keys` に SHA-256、所有者、期限、失効状態と表示用のメタデータだけを保存する。平文は発行応答だけに含め、一覧やブラウザの永続ストレージには保存しない。キーの管理 API は Web の運用者ログインと Origin の検証で保護し、MCP のキーでは別のキーを発行・失効できない。
 
-ローカルでは `.dev.vars` に `TAILOS_MCP_ENABLED="true"` と `TAILOS_MCP_READ_KEY_CONFIG` を設定する。ローカル D1 内のユーザーに対して別のキーを発行し、`http://localhost:8787/mcp` を使う。
+毎リクエストでキーの所有者と現在の GitHub 運用者との対応も照合する。運用者を切り替えても、旧キーに新運用者の権限を移さない。権限は所有する Session・Run と、Web で同じ運用者が閲覧できる diagnostics の read のみ。所有者未確定の受付 Trace も既存の diagnostics の運用者権限に従う。
+
+以前の CLI と `TAILOS_MCP_READ_KEY_CONFIG` / `TAILOS_MCP_ENABLED` による設定は廃止した。旧 Secret のキーは認証に使われないため、Web でキーを発行し直す。新機能のデプロイでは migration `0005` がキーのテーブルを作成する。
+
+ローカルでも Web の GitHub ログインから同じ画面を使う。接続先 URL は API の `TAILOS_PUBLIC_ORIGIN` から返し、通常は `http://localhost:8787/mcp` になる。
 
 ## 調査の流れ
 

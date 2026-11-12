@@ -36,6 +36,8 @@ import { createDiagnosticIngestRoutes } from "@/presentation/http/handlers/diagn
 import { authenticateMcpKey } from "@/infrastructure/auth/mcp-key.ts";
 import { inspectionStore } from "@/infrastructure/inspection.ts";
 import { createMcpRoutes } from "@/presentation/http/handlers/mcp/mcp.ts";
+import { createMcpKeyRoutes } from "@/presentation/http/handlers/mcp-keys/mcp-keys.ts";
+import { d1McpKeys } from "@/infrastructure/d1/mcp-keys.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -102,6 +104,10 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
   )
   .route("/connect", connectRoutes)
   .route("/sessions", userSessionRoutes)
+  .route(
+    "/mcp-keys",
+    createMcpKeyRoutes((env) => d1McpKeys(env.DB), operatorAuth),
+  )
   .route(
     "/diagnostics",
     createDiagnosticRoutes(

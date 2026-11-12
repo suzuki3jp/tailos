@@ -37,13 +37,19 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </Link>
             <nav
               aria-label="メインメニュー"
-              className="flex gap-5 text-sm text-muted"
+              className="flex gap-3 text-sm text-muted sm:gap-5"
             >
               <Link
                 href="/connect"
                 className="inline-flex min-h-11 items-center hover:text-ink"
               >
                 ChatGPT 接続
+              </Link>
+              <Link
+                href="/mcp"
+                className="inline-flex min-h-11 items-center hover:text-ink"
+              >
+                MCP 接続
               </Link>
               <Link
                 href="/login"

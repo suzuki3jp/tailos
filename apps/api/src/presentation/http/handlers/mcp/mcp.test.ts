@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { d1McpKeys } from "@/infrastructure/d1/mcp-keys.ts";
 import { assert, expect, test, vi, type TestContext } from "vitest";
 import app from "@/bootstrap/http.ts";
 import {
@@ -29,18 +30,16 @@ async function setup(t: TestContext) {
   const bindings = await createTestBindings(t);
   const login = testLoginBindings(bindings.DB);
   const operator = await createTestOperator(login);
-  const config = {
-    version: 1,
-    ownerId: operator.id,
+  const keyId = crypto.randomUUID();
+  await d1McpKeys(bindings.DB).create(operator.id, {
+    id: keyId,
+    name: "Test",
+    prefix: key.slice(0, 20),
     sha256: digest,
+    createdAt: Date.now(),
     expiresAt: Date.now() + 60_000,
-  };
-  const env = {
-    ...bindings,
-    ...login,
-    TAILOS_MCP_ENABLED: "true",
-    TAILOS_MCP_READ_KEY_CONFIG: JSON.stringify(config),
-  };
+  });
+  const env = { ...bindings, ...login };
   const url = env.TAILOS_PUBLIC_ORIGIN + "/mcp";
   function request(
     method: string,
@@ -143,7 +142,7 @@ async function setup(t: TestContext) {
       .run();
     return { sessionId, messageId, runId };
   }
-  return { env, operator, config, url, request, rpc, call, seed };
+  return { env, operator, keyId, url, request, rpc, call, seed };
 }
 
 test("MCP requires its own unexpired, owner-bound key and validates the origin and method", async (t) => {
@@ -158,12 +157,16 @@ test("MCP requires its own unexpired, owner-bound key and validates the origin a
       { method, headers: { Authorization: `Bearer ${key}`, ...headers } },
       env,
     );
-  expect((await send({ ...f.env, TAILOS_MCP_ENABLED: "false" })).status).toBe(
+  expect((await send({ ...f.env, TAILOS_OPERATOR_GITHUB_ID: "" })).status).toBe(
     404,
   );
   expect(
-    (await send({ ...f.env, TAILOS_MCP_READ_KEY_CONFIG: "{}" })).status,
-  ).toBe(404);
+    (
+      await send(f.env, {
+        Authorization: "Bearer tailos_read_" + "y".repeat(43),
+      })
+    ).status,
+  ).toBe(401);
   expect(
     (
       await send(f.env, {
@@ -176,30 +179,15 @@ test("MCP requires its own unexpired, owner-bound key and validates the origin a
     (await send(f.env, { Authorization: "", Cookie: f.operator.cookie }))
       .status,
   ).toBe(401);
-  expect(
-    (
-      await send({
-        ...f.env,
-        TAILOS_MCP_READ_KEY_CONFIG: JSON.stringify({
-          ...f.config,
-          expiresAt: Date.now() - 1,
-        }),
-      })
-    ).status,
-  ).toBe(401);
+  await f.env.DB.prepare("UPDATE mcp_keys SET expires_at = ? WHERE id = ?")
+    .bind(Date.now() - 1, f.keyId)
+    .run();
+  expect((await send()).status).toBe(401);
+  await f.env.DB.prepare("UPDATE mcp_keys SET expires_at = ? WHERE id = ?")
+    .bind(Date.now() + 60_000, f.keyId)
+    .run();
   expect(
     (await send({ ...f.env, TAILOS_OPERATOR_GITHUB_ID: "999" })).status,
-  ).toBe(401);
-  expect(
-    (
-      await send({
-        ...f.env,
-        TAILOS_MCP_READ_KEY_CONFIG: JSON.stringify({
-          ...f.config,
-          ownerId: crypto.randomUUID(),
-        }),
-      })
-    ).status,
   ).toBe(401);
   expect((await send(f.env, { Origin: "https://other.example" })).status).toBe(
     403,

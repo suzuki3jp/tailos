@@ -206,7 +206,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     container.start({
       image,
-      instance: enableInternet ? "standard-1" : "lite",
+      instance: enableInternet ? "standard-3" : "lite",
       enableInternet,
     });
     await container.setInactivityTimeout(

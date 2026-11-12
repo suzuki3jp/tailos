@@ -1,4 +1,4 @@
 *
 !dist/
-!dist/runner.mjs
+!dist/runner.cjs
 !Dockerfile

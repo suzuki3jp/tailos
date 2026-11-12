@@ -13,7 +13,7 @@ export type IssueNotification = {
 };
 export class NotificationError extends Error {
   constructor(
-    public category: "permission" | "rate_limit" | "transient",
+    public category: "permission" | "permanent" | "rate_limit" | "transient",
     public retryAt?: number,
   ) {
     super(category);
@@ -70,10 +70,12 @@ export async function sendIssueNotifications(
         outcome: "applied",
       });
     } catch (error) {
-      const category =
+      const failure =
         error instanceof NotificationError ? error.category : "transient";
+      const category =
+        failure === "transient" && n.attempts >= 20 ? "permanent" : failure;
       const retryAt =
-        category === "permission"
+        category === "permission" || category === "permanent"
           ? null
           : error instanceof NotificationError && error.retryAt
             ? error.retryAt

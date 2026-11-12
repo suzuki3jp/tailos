@@ -189,6 +189,47 @@ test("lease expiry recovers and permission failures stop retrying", async (t) =>
   ).toBeNull();
 });
 
+test.for(["permanent", "transient"] as const)(
+  "stops %s failures without reviving retries when the run finishes",
+  async (category, t) => {
+    const db = await createTestDb(t);
+    const run = await admitTrigger(db, input);
+    const store = issueNotificationStore(db);
+    // A transient failure gets one more attempt before reaching the limit.
+    await db.prepare("UPDATE issue_notifications SET attempts = 18").run();
+    let calls = 0;
+    const publish = async () => {
+      calls++;
+      throw new NotificationError(category);
+    };
+    await sendIssueNotifications(store, "https://tailos.app", publish);
+    if (category === "transient") {
+      expect(
+        await db
+          .prepare("SELECT error_category FROM issue_notifications")
+          .first("error_category"),
+      ).toBe("transient");
+      await db
+        .prepare("UPDATE issue_notifications SET next_attempt_at = 0")
+        .run();
+      await sendIssueNotifications(store, "https://tailos.app", publish);
+    }
+    expect(
+      await db
+        .prepare(
+          "SELECT error_category, next_attempt_at FROM issue_notifications",
+        )
+        .first(),
+    ).toEqual({ error_category: "permanent", next_attempt_at: null });
+    await db
+      .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
+      .bind(run.runId)
+      .run();
+    expect(await store.claim()).toEqual([]);
+    expect(calls).toBe(category === "transient" ? 2 : 1);
+  },
+);
+
 test("comment renders only image and session link plus hidden marker", () => {
   expect(
     commentBody("https://tailos.app", {

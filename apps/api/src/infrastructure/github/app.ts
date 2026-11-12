@@ -186,7 +186,11 @@ export class GitHubApp {
             ? "rate_limit"
             : [401, 403, 404].includes(error.status)
               ? "permission"
-              : "transient",
+              : error.status >= 400 &&
+                  error.status < 500 &&
+                  ![408, 409, 422].includes(error.status)
+                ? "permanent"
+                : "transient",
           error.retryAt,
         );
       throw error;

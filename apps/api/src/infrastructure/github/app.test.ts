@@ -379,6 +379,8 @@ test("recovers an ambiguous comment across all pages and rejects copied markers"
 
 test.for([
   [403, {}, "permission", "Resource not accessible by integration"],
+  [410, {}, "permanent", "Issues are disabled for this repository"],
+  [400, {}, "permanent", "Bad Request"],
   [429, { "retry-after": "120" }, "rate_limit", ""],
   [
     403,

@@ -62,6 +62,8 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 既存インストールでは App 設定の権限変更後、GitHub のインストール設定で追加権限のリクエストを確認して承認する。未承認の間は通知が permission 状態で停止するため、承認後に該当する `issue_notifications` の `error_category` を NULL、`next_attempt_at` を 0 に戻して再送する。通知用の書き込みトークンは API Worker 内だけで使用し、使用後に失効させる。
 
+恒久的な API エラー、または一時障害で通算 20 回の送信試行に達した通知は permanent 状態で停止する。原因を解消して手動で再送する場合は、該当する通知の `error_category` を NULL、`next_attempt_at` を 0、`attempts` を 0 に戻す。レート制限は指定された待機時間とバックオフに従って再試行する。
+
 既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents・Issues・Pull requests の読み取りに限定される。Agent は Runner のツールを使って Issue と PR を番号で参照できる。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 
 デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果に含まれる `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。

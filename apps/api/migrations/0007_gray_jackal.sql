@@ -22,7 +22,7 @@ CREATE TRIGGER issue_notification_terminal AFTER UPDATE OF status ON runs
 WHEN NEW.status IN ('succeeded', 'failed') AND OLD.status != NEW.status
 BEGIN
   UPDATE issue_notifications SET desired_state = NEW.status, version = version + 1,
-    next_attempt_at = CASE WHEN error_category = 'permission' THEN NULL
+    next_attempt_at = CASE WHEN error_category IN ('permission', 'permanent') THEN NULL
       WHEN error_category = 'rate_limit' THEN next_attempt_at ELSE 0 END
   WHERE run_id = NEW.id;
 END;

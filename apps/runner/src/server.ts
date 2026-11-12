@@ -19,6 +19,7 @@ import {
 } from "@/agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
 import { runInGitWorkspace } from "@/git-workspace.ts";
+import { RunnerDiagnostics } from "@/diagnostics.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 
@@ -79,15 +80,35 @@ async function stagePublication(
     throw new Error("Publication checkpoint unavailable");
 }
 
-async function execute(job: CurrentJob, agent: AgentAdapter) {
+async function execute(
+  job: CurrentJob,
+  agent: AgentAdapter,
+  requestId: string,
+) {
+  const diagnostics = new RunnerDiagnostics(job.input, fetch, requestId);
+  const span = diagnostics.start(
+    "runner",
+    JSON.stringify({
+      engine: job.input.engine,
+      deadlineAt: job.input.deadlineAt,
+    }),
+  );
+  diagnostics.setParentSpan(span);
   const events: RunnerEvent[] = [{ type: "job_started", at: Date.now() }];
   const remaining = job.input.deadlineAt - Date.now();
   if (remaining <= 0) {
     events.push({ type: "job_failed", at: Date.now() });
+    diagnostics.end(span, { outcome: "failed", reason: "deadline" });
+    await diagnostics.finish(0);
     job.state = { status: "failed", errorCode: "deadline_exceeded", events };
     return;
   }
   const signal = AbortSignal.timeout(remaining);
+  let terminal: RunnerStatus = {
+    status: "failed",
+    errorCode: "agent_failed",
+    events,
+  };
   try {
     const input = job.input;
     const result =
@@ -95,16 +116,26 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
         ? await runInGitWorkspace(
             input.checkout,
             signal,
-            (cwd) => agent.run(input, signal, cwd),
-            (work) => stagePublication(input, work, events, signal),
+            (cwd) => agent.run(input, signal, cwd, diagnostics),
+            async (work) => {
+              if (input.deadlineAt - Date.now() > 2_000)
+                await diagnostics.flush(1_000);
+              return stagePublication(input, work, events, signal);
+            },
+            undefined,
+            diagnostics,
           )
-        : { reply: (await agent.run(input, signal)).reply };
+        : {
+            reply: (await agent.run(input, signal, undefined, diagnostics))
+              .reply,
+          };
     signal.throwIfAborted();
-    job.state = v.parse(runnerStatusSchema, {
+    terminal = v.parse(runnerStatusSchema, {
       status: "succeeded",
       ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
     });
+    diagnostics.end(span, { outcome: "succeeded" }, result.reply);
   } catch (error) {
     events.push({ type: "job_failed", at: Date.now() });
     const errorCode =
@@ -113,11 +144,22 @@ async function execute(job: CurrentJob, agent: AgentAdapter) {
         : error instanceof PublicationFailed
           ? error.code
           : "agent_failed";
-    job.state = {
+    terminal = {
       status: "failed",
       errorCode: signal.aborted ? "deadline_exceeded" : errorCode,
       events,
     };
+    diagnostics.end(span, {
+      outcome: "failed",
+      ...(signal.aborted ? { reason: "deadline" as const } : {}),
+    });
+  } finally {
+    // Do not expose a terminal status until its bounded final flush has had a
+    // chance to finish: the controller destroys the container after that status.
+    await diagnostics.finish(
+      Math.max(0, Math.min(4_000, job.input.deadlineAt - Date.now() - 100)),
+    );
+    job.state = terminal;
   }
 }
 
@@ -129,6 +171,8 @@ export function createRunnerServer(
 ) {
   let current: CurrentJob | undefined;
   return createServer(async (request, response) => {
+    const requestId = crypto.randomUUID();
+    response.setHeader("X-Request-ID", requestId);
     try {
       if (request.method === "GET" && request.url === "/health") {
         json(response, 200, { status: "ok", service: "runner" });
@@ -146,7 +190,7 @@ export function createRunnerServer(
 
         if (!current) {
           current = { input: parsed.output, state: { status: "running" } };
-          void execute(current, agents[parsed.output.engine]);
+          void execute(current, agents[parsed.output.engine], requestId);
         } else if (
           JSON.stringify(current.input) !== JSON.stringify(parsed.output)
         ) {

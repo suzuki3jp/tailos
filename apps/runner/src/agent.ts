@@ -1,9 +1,15 @@
 import type { RunnerJob } from "@tailos/core/runner";
+import type { Diagnostics } from "@tailos/core/diagnostics";
 
 export type AgentResult = { reply: string; headline?: string };
 
 export interface AgentAdapter {
-  run(job: RunnerJob, signal: AbortSignal, cwd?: string): Promise<AgentResult>;
+  run(
+    job: RunnerJob,
+    signal: AbortSignal,
+    cwd?: string,
+    diagnostics?: Diagnostics,
+  ): Promise<AgentResult>;
 }
 
 export class AgentSandboxUnavailable extends Error {}

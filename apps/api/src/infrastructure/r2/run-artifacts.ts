@@ -6,6 +6,11 @@ export type RunArtifactsBucket = {
   get(key: string): Promise<{ text(): Promise<string> } | null>;
   put(key: string, contents: string): Promise<unknown>;
   delete?(key: string): Promise<void>;
+  list?(options: { prefix: string; limit: number; cursor?: string }): Promise<{
+    objects: { key: string; uploaded: Date }[];
+    truncated: boolean;
+    cursor?: string;
+  }>;
 };
 
 type ArtifactRecord = {

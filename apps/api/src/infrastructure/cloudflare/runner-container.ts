@@ -35,6 +35,21 @@ import {
   type RunnerDriver,
   type RunRequest,
 } from "@/application/runs/advance-run.ts";
+import {
+  diagnosticBodyRetentionMs,
+  diagnosticGraceMs,
+  runTraceId,
+  type DiagnosticBatch,
+  type DiagnosticContext,
+} from "@tailos/core/diagnostics";
+import {
+  expireDiagnostics,
+  ingestDiagnostics,
+  observeRun,
+  recordRunDiagnostic,
+  registerDiagnosticProducer,
+} from "@/infrastructure/diagnostics/store.ts";
+import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -52,6 +67,12 @@ type RefreshLease = {
   expiresAt: number;
   lastRefreshAt: number;
 };
+type DiagnosticLease = {
+  digest: string;
+  runId: string;
+  producerId: string;
+  expiresAt: number;
+};
 
 const publicationKey = (runId: string, digest: string) =>
   `tailos-api/v1/runs/${runId}/publication-${digest}.json`;
@@ -65,6 +86,27 @@ async function publicationDigest(content: string) {
 }
 
 export class RunnerContainer extends DurableObject<Bindings> {
+  private pollUnavailable = false;
+  async cleanupDiagnostics() {
+    await expireDiagnostics(this.env.DB, this.env.RUN_ARTIFACTS);
+    const bucket = this.env.RUN_ARTIFACTS;
+    if (!bucket?.list || !bucket.delete) return;
+    const cursor = await this.ctx.storage.get<string>(
+      "diagnosticCleanupCursor",
+    );
+    const page = await bucket.list({
+      prefix: "diagnostics/v1/",
+      limit: 100,
+      cursor,
+    });
+    for (const object of page.objects) {
+      if (object.uploaded.getTime() + diagnosticBodyRetentionMs <= Date.now())
+        await bucket.delete(object.key);
+    }
+    if (page.truncated && page.cursor)
+      await this.ctx.storage.put("diagnosticCleanupCursor", page.cursor);
+    else await this.ctx.storage.delete("diagnosticCleanupCursor");
+  }
   async checkHealth(): Promise<boolean> {
     try {
       await this.startRunner(Date.now() + 15_000);
@@ -87,9 +129,42 @@ export class RunnerContainer extends DurableObject<Bindings> {
     if (!runId) return;
 
     const driver: RunnerDriver = {
-      start: (job) => this.submitJob(job),
-      poll: (id, context, deadlineAt, stepState) =>
-        this.pollJob(id, context, deadlineAt, stepState),
+      start: (job) =>
+        observeRun(
+          this.env.DB,
+          runId,
+          "runner",
+          () => this.submitJob(job),
+          (result) => (result.status === "failed" ? "failed" : "succeeded"),
+        ),
+      poll: async (id, context, deadlineAt, stepState) => {
+        try {
+          const result = await this.pollJob(id, context, deadlineAt, stepState);
+          if (this.pollUnavailable) {
+            this.pollUnavailable = false;
+            await recordRunDiagnostic(
+              this.env.DB,
+              id,
+              runTraceId(id),
+              "runner.poll_recovered",
+              { operation: "runner", outcome: result.status },
+            );
+          }
+          return result;
+        } catch (error) {
+          if (!this.pollUnavailable) {
+            this.pollUnavailable = true;
+            await recordRunDiagnostic(
+              this.env.DB,
+              id,
+              runTraceId(id),
+              "runner.poll_failed",
+              { operation: "runner", outcome: "unknown", reason: "transport" },
+            );
+          }
+          throw error;
+        }
+      },
     };
     const progress = await advanceRun(
       this.env.DB,
@@ -114,7 +189,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
       }
     }
     try {
-      if (this.ctx.container?.running) await this.ctx.container.destroy();
+      const container = this.ctx.container;
+      if (container?.running)
+        await observeRun(this.env.DB, runId, "cleanup", () =>
+          container.destroy(),
+        );
     } finally {
       await this.revokeRepositoryGrant(runId);
     }
@@ -161,6 +240,70 @@ export class RunnerContainer extends DurableObject<Bindings> {
     throw new Error("Runner readiness check timed out");
   }
 
+  async ingestDiagnostics(
+    runId: string,
+    bearer: string,
+    batch: DiagnosticBatch,
+  ) {
+    const lease =
+      await this.ctx.storage.get<DiagnosticLease>("diagnosticLease");
+    if (
+      !lease ||
+      lease.runId !== runId ||
+      lease.producerId !== batch.producerId ||
+      lease.expiresAt <= Date.now() ||
+      !matchRunLease(await hashRunLease(bearer), lease.digest)
+    )
+      return false;
+    if (!this.env.RUN_ARTIFACTS)
+      throw new Error("Diagnostic storage unavailable");
+    try {
+      await ingestDiagnostics(
+        this.env.DB,
+        this.env.RUN_ARTIFACTS,
+        runId,
+        lease.producerId,
+        batch,
+        [bearer],
+      );
+    } catch (error) {
+      if (error instanceof DiagnosticStorageLimit) return "limit" as const;
+      throw error;
+    }
+    return true;
+  }
+
+  private async diagnosticContext(
+    runId: string,
+    deadlineAt: number,
+  ): Promise<DiagnosticContext | undefined> {
+    const origin = this.env.TAILOS_PUBLIC_ORIGIN;
+    if (
+      !origin ||
+      !this.env.RUN_ARTIFACTS ||
+      new URL(origin).protocol !== "https:"
+    )
+      return undefined;
+    const producerId = crypto.randomUUID();
+    const bearer = newRunLease();
+    const expiresAt = deadlineAt + diagnosticGraceMs;
+    await registerDiagnosticProducer(this.env.DB, runId, producerId);
+    await this.ctx.storage.put("diagnosticLease", {
+      runId,
+      producerId,
+      expiresAt,
+      digest: await hashRunLease(bearer),
+    } satisfies DiagnosticLease);
+    return {
+      traceId: runTraceId(runId),
+      parentSpanId: runTraceId(runId),
+      producerId,
+      url: origin + `/_runner/runs/${runId}/diagnostics`,
+      bearer,
+      expiresAt,
+    };
+  }
+
   async refreshAccess(runId: string, bearer: string, accessVersion: string) {
     const digest = await hashRunLease(bearer);
     const active = await this.env.DB.prepare(
@@ -186,10 +329,17 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
     if (!lease) return null;
 
-    return this.env.CREDENTIALS?.getByName(lease.connectionId).issueAccess({
-      accessVersion,
-      connectionVersion: lease.connectionVersion,
-    });
+    return observeRun(
+      this.env.DB,
+      runId,
+      "refresh",
+      async () =>
+        this.env.CREDENTIALS?.getByName(lease.connectionId).issueAccess({
+          accessVersion,
+          connectionVersion: lease.connectionVersion,
+        }),
+      (result) => (result ? "succeeded" : "failed"),
+    );
   }
 
   async stagePublication(
@@ -245,7 +395,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
     const { runId, prompt, deadlineAt, context } = request;
-    const base = { version: 1 as const, runId, prompt, deadlineAt };
+    const diagnostics = await this.diagnosticContext(runId, deadlineAt).catch(
+      () => undefined,
+    );
+    const base = {
+      version: 1 as const,
+      runId,
+      prompt,
+      deadlineAt,
+      ...(diagnostics && { diagnostics }),
+    };
     if (context.engine === "fake") return { ...base, engine: "fake" };
 
     const origin = this.env.TAILOS_PUBLIC_ORIGIN;
@@ -378,7 +537,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
         agentNetworkAccess: target.agentNetworkAccess ?? false,
       };
     }
-    const port = await this.startRunner(job.deadlineAt, job.engine === "codex");
+    const port = await observeRun(this.env.DB, request.runId, "container", () =>
+      this.startRunner(job.deadlineAt, job.engine === "codex"),
+    );
     const response = await port.fetch("http://runner/job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -413,11 +574,18 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (!content || (await publicationDigest(content)) !== pending.digest)
         throw new Error("Checked publication unavailable");
       const changes = v.parse(fileChangesSchema, JSON.parse(content));
-      const sha = await github.commitCheckedWork(
-        target,
+      const sha = await observeRun(
+        this.env.DB,
         runId,
-        { ...pending, changes },
-        recoveryDeadline,
+        "commit",
+        () =>
+          github.commitCheckedWork(
+            target,
+            runId,
+            { ...pending, changes },
+            recoveryDeadline,
+          ),
+        (result) => (result ? "succeeded" : "unknown"),
       );
       if (!sha)
         return {
@@ -552,7 +720,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
       work.kind === "checked"
         ? { branch: work.branch, sha, headline: work.headline }
         : work;
-    const url = await github.publish(target, runId, publication, deadlineAt);
+    const url = await observeRun(
+      this.env.DB,
+      runId,
+      "pull_request",
+      () => github.publish(target, runId, publication, deadlineAt),
+      (result) => (result ? "succeeded" : "unknown"),
+    );
     if (!url)
       return {
         status: "failed",

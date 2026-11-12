@@ -119,6 +119,96 @@ export const triggerEvents = sqliteTable(
   ],
 );
 
+export const diagnosticTraces = sqliteTable(
+  "diagnostic_traces",
+  {
+    id: text().primaryKey().notNull(),
+    ownerId: text("owner_id"),
+    sessionId: text("session_id"),
+    runId: text("run_id").unique(),
+    source: text().notNull(),
+    deliveryId: text("delivery_id"),
+    requestId: text("request_id"),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    captureState: text("capture_state").notNull().default("unknown"),
+    producerId: text("producer_id"),
+    lastSeq: integer("last_seq"),
+    dropped: integer().notNull().default(0),
+    bodyBytes: integer("body_bytes").notNull().default(0),
+  },
+  (t) => [
+    index("diagnostic_owner_time").on(t.ownerId, t.createdAt),
+    index("diagnostic_delivery").on(t.source, t.deliveryId),
+    index("diagnostic_expiry").on(t.expiresAt),
+  ],
+);
+
+export const diagnosticEvents = sqliteTable(
+  "diagnostic_events",
+  {
+    ingestSeq: integer("ingest_seq").primaryKey({ autoIncrement: true }),
+    eventId: text("event_id").notNull().unique(),
+    traceId: text("trace_id")
+      .notNull()
+      .references(() => diagnosticTraces.id, { onDelete: "cascade" }),
+    spanId: text("span_id").notNull(),
+    parentSpanId: text("parent_span_id"),
+    producerId: text("producer_id").notNull(),
+    producerSeq: integer("producer_seq"),
+    requestId: text("request_id"),
+    occurredAt: integer("occurred_at").notNull(),
+    receivedAt: integer("received_at").notNull(),
+    name: text().notNull(),
+    attributes: text().notNull(),
+    fingerprint: text().notNull().default(""),
+    artifactId: text("artifact_id"),
+  },
+  (t) => [
+    unique("diagnostic_producer_sequence").on(
+      t.traceId,
+      t.producerId,
+      t.producerSeq,
+    ),
+    index("diagnostic_trace_cursor").on(t.traceId, t.ingestSeq),
+  ],
+);
+
+export const diagnosticLinks = sqliteTable(
+  "diagnostic_links",
+  {
+    fromTrace: text("from_trace")
+      .notNull()
+      .references(() => diagnosticTraces.id, { onDelete: "cascade" }),
+    toTrace: text("to_trace")
+      .notNull()
+      .references(() => diagnosticTraces.id, { onDelete: "cascade" }),
+    relation: text().notNull(),
+  },
+  (t) => [unique("diagnostic_link").on(t.fromTrace, t.toTrace, t.relation)],
+);
+
+export const diagnosticArtifacts = sqliteTable(
+  "diagnostic_artifacts",
+  {
+    ingestSeq: integer("ingest_seq").primaryKey({ autoIncrement: true }),
+    id: text().notNull().unique(),
+    traceId: text("trace_id")
+      .notNull()
+      .references(() => diagnosticTraces.id, { onDelete: "cascade" }),
+    spanId: text("span_id").notNull(),
+    objectKey: text("object_key").notNull(),
+    digest: text().notNull(),
+    bytes: integer().notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [
+    index("diagnostic_artifact_trace").on(t.traceId),
+    index("diagnostic_artifact_expiry").on(t.expiresAt),
+  ],
+);
+
 // Provider accounts can change independently of the user ID used by Tailos data.
 export const users = sqliteTable("users", {
   id: text().primaryKey().notNull(),

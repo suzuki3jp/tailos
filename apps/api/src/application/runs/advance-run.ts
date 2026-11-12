@@ -219,8 +219,8 @@ async function storeOutcome(
           : { status: outcome.status };
       await writeArtifacts(runId, finishedAt, result, outcome.events ?? []);
     } catch {
-      if (outcome.status === "succeeded" && !published)
-        outcome = { status: "failed", errorCode: "artifact_write_failed" };
+      // Detailed artifacts are best effort. Required execution history is
+      // committed atomically by the RunStore, including a successful PR result.
     }
   }
   if (outcome.status === "failed") {

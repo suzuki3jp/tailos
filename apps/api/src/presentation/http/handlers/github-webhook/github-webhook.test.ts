@@ -88,6 +88,14 @@ test.for([undefined, false, true] as const)(
     ).toBe(0);
 
     const operator = await createTestOperator(env);
+    await db
+      .prepare(`CREATE TRIGGER reject_detail_decisions BEFORE INSERT ON diagnostic_events
+      WHEN NEW.name = 'trigger.decided' AND json_extract(NEW.attributes, '$.reason') IS NOT NULL
+      BEGIN SELECT RAISE(ABORT, 'test diagnostics unavailable'); END`)
+      .run();
+    expect(
+      (await send({ ...event, sender: { login: "unknown" } })).status,
+    ).toBe(204);
     expect(schedule).not.toHaveBeenCalled();
     const accepted = await send(event);
     expect(accepted.status).toBe(202);

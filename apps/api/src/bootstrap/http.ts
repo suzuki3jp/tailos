@@ -24,6 +24,14 @@ import { createRunRoutes } from "@/presentation/http/handlers/runs/runs.ts";
 import { createSessionRoutes } from "@/presentation/http/handlers/sessions/sessions.ts";
 import { d1Sessions } from "@/infrastructure/d1/sessions.ts";
 import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/triggers.ts";
+import { requestDiagnostics } from "@/presentation/http/middlewares/request-diagnostics.ts";
+import {
+  diagnosticReader,
+  canIngestDiagnostics,
+  recordTriggerDecision,
+} from "@/infrastructure/diagnostics/store.ts";
+import { createDiagnosticRoutes } from "@/presentation/http/handlers/diagnostics/diagnostics.ts";
+import { createDiagnosticIngestRoutes } from "@/presentation/http/handlers/diagnostics/ingest.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -43,6 +51,7 @@ const githubWebhook = createGithubWebhook(
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
   validSignature,
+  (env, event) => recordTriggerDecision(env.DB, event),
 );
 
 const runRoutes = createRunRoutes(
@@ -67,6 +76,7 @@ const runnerHealth = createRunnerHealthRoutes((env) =>
 );
 
 const app = new Hono<{ Bindings: Bindings }>();
+app.use("*", requestDiagnostics);
 
 const browserApi = new Hono<{ Bindings: Bindings }>()
   .use(
@@ -76,6 +86,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
         origin === c.env?.TAILOS_WEB_ORIGIN ? origin : undefined,
       credentials: true,
       allowMethods: ["GET", "POST"],
+      exposeHeaders: ["X-Request-ID"],
     }),
   )
   .get("/account", operatorAuth, (c) =>
@@ -86,7 +97,14 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     }),
   )
   .route("/connect", connectRoutes)
-  .route("/sessions", userSessionRoutes);
+  .route("/sessions", userSessionRoutes)
+  .route(
+    "/diagnostics",
+    createDiagnosticRoutes(
+      (env) => diagnosticReader(env.DB, env.RUN_ARTIFACTS),
+      operatorAuth,
+    ),
+  );
 
 export type BrowserApi = ApplyGlobalResponse<
   typeof browserApi,
@@ -101,6 +119,12 @@ app.route("/api", browserApi);
 app.route("/api/auth", loginRoutes);
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
+app.route(
+  "/_runner/runs",
+  createDiagnosticIngestRoutes((env, id, now) =>
+    canIngestDiagnostics(env.DB, id, now),
+  ),
+);
 app.get("/health", (c) => c.json({ status: "ok", service: "tailos-api" }));
 app.route("/_internal/runs", runRoutes);
 app.route("/_internal/sessions", sessionRoutes);

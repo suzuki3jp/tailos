@@ -113,6 +113,12 @@ export function SessionDetail({ id }: { id: string }) {
                     <p className="break-all font-mono text-xs text-muted">
                       {run.id}
                     </p>
+                    <a
+                      href={`/diagnostics?runId=${encodeURIComponent(run.id)}`}
+                      className="action"
+                    >
+                      実行記録を調べる
+                    </a>
                     {run.errorCode && (
                       <p className="wrap-anywhere font-mono text-sm text-danger">
                         {run.errorCode}

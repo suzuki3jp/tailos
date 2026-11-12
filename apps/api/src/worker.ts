@@ -6,6 +6,7 @@ import type {
 import app from "@/bootstrap/http.ts";
 import type { Bindings } from "@/bindings.ts";
 import { rescheduleDueRuns } from "@/application/runs/recovery.ts";
+import { observeRun } from "@/infrastructure/diagnostics/store.ts";
 
 export { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
 export { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
@@ -22,8 +23,12 @@ export default {
     ctx.waitUntil(
       rescheduleDueRuns(
         (now) => listDueRunIds(env.DB, now),
-        (id) => runner.getByName(id).schedule(id),
+        (id) =>
+          observeRun(env.DB, id, "recovery", () =>
+            runner.getByName(id).schedule(id),
+          ),
       ),
     );
+    ctx.waitUntil(runner.getByName("diagnostics-cleanup").cleanupDiagnostics());
   },
 };

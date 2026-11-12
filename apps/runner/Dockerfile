@@ -10,8 +10,8 @@ ENV PATH="/opt/tailos-checks/node_modules/.bin:${PATH}"
 WORKDIR /app
 RUN install -d -o node -g node -m 0700 /app/git-state
 ENV TAILOS_GIT_STATE_DIR=/app/git-state
-COPY --chown=node:node dist/runner.mjs ./runner.mjs
+COPY --chown=node:node dist/runner.cjs ./runner.cjs
 USER node
 EXPOSE 8080
 # Bubblewrap expects non-root callers to start without inherited capabilities.
-CMD ["setpriv", "--inh-caps=-all", "--ambient-caps=-all", "node", "runner.mjs"]
+CMD ["setpriv", "--inh-caps=-all", "--ambient-caps=-all", "node", "runner.cjs"]

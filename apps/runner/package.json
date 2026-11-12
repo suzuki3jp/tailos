@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --banner:js='import { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);' --outfile=dist/runner.mjs",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runner.cjs",
     "test": "node --test scripts/check-bundle.mjs && vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc -b --stopBuildOnErrors"
   },

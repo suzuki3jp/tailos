@@ -19,8 +19,8 @@ test(
     let exited;
     let stderr = "";
     try {
-      const bundle = join(directory, "runner.mjs");
-      await copyFile(new URL("dist/runner.mjs", runnerRoot), bundle);
+      const bundle = join(directory, "runner.cjs");
+      await copyFile(new URL("dist/runner.cjs", runnerRoot), bundle);
       // Match the image: only the generated bundle, without workspace dependencies.
       child = spawn(process.execPath, [bundle], {
         cwd: directory,

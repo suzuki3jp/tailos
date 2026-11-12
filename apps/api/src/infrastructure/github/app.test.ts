@@ -324,3 +324,138 @@ test("reconciles a lost signing response only for the verified commit with the e
   );
   expect(mutations).toBe(1);
 });
+
+test("recovers an ambiguous comment across all pages and rejects copied markers", async () => {
+  const marker = "<!-- tailos:run:run:v1 -->";
+  const calls: string[] = [];
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(`${init?.method} ${url.pathname}${url.search}`);
+      if (url.pathname.endsWith("/access_tokens")) {
+        expect(JSON.parse(String(init?.body)).permissions).toEqual({
+          issues: "write",
+        });
+        return Response.json({
+          token: "grant",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        });
+      }
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (init?.method === "PATCH") {
+        expect(url.pathname).toBe("/repos/owner/private/issues/comments/123");
+        return Response.json({ id: 123 });
+      }
+      const comment = {
+        id: 1,
+        body: marker,
+        user: { type: "User" },
+        performed_via_github_app: null,
+      };
+      if (url.searchParams.get("page") === "1")
+        return Response.json(Array(100).fill(comment));
+      return Response.json([
+        {
+          ...comment,
+          id: 123,
+          user: { type: "Bot" },
+          performed_via_github_app: { id: 100 },
+        },
+      ]);
+    },
+  );
+  expect(await github.issueComment(target, marker, "terminal", null)).toBe(123);
+  expect(calls.some((c) => c.includes("page=2"))).toBe(true);
+  expect(
+    calls.filter((c) => c.startsWith("POST") && c.includes("/comments")),
+  ).toEqual([]);
+  expect(calls.at(-1)).toBe("DELETE /installation/token");
+});
+
+test.for([
+  [403, {}, "permission"],
+  [429, { "retry-after": "120" }, "rate_limit"],
+  [
+    403,
+    { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000000" },
+    "rate_limit",
+  ],
+  [503, {}, "transient"],
+] as const)(
+  "classifies comment API failures %s",
+  async ([status, headers, category]) => {
+    let revoked = false;
+    const github = new GitHubApp(
+      { appId: "100", privateKey },
+      async (input, init) => {
+        if (String(input).endsWith("/access_tokens"))
+          return Response.json({
+            token: "grant",
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+          });
+        if (init?.method === "DELETE") {
+          revoked = true;
+          return new Response(null, { status: 204 });
+        }
+        return new Response(null, { status, headers });
+      },
+    );
+    await expect(
+      github.issueComment(target, "marker", "body", 123),
+    ).rejects.toMatchObject({ category });
+    expect(revoked).toBe(true);
+  },
+);
+
+test("adopts an App comment after the successful POST response was lost", async () => {
+  let created = false;
+  let posts = 0;
+  let revoked = 0;
+  const marker = "<!-- tailos:run:lost:v1 -->";
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/access_tokens"))
+        return Response.json({
+          token: "grant",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        });
+      if (init?.method === "DELETE") {
+        revoked++;
+        return new Response(null, { status: 204 });
+      }
+      if (init?.method === "POST") {
+        expect(url.pathname).toBe("/repos/owner/private/issues/8/comments");
+        posts++;
+        created = true;
+        throw new Error("response lost");
+      }
+      if (init?.method === "PATCH") {
+        expect(JSON.parse(String(init.body)).body).toBe("finished " + marker);
+        return Response.json({ id: 321 });
+      }
+      return Response.json(
+        created
+          ? [
+              {
+                id: 321,
+                body: marker,
+                user: { type: "Bot" },
+                performed_via_github_app: { id: 100 },
+              },
+            ]
+          : [],
+      );
+    },
+  );
+  await expect(
+    github.issueComment(target, marker, marker, null),
+  ).rejects.toThrow("response lost");
+  expect(
+    await github.issueComment(target, marker, "finished " + marker, null),
+  ).toBe(321);
+  expect(posts).toBe(1);
+  expect(revoked).toBe(2);
+});

@@ -67,6 +67,7 @@ test.for([undefined, false, true] as const)(
           },
         },
         env,
+        { waitUntil: () => {}, passThroughOnException: () => {}, props: {} },
       );
     };
 

@@ -301,3 +301,29 @@ export const authVerifications = sqliteTable(
   },
   (t) => [index("auth_verification_identifier").on(t.identifier)],
 );
+
+export const issueNotifications = sqliteTable(
+  "issue_notifications",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id),
+    kind: text().notNull().default("issue-comment"),
+    sessionId: text("session_id").notNull(),
+    target: text().notNull(),
+    commentId: integer("comment_id"),
+    desiredState: text("desired_state").notNull().default("processing"),
+    appliedState: text("applied_state"),
+    version: integer().notNull().default(1),
+    appliedVersion: integer("applied_version").notNull().default(0),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    lease: text(),
+    leaseUntil: integer("lease_until"),
+    errorCategory: text("error_category"),
+  },
+  (t) => [
+    unique("issue_notification_run_kind").on(t.runId, t.kind),
+    index("issue_notification_due").on(t.nextAttemptAt),
+  ],
+);

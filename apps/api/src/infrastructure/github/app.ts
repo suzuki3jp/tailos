@@ -1,3 +1,4 @@
+import { NotificationError } from "@/application/notifications/issue-comment.ts";
 import { createPrivateKey } from "node:crypto";
 import { importPKCS8, SignJWT } from "jose";
 import {
@@ -96,7 +97,21 @@ export class GitHubApp {
   ): Promise<unknown> {
     const response = await this.request(path, token, method, body);
     if (!response.ok)
-      throw new Error(`GitHub request failed (${response.status})`);
+      throw new NotificationError(
+        response.status === 429 ||
+          (response.status === 403 &&
+            (response.headers.has("retry-after") ||
+              response.headers.get("x-ratelimit-remaining") === "0"))
+          ? "rate_limit"
+          : [401, 403, 404, 422].includes(response.status)
+            ? "permission"
+            : "transient",
+        response.headers.has("retry-after")
+          ? Date.now() + Number(response.headers.get("retry-after")) * 1000
+          : response.headers.get("x-ratelimit-remaining") === "0"
+            ? Number(response.headers.get("x-ratelimit-reset")) * 1000
+            : undefined,
+      );
     return response.json();
   }
 
@@ -127,6 +142,60 @@ export class GitHubApp {
     if (!(expiresAt > Date.now()))
       throw new Error("Expired GitHub installation grant");
     return { token: grant.token, expiresAt };
+  }
+
+  async issueComment(
+    target: RepositoryTarget,
+    marker: string,
+    body: string,
+    commentId: number | null,
+  ) {
+    const { token } = await this.token(target, { issues: "write" });
+    const repo = "/repos/" + target.repository;
+    const schema = v.object({
+      id: v.number(),
+      body: v.string(),
+      user: v.object({ type: v.string() }),
+      performed_via_github_app: v.nullable(v.object({ id: v.number() })),
+    });
+    try {
+      if (commentId === null) {
+        for (let page = 1; ; page++) {
+          const comments = v.parse(
+            v.array(schema),
+            await this.json(
+              `${repo}/issues/${target.issueNumber}/comments?per_page=100&page=${page}`,
+              token,
+            ),
+          );
+          const existing = comments.find(
+            (c) =>
+              c.user.type === "Bot" &&
+              String(c.performed_via_github_app?.id) === this.config.appId &&
+              c.body.includes(marker),
+          );
+          if (existing) {
+            commentId = existing.id;
+            break;
+          }
+          if (comments.length < 100) break;
+        }
+      }
+      const result = v.parse(
+        v.object({ id: v.number() }),
+        await this.json(
+          commentId === null
+            ? `${repo}/issues/${target.issueNumber}/comments`
+            : `${repo}/issues/comments/${commentId}`,
+          token,
+          commentId === null ? "POST" : "PATCH",
+          { body },
+        ),
+      );
+      return result.id;
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
   }
 
   async checkout(

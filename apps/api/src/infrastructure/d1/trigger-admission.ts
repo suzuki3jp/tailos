@@ -84,6 +84,11 @@ export async function admitTrigger(
        ON CONFLICT (source, idempotency_key) DO NOTHING`,
       )
       .bind(triggerId, input.source, input.idempotencyKey, runId, now, scope),
+    db
+      .prepare(`INSERT INTO issue_notifications (run_id, session_id, target, next_attempt_at)
+      SELECT id, session_id, json_extract(execution_context, '$.repository'), ? FROM runs
+      WHERE id = ? AND ? = 'github.issue-label'`)
+      .bind(now, runId, input.source),
     // The winning run may have been admitted by the previous Worker after the
     // migration. Backfill only facts that are present in its business rows.
     db

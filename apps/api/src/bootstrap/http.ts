@@ -1,3 +1,4 @@
+import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { validSignature } from "@/infrastructure/github/webhook-signature.ts";
 import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts";
 import {
@@ -58,6 +59,7 @@ const githubWebhook = createGithubWebhook(
   findOperatorUserId,
   validSignature,
   (env, event) => recordTriggerDecision(env.DB, event),
+  deliverIssueNotifications,
 );
 
 const runRoutes = createRunRoutes(

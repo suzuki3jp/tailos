@@ -12,7 +12,6 @@
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
-    "mcp:key": "node scripts/mcp-key.mjs",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc -b --stopBuildOnErrors"
   },

@@ -22,13 +22,6 @@ test("the MCP SDK and key verification run inside the deployed workerd compatibi
     bindings: {
       TAILOS_PUBLIC_ORIGIN: origin,
       TAILOS_OPERATOR_GITHUB_ID: "123",
-      TAILOS_MCP_ENABLED: "true",
-      TAILOS_MCP_READ_KEY_CONFIG: JSON.stringify({
-        version: 1,
-        ownerId: owner,
-        sha256: createHash("sha256").update(key).digest("hex"),
-        expiresAt: Date.now() + 60_000,
-      }),
     },
   });
   await DB.prepare(
@@ -40,6 +33,18 @@ test("the MCP SDK and key verification run inside the deployed workerd compatibi
     "INSERT INTO auth_accounts (id, user_id, account_id, provider_id, created_at, updated_at) VALUES (?, ?, '123', 'github', 1, 1)",
   )
     .bind(crypto.randomUUID(), owner)
+    .run();
+  await DB.prepare(
+    "INSERT INTO mcp_keys (id, owner_id, name, prefix, sha256, created_at, expires_at) VALUES (?, ?, 'Worker test', ?, ?, ?, ?)",
+  )
+    .bind(
+      crypto.randomUUID(),
+      owner,
+      key.slice(0, 20),
+      createHash("sha256").update(key).digest("hex"),
+      Date.now(),
+      Date.now() + 60_000,
+    )
     .run();
   const headers = {
     Authorization: `Bearer ${key}`,

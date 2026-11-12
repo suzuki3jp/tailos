@@ -7,7 +7,11 @@ import {
   convertV4MiniflareOptions,
 } from "miniflare";
 import { assert, expect, test } from "vitest";
-import { GitHubApp, workBranchFor } from "@/infrastructure/github/app.ts";
+import {
+  GitHubApp,
+  GitHubRequestError,
+  workBranchFor,
+} from "@/infrastructure/github/app.ts";
 
 const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
   .privateKey.export({
@@ -374,17 +378,31 @@ test("recovers an ambiguous comment across all pages and rejects copied markers"
 });
 
 test.for([
-  [403, {}, "permission"],
-  [429, { "retry-after": "120" }, "rate_limit"],
+  [403, {}, "permission", "Resource not accessible by integration"],
+  [429, { "retry-after": "120" }, "rate_limit", ""],
   [
     403,
     { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000000" },
     "rate_limit",
+    "",
   ],
-  [503, {}, "transient"],
+  [
+    403,
+    { "x-ratelimit-remaining": "4000" },
+    "rate_limit",
+    "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+  ],
+  [429, {}, "rate_limit", "You have exceeded a secondary rate limit."],
+  [
+    422,
+    {},
+    "transient",
+    "Validation failed, or the endpoint has been spammed.",
+  ],
+  [503, {}, "transient", "Service unavailable"],
 ] as const)(
   "classifies comment API failures %s",
-  async ([status, headers, category]) => {
+  async ([status, headers, category, message]) => {
     let revoked = false;
     const github = new GitHubApp(
       { appId: "100", privateKey },
@@ -398,7 +416,7 @@ test.for([
           revoked = true;
           return new Response(null, { status: 204 });
         }
-        return new Response(null, { status, headers });
+        return Response.json({ message }, { status, headers });
       },
     );
     await expect(
@@ -407,6 +425,50 @@ test.for([
     expect(revoked).toBe(true);
   },
 );
+
+test("keeps HTTP status on failures outside issue notifications", async () => {
+  const github = new GitHubApp({ appId: "100", privateKey }, async () =>
+    Response.json({ message: "Not found" }, { status: 404 }),
+  );
+  await expect(github.checkout(target, "run")).rejects.toBeInstanceOf(
+    GitHubRequestError,
+  );
+  await expect(github.checkout(target, "run")).rejects.toMatchObject({
+    status: 404,
+    message: "GitHub request failed (404)",
+  });
+});
+
+test("reconciles and recreates a deleted comment before completing delivery", async () => {
+  const calls: string[] = [];
+  const marker = "<!-- tailos:run:deleted:v1 -->";
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      calls.push(`${init?.method} ${url.pathname}`);
+      if (url.pathname.endsWith("/access_tokens"))
+        return Response.json({
+          token: "grant",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (init?.method === "PATCH")
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      if (init?.method === "GET") return Response.json([]);
+      expect(JSON.parse(String(init?.body)).body).toBe(marker);
+      return Response.json({ id: 456 });
+    },
+  );
+  expect(await github.issueComment(target, marker, marker, 123)).toBe(456);
+  expect(calls).toEqual([
+    "POST /app/installations/19/access_tokens",
+    "PATCH /repos/owner/private/issues/comments/123",
+    "GET /repos/owner/private/issues/8/comments",
+    "POST /repos/owner/private/issues/8/comments",
+    "DELETE /installation/token",
+  ]);
+});
 
 test("adopts an App comment after the successful POST response was lost", async () => {
   let created = false;

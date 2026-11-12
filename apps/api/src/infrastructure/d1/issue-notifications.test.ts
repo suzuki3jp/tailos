@@ -1,5 +1,9 @@
 import { expect, test } from "vitest";
-import { createTestDb } from "@/infrastructure/d1/testing.ts";
+import { readFile } from "node:fs/promises";
+import {
+  createTestBindings,
+  createTestDb,
+} from "@/infrastructure/d1/testing.ts";
 import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { issueNotificationStore } from "@/infrastructure/d1/issue-notifications.ts";
 import {
@@ -25,6 +29,69 @@ const input = {
   executionContext: JSON.stringify({ repository: target }),
   timeoutMs: 1000,
 };
+
+test("upgrades existing notifications while preserving delivery and terminal recovery", async (t) => {
+  const { DB: db } = await createTestBindings(t, {
+    migrationsThrough: "0006_crazy_solo.sql",
+  });
+  // Seed an admission made by the previous Worker before its migration.
+  await db.batch([
+    db.prepare(
+      "INSERT INTO sessions (id, owner_id, created_at) VALUES ('session', 'owner', 0)",
+    ),
+    db.prepare(
+      "INSERT INTO session_messages (id, session_id, seq, author_kind, body, created_at) VALUES ('message', 'session', 1, 'automation', 'implement', 0)",
+    ),
+    db
+      .prepare(
+        "INSERT INTO runs (id, session_id, start_message_id, status, execution_context, deadline_at, created_at) VALUES ('run', 'session', 'message', 'running', ?, 1000, 0)",
+      )
+      .bind(input.executionContext),
+    db
+      .prepare(`INSERT INTO issue_notifications
+      (run_id, session_id, target, comment_id, applied_state, applied_version, attempts,
+        error_category, next_attempt_at, lease, lease_until)
+      VALUES ('run', 'session', ?, 42, 'processing', 1, 3, 'rate_limit', ?, 'inflight', ?)`)
+      .bind(JSON.stringify(target), Date.now() + 120_000, Date.now() + 300_000),
+  ]);
+  const migration = await readFile(
+    new URL("../../../migrations/0007_gray_jackal.sql", import.meta.url),
+    "utf8",
+  );
+  await db.batch(
+    migration.split("--> statement-breakpoint").map((s) => db.prepare(s)),
+  );
+  expect(
+    await db.prepare("SELECT * FROM issue_notifications").first(),
+  ).toMatchObject({
+    run_id: "run",
+    comment_id: 42,
+    applied_version: 1,
+    attempts: 3,
+    error_category: "rate_limit",
+    lease: "inflight",
+  });
+  await db
+    .prepare("UPDATE runs SET status = 'succeeded' WHERE id = 'run'")
+    .run();
+  const store = issueNotificationStore(db);
+  expect(await store.claim()).toEqual([]);
+  await db
+    .prepare(
+      "UPDATE issue_notifications SET next_attempt_at = 0, lease_until = 0",
+    )
+    .run();
+  const [n] = await store.claim();
+  expect(n).toMatchObject({
+    comment_id: 42,
+    desired_state: "succeeded",
+    version: 2,
+    session_id: "session",
+  });
+  expect(JSON.parse(n!.target)).toEqual(target);
+  await store.complete(n!, 42);
+  expect(await store.claim()).toEqual([]);
+});
 
 test("durable deduplication, exclusive lease, terminal race and separate reruns", async (t) => {
   const db = await createTestDb(t);
@@ -59,11 +126,41 @@ test("durable deduplication, exclusive lease, terminal race and separate reruns"
   await sendIssueNotifications(
     store,
     "https://tailos.app",
-    async (_target, _marker, body, id) => {
+    async (actualTarget, _marker, body, id) => {
+      expect(actualTarget).toEqual(target);
       expect(body).toContain("tailos-failed-v1.png");
       expect(body).toContain(`/sessions/${next.sessionId}`);
       expect(id).toBeNull();
       return 43;
+    },
+  );
+  expect(await store.claim()).toEqual([]);
+});
+
+test("rate limits without a retry header back off for at least one minute", async (t) => {
+  const db = await createTestDb(t);
+  const run = await admitTrigger(db, input);
+  const store = issueNotificationStore(db);
+  const before = Date.now();
+  await sendIssueNotifications(store, "https://tailos.app", async () => {
+    throw new NotificationError("rate_limit");
+  });
+  const retryAt = await db
+    .prepare("SELECT next_attempt_at FROM issue_notifications")
+    .first<number>("next_attempt_at");
+  expect(retryAt).toBeGreaterThanOrEqual(before + 60_000);
+  await db
+    .prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
+    .bind(run.runId)
+    .run();
+  expect(await store.claim()).toEqual([]);
+  await db.prepare("UPDATE issue_notifications SET next_attempt_at = 0").run();
+  await sendIssueNotifications(
+    store,
+    "https://tailos.app",
+    async (_t, _m, body) => {
+      expect(body).toContain("tailos-succeeded-v1.png");
+      return 42;
     },
   );
   expect(await store.claim()).toEqual([]);

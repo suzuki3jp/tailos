@@ -14,18 +14,21 @@ export function issueNotificationStore(db: D1Database): NotificationStore {
         WHERE rowid IN (SELECT rowid FROM issue_notifications
           WHERE next_attempt_at <= ? AND (lease_until IS NULL OR lease_until <= ?)
             AND applied_version < version ORDER BY next_attempt_at LIMIT 1)
-        RETURNING *`)
+        RETURNING *,
+          (SELECT session_id FROM runs WHERE runs.id = issue_notifications.run_id) AS session_id,
+          (SELECT json_extract(execution_context, '$.repository') FROM runs
+            WHERE runs.id = issue_notifications.run_id) AS target`)
         .bind(lease, now + 300_000, now, now)
         .all<IssueNotification>();
       return result.results;
     },
     async complete(n, id) {
       await db
-        .prepare(`UPDATE issue_notifications SET comment_id = ?, applied_state = ?, applied_version = ?,
+        .prepare(`UPDATE issue_notifications SET comment_id = ?, applied_version = ?,
         lease = NULL, lease_until = NULL, error_category = NULL,
         next_attempt_at = CASE WHEN version > ? THEN 0 ELSE NULL END
         WHERE run_id = ? AND lease = ?`)
-        .bind(id, n.desired_state, n.version, n.version, n.run_id, n.lease)
+        .bind(id, n.version, n.version, n.run_id, n.lease)
         .run();
     },
     async fail(n, category, retryAt) {

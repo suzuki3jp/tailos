@@ -78,7 +78,11 @@ export async function sendIssueNotifications(
           : error instanceof NotificationError && error.retryAt
             ? error.retryAt
             : Date.now() +
-              Math.min(3_600_000, 1000 * 2 ** Math.min(n.attempts, 12));
+              Math.min(
+                3_600_000,
+                (category === "rate_limit" ? 60_000 : 1000) *
+                  2 ** Math.min(n.attempts, 12),
+              );
       await store.fail(n, category, retryAt);
       // oxlint-disable-next-line no-console -- never include provider errors or credentials
       console.warn("Issue notification", {

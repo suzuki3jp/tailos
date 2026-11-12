@@ -45,6 +45,48 @@ const pullSchema = v.object({
 });
 
 type GitHubConfig = { appId: string; privateKey: string };
+export class GitHubRequestError extends Error {
+  constructor(
+    public status: number,
+    public rateLimited: boolean,
+    public retryAt?: number,
+  ) {
+    super(`GitHub request failed (${status})`);
+  }
+}
+
+async function requestError(response: Response) {
+  const details = v.safeParse(
+    v.object({ message: v.optional(v.string()) }),
+    await response.json().catch(() => null),
+  );
+  const secondary =
+    details.success &&
+    /secondary rate limit|abuse detection/i.test(details.output.message ?? "");
+  const exhausted = response.headers.get("x-ratelimit-remaining") === "0";
+  const retryAfter = response.headers.get("retry-after");
+  const rateLimited =
+    response.status === 429 ||
+    (response.status === 403 &&
+      (retryAfter !== null || exhausted || secondary));
+  const now = Date.now();
+  const deadline =
+    retryAfter !== null
+      ? now + Number(retryAfter) * 1000
+      : exhausted
+        ? Number(response.headers.get("x-ratelimit-reset")) * 1000
+        : NaN;
+  return new GitHubRequestError(
+    response.status,
+    rateLimited,
+    rateLimited
+      ? Number.isFinite(deadline) && deadline > now
+        ? deadline
+        : undefined
+      : undefined,
+  );
+}
+
 export type GitHubCheckout = {
   token: string;
   expiresAt: number;
@@ -96,22 +138,7 @@ export class GitHubApp {
     body?: unknown,
   ): Promise<unknown> {
     const response = await this.request(path, token, method, body);
-    if (!response.ok)
-      throw new NotificationError(
-        response.status === 429 ||
-          (response.status === 403 &&
-            (response.headers.has("retry-after") ||
-              response.headers.get("x-ratelimit-remaining") === "0"))
-          ? "rate_limit"
-          : [401, 403, 404, 422].includes(response.status)
-            ? "permission"
-            : "transient",
-        response.headers.has("retry-after")
-          ? Date.now() + Number(response.headers.get("retry-after")) * 1000
-          : response.headers.get("x-ratelimit-remaining") === "0"
-            ? Number(response.headers.get("x-ratelimit-reset")) * 1000
-            : undefined,
-      );
+    if (!response.ok) throw await requestError(response);
     return response.json();
   }
 
@@ -150,6 +177,28 @@ export class GitHubApp {
     body: string,
     commentId: number | null,
   ) {
+    try {
+      return await this.writeIssueComment(target, marker, body, commentId);
+    } catch (error) {
+      if (error instanceof GitHubRequestError)
+        throw new NotificationError(
+          error.rateLimited
+            ? "rate_limit"
+            : [401, 403, 404].includes(error.status)
+              ? "permission"
+              : "transient",
+          error.retryAt,
+        );
+      throw error;
+    }
+  }
+
+  private async writeIssueComment(
+    target: RepositoryTarget,
+    marker: string,
+    body: string,
+    commentId: number | null,
+  ): Promise<number> {
     const { token } = await this.token(target, { issues: "write" });
     const repo = "/repos/" + target.repository;
     const schema = v.object({
@@ -159,6 +208,28 @@ export class GitHubApp {
       performed_via_github_app: v.nullable(v.object({ id: v.number() })),
     });
     try {
+      if (commentId !== null) {
+        try {
+          const result = v.parse(
+            v.object({ id: v.number() }),
+            await this.json(
+              `${repo}/issues/comments/${commentId}`,
+              token,
+              "PATCH",
+              {
+                body,
+              },
+            ),
+          );
+          return result.id;
+        } catch (error) {
+          if (!(error instanceof GitHubRequestError) || error.status !== 404)
+            throw error;
+          // A deleted comment can be recreated. Still reconcile first in case
+          // an earlier attempt already replaced it and lost its response.
+          commentId = null;
+        }
+      }
       if (commentId === null) {
         for (let page = 1; ; page++) {
           const comments = v.parse(

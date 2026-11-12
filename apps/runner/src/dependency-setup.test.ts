@@ -91,3 +91,42 @@ test("Agent work requires successful network closure without redirecting credent
     "closure failed",
   );
 });
+
+test("fetch failures retain bounded diagnostics while cancellation still aborts", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tailos-setup-test-"));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  const execute = vi.fn().mockRejectedValue(
+    Object.assign(new Error("fetch failed"), {
+      code: 1,
+      stderr: "ERR_PNPM_FETCH_403 Forbidden",
+      stdout: "fetching dependencies",
+    }),
+  );
+  async function prefetch(name: string, signal = AbortSignal.timeout(10_000)) {
+    const environment = join(root, name);
+    await mkdir(environment);
+    return prefetchDependencies(root, environment, signal, execute);
+  }
+  expect(await prefetch("failure")).toEqual({
+    status: "failed",
+    exitCode: 1,
+    output: "ERR_PNPM_FETCH_403 Forbidden\nfetching dependencies",
+  });
+  expect(execute.mock.lastCall?.[2]).toHaveProperty("timeout", 60_000);
+  execute.mockRejectedValueOnce({
+    code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    stderr: "x".repeat(8_193),
+  });
+  expect(await prefetch("oversized")).toMatchObject({
+    status: "failed",
+    code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    output: "Dependency fetch output omitted: exceeded diagnostic limit",
+  });
+  execute.mockRejectedValueOnce({ code: null, signal: "SIGTERM" });
+  expect(await prefetch("terminated")).toMatchObject({
+    status: "failed",
+    signal: "SIGTERM",
+  });
+  await expect(prefetch("aborted", AbortSignal.abort())).rejects.toThrow();
+});

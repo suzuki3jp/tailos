@@ -2,3 +2,4 @@
 !dist/
 !dist/runner.cjs
 !Dockerfile
+!entrypoint.sh

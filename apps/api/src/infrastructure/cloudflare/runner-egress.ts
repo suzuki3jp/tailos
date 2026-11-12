@@ -16,8 +16,10 @@ export function runnerEgressAllowed(
       dependencies &&
       read &&
       !url.search &&
-      (/^\/(?:@[a-z0-9._-]+(?:\/|%2[fF]))?[a-z0-9._-]+$/.test(url.pathname) ||
-        /^\/(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+\/-\/[a-zA-Z0-9._-]+\.tgz$/.test(
+      (/^\/(?:@[a-z0-9._-]+(?:\/|%2[fF]))?[a-zA-Z0-9._-]+$/.test(
+        url.pathname,
+      ) ||
+        /^\/(?:@[a-z0-9._-]+\/)?[a-zA-Z0-9._-]+\/-\/[a-zA-Z0-9._-]+\.tgz$/.test(
           url.pathname,
         ))
     );

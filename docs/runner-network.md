@@ -6,7 +6,7 @@
 
 1. Worker が HTTPS intercept を登録してから `enableInternet: false` で起動する。登録失敗時は起動しない。Codex 用起動では CA が存在しない場合も起動しない。root の entrypoint が実行時 CA をシステムの trust store に登録し、Node 用 `NODE_EXTRA_CA_CERTS` を設定してから node ユーザーへ降格する。
 2. Runner が GitHub checkout を取得する。リポジトリの hook は無効。
-3. `pnpm-lock.yaml` がある場合、固定の `/opt/tailos-checks/node_modules/.bin/pnpm` で `fetch --ignore-scripts --ignore-pnpmfile` を実行する。コピーするのは通常ファイルの lockfile だけ。別ディレクトリ、空の HOME、固定 registry、資格情報を含めない環境で実行し、`.npmrc`、workspace 設定、packageManager、リポジトリのコマンドは実行しない。失敗した場合は Agent を開始しない。
+3. `pnpm-lock.yaml` がある場合、固定の `/opt/tailos-checks/node_modules/.bin/pnpm` で `fetch --ignore-scripts --ignore-pnpmfile` を実行する。コピーするのは通常ファイルの lockfile だけ。別ディレクトリ、空の HOME、固定 registry、資格情報を含めない環境で実行し、`.npmrc`、workspace 設定、packageManager、リポジトリのコマンドは実行しない。取得は 60 秒で打ち切る。取得失敗は終了コード・プロセスエラーコード・終了シグナル・出力を診断に記録する。出力は stdout/stderr 合計 8 KiB 以下の完全なレコードだけを秘密情報の除去後に保存し、上限超過時は省略する。取得失敗でも次の通信閉鎖が成功すれば Agent を開始し、依存取得失敗とオフラインの制約をプロンプトで伝える。取消・Run の期限切れ・不正な lockfile は起動を中止する。
 4. Runner lease を使う `network-closed` コールバックが registry intercept を拒否ハンドラーに置き換える。閉鎖状態を Durable Object に保存する。閉鎖成功の確認前は Codex を起動しない。閉鎖を取り消す RPC や HTTP API は存在しない。
 5. Agent と検証コマンドの sandbox は常に `networkAccess: false`。必要なら Agent が `pnpm install --offline --frozen-lockfile` を実行する。pnpm の実行前メタデータ再検証は無効にする（`npm_config_verify_deps_before_run=false`、`pnpm_config_verify_deps_before_run=false`）。store は環境内の `store`（`pnpm_config_store_dir`、`npm_config_store_dir`）を使用する。インストールスクリプトも同じ通信禁止 sandbox 内で動く。新規依存や未取得の依存は通信を開けずに失敗する。pnpm 以外の依存取得には未対応。
 

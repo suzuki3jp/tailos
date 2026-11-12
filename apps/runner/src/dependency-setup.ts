@@ -2,8 +2,26 @@ import { execFile, type ExecFileOptions } from "node:child_process";
 import { copyFile, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import * as v from "valibot";
 
 const exec = promisify(execFile);
+
+export type DependencySetupResult =
+  | { status: "skipped" | "succeeded" }
+  | {
+      status: "failed";
+      exitCode?: number;
+      code?: string;
+      signal?: string;
+      output: string;
+    };
+
+const fetchErrorSchema = v.object({
+  code: v.optional(v.nullable(v.union([v.number(), v.string()]))),
+  signal: v.optional(v.nullable(v.string())),
+  stdout: v.optional(v.string()),
+  stderr: v.optional(v.string()),
+});
 
 // Only the lockfile is copied. Repository .npmrc, workspace configuration,
 // hooks, packageManager declarations and lifecycle scripts are never executed.
@@ -16,13 +34,14 @@ export async function prefetchDependencies(
     args: string[],
     options: ExecFileOptions,
   ) => Promise<unknown> = exec,
-) {
+): Promise<DependencySetupResult> {
+  signal.throwIfAborted();
   const lock = join(cwd, "pnpm-lock.yaml");
   const info = await lstat(lock).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
-  if (!info) return;
+  if (!info) return { status: "skipped" };
   if (!info.isFile())
     throw new Error("Dependency lockfile must be a regular file");
   await Promise.all(
@@ -61,10 +80,30 @@ export async function prefetchDependencies(
           npm_config_globalconfig: "/dev/null",
         },
         maxBuffer: 1024 * 1024,
+        timeout: 60_000,
       },
     );
-  } catch {
-    throw new Error("Dependency prefetch failed under Runner network policy");
+    return { status: "succeeded" };
+  } catch (error) {
+    signal.throwIfAborted();
+    const parsed = v.safeParse(fetchErrorSchema, error);
+    const detail = parsed.success ? parsed.output : undefined;
+    const output = [detail?.stderr, detail?.stdout].filter(Boolean).join("\n");
+    return {
+      status: "failed",
+      exitCode:
+        typeof detail?.code === "number" && Number.isSafeInteger(detail.code)
+          ? detail.code
+          : undefined,
+      code: typeof detail?.code === "string" ? detail.code : undefined,
+      signal: detail?.signal ?? undefined,
+      // Keep complete bounded output for RunnerDiagnostics to redact. Never
+      // truncate a potential secret before its whole record is scanned.
+      output:
+        Buffer.byteLength(output) <= 8_192
+          ? output
+          : "Dependency fetch output omitted: exceeded diagnostic limit",
+    };
   }
 }
 

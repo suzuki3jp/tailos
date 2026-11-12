@@ -8,6 +8,7 @@ import type { Diagnostics } from "@tailos/core/diagnostics";
 import {
   prefetchDependencies,
   closeDependencyNetwork,
+  type DependencySetupResult,
 } from "@/dependency-setup.ts";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
@@ -118,9 +119,28 @@ export function createCodexAgent(
               mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
             ),
           );
-        if (environment && cwd)
-          await prefetchDependencies(cwd, environment, signal);
+        let dependencies: DependencySetupResult = { status: "skipped" };
+        if (environment && cwd) {
+          const span = diagnostics?.start(
+            "command",
+            "pnpm fetch (trusted setup)",
+          );
+          dependencies = await prefetchDependencies(cwd, environment, signal);
+          if (span)
+            diagnostics?.end(
+              span,
+              {
+                outcome:
+                  dependencies.status === "failed" ? "failed" : "succeeded",
+                ...(dependencies.status === "failed" && {
+                  exitCode: dependencies.exitCode,
+                }),
+              },
+              JSON.stringify(dependencies),
+            );
+        }
         await closeDependencyNetwork(job.refresh, signal, http);
+        signal.throwIfAborted();
         return await runTurn(
           launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
@@ -129,6 +149,7 @@ export function createCodexAgent(
           http,
           environment,
           diagnostics,
+          dependencies,
         );
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -158,6 +179,7 @@ async function runTurn(
   http: typeof fetch,
   environment?: string,
   diagnostics?: Diagnostics,
+  dependencies: DependencySetupResult = { status: "skipped" },
 ) {
   const sandboxPolicy = environment
     ? {
@@ -396,7 +418,12 @@ async function runTurn(
         "Use the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
         "For pnpm repositories, run /opt/tailos-checks/node_modules/.bin/pnpm --version from outside the checkout to check the Runner's bundled version. " +
         "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
-        "Dependencies from the initial pnpm lockfile were prefetched. Agent commands have no network access; use pnpm install --offline --frozen-lockfile with the configured store, and do not enable network access. " +
+        (dependencies.status === "failed"
+          ? "Dependency prefetch failed; the configured store may be incomplete. Continue with available offline tools and report checks blocked by missing dependencies. "
+          : dependencies.status === "succeeded"
+            ? "Dependencies from the initial pnpm lockfile were prefetched. "
+            : "Dependency prefetch was skipped because no pnpm lockfile was available. ") +
+        "Agent commands have no network access; use pnpm install --offline --frozen-lockfile with the configured store, and do not enable network access. " +
         "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
         "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
         "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +

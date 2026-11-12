@@ -10,9 +10,13 @@ import { AgentSandboxUnavailable } from "@/agent.ts";
 import { createCodexAgent } from "@/codex-agent.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
 import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
+import {
+  prefetchDependencies,
+  closeDependencyNetwork,
+} from "@/dependency-setup.ts";
 
 vi.mock("@/dependency-setup.ts", () => ({
-  prefetchDependencies: vi.fn(),
+  prefetchDependencies: vi.fn().mockResolvedValue({ status: "skipped" }),
   closeDependencyNetwork: vi.fn(),
 }));
 
@@ -253,6 +257,76 @@ test("rejects the job before login if Codex cannot start its command sandbox", a
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(AgentSandboxUnavailable);
+});
+
+test("continues offline after prefetch failure and records redacted diagnostics", async () => {
+  const job = testJob();
+  job.checkout = {
+    repository: "owner/repo",
+    baseSha: "a".repeat(40),
+    branch: `tailos/issue-1/${job.runId}`,
+    token: "checkout-token",
+  };
+  job.diagnostics = {
+    traceId: `run/${job.runId}`,
+    parentSpanId: `run/${job.runId}`,
+    producerId: randomUUID(),
+    url: "https://tailos.example/diagnostics",
+    bearer: "b".repeat(64),
+    expiresAt: Date.now() + 60_000,
+  };
+  vi.mocked(prefetchDependencies).mockResolvedValueOnce({
+    status: "failed",
+    exitCode: 1,
+    output: "ERR_PNPM_FETCH_403 checkout-token",
+  });
+  const sent: string[] = [];
+  const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+    sent.push(String(init?.body));
+    return new Response(null, { status: 204 });
+  });
+  const launch = vi.fn((...args: Parameters<ReturnType<typeof launchStub>>) => {
+    expect(vi.mocked(closeDependencyNetwork).mock.lastCall?.[0]).toBe(
+      job.refresh,
+    );
+    return launchStub("workspaceWrite")(...args);
+  });
+  const agent = createCodexAgent(launch, async (url) => {
+    if (String(url) === job.refresh.url)
+      return Response.json({ ...job.access, accessToken: "new-access" });
+    return Response.json({
+      number: 17,
+      title: String(url).includes("/issues/") ? "issue" : "pull_request",
+      state: "open",
+      body: null,
+      html_url: "https://github.com/owner/repo",
+    });
+  });
+  await expect(
+    agent.run(job, AbortSignal.timeout(10_000), process.cwd(), diagnostics),
+  ).resolves.toHaveProperty("headline", "fix(api): handle refresh");
+  await diagnostics.finish();
+  const records = sent.flatMap(
+    (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+  );
+  expect(sent.join("")).not.toContain("checkout-token");
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      name: "span.finished",
+      attributes: expect.objectContaining({
+        operation: "command",
+        outcome: "failed",
+        exitCode: 1,
+      }),
+      body: expect.stringContaining("ERR_PNPM_FETCH_403 [REDACTED]"),
+    }),
+  );
+  const input = records.find(
+    (record) => record.attributes.operation === "input",
+  )?.body;
+  expect(input).toContain("Dependency prefetch failed");
+  expect(input).toContain("Agent commands have no network access");
+  expect(input).not.toContain("were prefetched");
 });
 
 test("records effective input and command results without refreshed credentials", async () => {

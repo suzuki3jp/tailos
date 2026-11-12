@@ -22,6 +22,19 @@ test("only HTTPS package metadata and tarball reads are allowed for dependencies
     ),
   ).toBe(true);
   expect(runnerEgressAllowed(new Request(tarball))).toBe(false);
+  for (const path of [
+    "/JSONStream",
+    "/JSONStream/-/JSONStream-1.3.5.tgz",
+    "/@scope%2fLegacyPackage",
+    "/@scope/LegacyPackage/-/LegacyPackage-1.0.0.tgz",
+  ])
+    expect(
+      runnerEgressAllowed(
+        new Request("https://registry.npmjs.org" + path),
+        undefined,
+        true,
+      ),
+    ).toBe(true);
   for (const url of [
     "http://registry.npmjs.org/pkg/-/pkg-1.tgz",
     "https://registry.npmjs.org:444/pkg/-/pkg-1.tgz",

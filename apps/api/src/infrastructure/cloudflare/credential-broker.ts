@@ -5,8 +5,7 @@ import {
   CodexDeviceAuth,
   CodexDeviceError,
   ReauthenticationRequired,
-  codexCredentialsSchema,
-  type CodexCredentials,
+  CodexCredentials,
 } from "@/infrastructure/auth/codex-device.ts";
 import {
   TransientDevicePollError,
@@ -147,7 +146,7 @@ export class CredentialBroker extends DurableObject<Bindings> {
         return null;
       let accessVersion = connection.accessVersion ?? connection.version;
       let creds = v.parse(
-        codexCredentialsSchema,
+        CodexCredentials,
         await unseal(connection.value, this.key, credentialContext),
       );
       if (

@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { diagnosticContextSchema } from "./diagnostics.js";
+import { DiagnosticContext } from "./diagnostics.js";
 
 const positiveId = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repositoryName = v.pipe(
@@ -37,7 +37,7 @@ const gitPath = v.pipe(
   ),
 );
 export const maxPublicationBytes = 4 * 1024 * 1024;
-export const fileChangesSchema = v.strictObject({
+export const FileChanges = v.strictObject({
   additions: v.pipe(
     v.array(
       v.strictObject({
@@ -57,9 +57,9 @@ export const fileChangesSchema = v.strictObject({
     v.maxLength(512),
   ),
 });
-export type FileChanges = v.InferOutput<typeof fileChangesSchema>;
+export type FileChanges = v.InferOutput<typeof FileChanges>;
 
-const repositoryTarget = v.strictObject({
+export const RepositoryTarget = v.strictObject({
   repository: repositoryName,
   repositoryId: positiveId,
   installationId: positiveId,
@@ -69,7 +69,7 @@ const repositoryTarget = v.strictObject({
   agentNetworkAccess: v.optional(v.boolean()),
 });
 
-export const executionContextSchema = v.variant("engine", [
+export const ExecutionContext = v.variant("engine", [
   v.strictObject({ version: v.literal(1), engine: v.literal("fake") }),
   v.strictObject({
     version: v.literal(1),
@@ -78,7 +78,7 @@ export const executionContextSchema = v.variant("engine", [
       v.string(),
       v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
     ),
-    repository: v.optional(repositoryTarget),
+    repository: v.optional(RepositoryTarget),
   }),
 ]);
 
@@ -87,11 +87,11 @@ const job = {
   runId: v.pipe(v.string(), v.uuid()),
   prompt: v.pipe(v.string(), v.minLength(1), v.maxLength(4000)),
   deadlineAt: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
-  diagnostics: v.optional(diagnosticContextSchema),
+  diagnostics: v.optional(DiagnosticContext),
 };
 
 const secret = v.pipe(v.string(), v.minLength(1), v.maxLength(12_000));
-export const codexAccessSchema = v.strictObject({
+export const CodexAccess = v.strictObject({
   accessToken: secret,
   accountId: v.pipe(v.string(), v.minLength(1), v.maxLength(256)),
   planType: v.optional(v.pipe(v.string(), v.maxLength(64))),
@@ -99,12 +99,12 @@ export const codexAccessSchema = v.strictObject({
   accessVersion: v.pipe(v.string(), v.uuid()),
 });
 
-export const runnerJobSchema = v.variant("engine", [
+export const RunnerJob = v.variant("engine", [
   v.strictObject({ ...job, engine: v.literal("fake") }),
   v.strictObject({
     ...job,
     engine: v.literal("codex"),
-    access: codexAccessSchema,
+    access: CodexAccess,
     checkout: v.optional(
       v.strictObject({
         repository: repositoryName,
@@ -121,17 +121,17 @@ export const runnerJobSchema = v.variant("engine", [
   }),
 ]);
 
-export type CodexAccess = v.InferOutput<typeof codexAccessSchema>;
-export type ExecutionContext = v.InferOutput<typeof executionContextSchema>;
+export type CodexAccess = v.InferOutput<typeof CodexAccess>;
+export type ExecutionContext = v.InferOutput<typeof ExecutionContext>;
 
-export const runnerEventSchema = v.strictObject({
+export const RunnerEvent = v.strictObject({
   type: v.picklist(["job_started", "job_succeeded", "job_failed"]),
   at: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
 });
 
-const events = v.pipe(v.array(runnerEventSchema), v.maxLength(20));
+const events = v.pipe(v.array(RunnerEvent), v.maxLength(20));
 
-const runnerPublicationSchema = v.variant("kind", [
+export const RunnerPublication = v.variant("kind", [
   v.strictObject({ kind: v.literal("no_changes") }),
   v.strictObject({ kind: v.literal("checked") }),
   v.strictObject({
@@ -141,12 +141,12 @@ const runnerPublicationSchema = v.variant("kind", [
   }),
 ]);
 
-export const runnerStatusSchema = v.variant("status", [
+export const RunnerStatus = v.variant("status", [
   v.strictObject({ status: v.literal("running") }),
   v.strictObject({
     status: v.literal("succeeded"),
     reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
-    publication: v.optional(runnerPublicationSchema),
+    publication: v.optional(RunnerPublication),
     events,
   }),
   v.strictObject({
@@ -165,8 +165,8 @@ export const runnerStatusSchema = v.variant("status", [
   }),
 ]);
 
-export type RunnerJob = v.InferOutput<typeof runnerJobSchema>;
-export type RunnerStatus = v.InferOutput<typeof runnerStatusSchema>;
+export type RunnerJob = v.InferOutput<typeof RunnerJob>;
+export type RunnerStatus = v.InferOutput<typeof RunnerStatus>;
 
 export const checkedPublicationFields = {
   kind: v.literal("checked"),
@@ -177,13 +177,13 @@ export const checkedPublicationFields = {
   reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
   events,
 };
-export const checkedPublicationSchema = v.strictObject({
+export const CheckedPublication = v.strictObject({
   ...checkedPublicationFields,
-  changes: fileChangesSchema,
+  changes: FileChanges,
 });
-export type CheckedPublication = v.InferOutput<typeof checkedPublicationSchema>;
+export type CheckedPublication = v.InferOutput<typeof CheckedPublication>;
 
-export type RunnerEvent = v.InferOutput<typeof runnerEventSchema>;
+export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;
 
-export type RepositoryTarget = v.InferOutput<typeof repositoryTarget>;
-export type RunnerPublication = v.InferOutput<typeof runnerPublicationSchema>;
+export type RepositoryTarget = v.InferOutput<typeof RepositoryTarget>;
+export type RunnerPublication = v.InferOutput<typeof RunnerPublication>;

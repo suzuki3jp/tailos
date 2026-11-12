@@ -1,10 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { legacyPublicationSchema } from "@/application/runs/publication.ts";
-import {
-  checkedPublicationSchema,
-  maxPublicationBytes,
-} from "@tailos/core/runner";
+import { LegacyPublication } from "@/application/runs/publication.ts";
+import { CheckedPublication, maxPublicationBytes } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
 
@@ -55,7 +52,7 @@ export function createRefreshRoutes(
         return c.json({ error: "invalid_lease" }, 401);
 
       const work = v.safeParse(
-        v.union([checkedPublicationSchema, legacyPublicationSchema]),
+        v.union([CheckedPublication, LegacyPublication]),
         await c.req.json().catch(() => null),
       );
       if (!work.success || work.output.kind === "pushed")

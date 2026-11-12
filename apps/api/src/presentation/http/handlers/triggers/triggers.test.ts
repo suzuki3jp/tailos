@@ -1,4 +1,4 @@
-import { executionContextSchema } from "@tailos/core/runner";
+import { ExecutionContext } from "@tailos/core/runner";
 import { parse } from "valibot";
 import {
   createTestOperator,
@@ -143,7 +143,7 @@ test("Codex smoke triggers require an operator and select that user's connection
     .bind(codexAdmission.runId)
     .first<string>("execution_context");
   assert(context);
-  expect(parse(executionContextSchema, JSON.parse(context))).toStrictEqual({
+  expect(parse(ExecutionContext, JSON.parse(context))).toStrictEqual({
     version: 1,
     engine: "codex",
     connectionId: `codex/${operator.id}`,

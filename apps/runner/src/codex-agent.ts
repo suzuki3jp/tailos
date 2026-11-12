@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
+import { CodexAccess, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
@@ -251,7 +251,7 @@ async function runTurn(
         signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       });
       if (!response.ok) throw new Error("Refresh unavailable");
-      const next = v.parse(codexAccessSchema, await response.json());
+      const next = v.parse(CodexAccess, await response.json());
       if (
         next.accountId !== access.accountId ||
         next.connectionVersion !== access.connectionVersion

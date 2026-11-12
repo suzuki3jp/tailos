@@ -1,8 +1,7 @@
 import type { WriteRunArtifacts } from "@/application/runs/artifacts.ts";
 import {
-  executionContextSchema,
+  ExecutionContext,
   type RunnerEvent,
-  type ExecutionContext,
   type RunnerStatus,
 } from "@tailos/core/runner";
 import * as v from "valibot";
@@ -87,7 +86,7 @@ export async function advanceRun(
   if (!run) return undefined;
 
   const context = v.safeParse(
-    executionContextSchema,
+    ExecutionContext,
     parseJson(run.executionContext),
   );
   let outcome: RunnerStatus | RunOutcome;

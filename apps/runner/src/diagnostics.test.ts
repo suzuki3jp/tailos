@@ -1,8 +1,5 @@
 import { expect, test } from "vitest";
-import {
-  diagnosticBatchSchema,
-  maxDiagnosticBody,
-} from "@tailos/core/diagnostics";
+import { DiagnosticBatch, maxDiagnosticBody } from "@tailos/core/diagnostics";
 import type { RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
@@ -39,7 +36,7 @@ test("redacts before transport and retries a lost ACK with the identical batch",
   await diagnostics.finish();
   expect(sent[0]).toBe(sent[1]);
   expect(sent.join("")).not.toContain(token);
-  const last = v.parse(diagnosticBatchSchema, JSON.parse(sent.at(-1)!));
+  const last = v.parse(DiagnosticBatch, JSON.parse(sent.at(-1)!));
   expect(last.completed).toEqual({ lastSeq: 2, dropped: 0 });
 });
 
@@ -51,10 +48,10 @@ test("omits entire oversized bodies and reports unfinished spans as partial", as
   });
   diagnostics.start("command", "x".repeat(maxDiagnosticBody + 1));
   await diagnostics.finish();
-  const first = v.parse(diagnosticBatchSchema, JSON.parse(sent[0]!));
+  const first = v.parse(DiagnosticBatch, JSON.parse(sent[0]!));
   expect(first.records[0]?.body).toBeUndefined();
   expect(first.records[0]?.attributes.reason).toBe("limit");
-  const last = v.parse(diagnosticBatchSchema, JSON.parse(sent.at(-1)!));
+  const last = v.parse(DiagnosticBatch, JSON.parse(sent.at(-1)!));
   expect(last.completed?.dropped).toBe(2);
 });
 
@@ -75,7 +72,7 @@ test("omits bodies whose JSON escaping would exceed the wire limit", async () =>
 });
 
 function parse(input: string) {
-  return v.parse(diagnosticBatchSchema, JSON.parse(input));
+  return v.parse(DiagnosticBatch, JSON.parse(input));
 }
 
 test("drops a permanently rejected packet and sends a partial completion marker", async () => {

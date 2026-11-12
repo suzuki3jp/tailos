@@ -98,12 +98,17 @@ async function execute(
   const remaining = job.input.deadlineAt - Date.now();
   if (remaining <= 0) {
     events.push({ type: "job_failed", at: Date.now() });
-    job.state = { status: "failed", errorCode: "deadline_exceeded", events };
     diagnostics.end(span, { outcome: "failed", reason: "deadline" });
-    await diagnostics.finish();
+    await diagnostics.finish(0);
+    job.state = { status: "failed", errorCode: "deadline_exceeded", events };
     return;
   }
   const signal = AbortSignal.timeout(remaining);
+  let terminal: RunnerStatus = {
+    status: "failed",
+    errorCode: "agent_failed",
+    events,
+  };
   try {
     const input = job.input;
     const result =
@@ -125,7 +130,7 @@ async function execute(
               .reply,
           };
     signal.throwIfAborted();
-    job.state = v.parse(runnerStatusSchema, {
+    terminal = v.parse(runnerStatusSchema, {
       status: "succeeded",
       ...result,
       events: [...events, { type: "job_succeeded", at: Date.now() }],
@@ -139,7 +144,7 @@ async function execute(
         : error instanceof PublicationFailed
           ? error.code
           : "agent_failed";
-    job.state = {
+    terminal = {
       status: "failed",
       errorCode: signal.aborted ? "deadline_exceeded" : errorCode,
       events,
@@ -149,7 +154,12 @@ async function execute(
       ...(signal.aborted ? { reason: "deadline" as const } : {}),
     });
   } finally {
-    await diagnostics.finish();
+    // Do not expose a terminal status until its bounded final flush has had a
+    // chance to finish: the controller destroys the container after that status.
+    await diagnostics.finish(
+      Math.max(0, Math.min(4_000, job.input.deadlineAt - Date.now() - 100)),
+    );
+    job.state = terminal;
   }
 }
 

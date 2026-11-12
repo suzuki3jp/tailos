@@ -19,6 +19,7 @@ import type {
   DiagnosticTraceView,
   TriggerDiagnostic,
 } from "@/application/diagnostics/store.ts";
+import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
 
 export async function digestDiagnostic(text: string) {
@@ -99,13 +100,14 @@ export async function ingestDiagnostics(
   }
   const trace = await db
     .prepare(
-      "SELECT producer_id AS producerId, last_seq AS lastSeq, dropped FROM diagnostic_traces WHERE id = ? AND expires_at > ?",
+      "SELECT producer_id AS producerId, last_seq AS lastSeq, dropped, body_bytes AS bodyBytes FROM diagnostic_traces WHERE id = ? AND expires_at > ?",
     )
     .bind(traceId, Date.now())
     .first<{
       producerId: string | null;
       lastSeq: number | null;
       dropped: number;
+      bodyBytes: number;
     }>();
   const lastSeq = trace?.lastSeq;
   if (
@@ -117,6 +119,11 @@ export async function ingestDiagnostics(
             batch.completed.dropped !== trace.dropped))))
   )
     throw new Error("Diagnostic capture closed");
+  // Keep space for the final marker even if the last detail packet cannot fit.
+  const quota = batch.completed
+    ? maxDiagnosticBytes
+    : maxDiagnosticBytes - 1024;
+  if (trace.bodyBytes + bytes > quota) throw new DiagnosticStorageLimit();
   const now = Date.now();
   const objectKey = `diagnostics/v1/${traceId}/${batch.batchId}-${digest}.json`;
   await bucket.put(objectKey, content);
@@ -136,7 +143,7 @@ export async function ingestDiagnostics(
         traceId,
         producerId,
         bytes,
-        maxDiagnosticBytes,
+        quota,
         Math.max(0, ...batch.records.map((r) => r.seq)),
       ),
     db
@@ -205,7 +212,7 @@ export async function ingestDiagnostics(
     )
     .bind(batch.batchId, traceId)
     .first<string>("digest");
-  if (stored !== digest) throw new Error("Diagnostic storage limit");
+  if (stored !== digest) throw new DiagnosticStorageLimit();
 }
 
 export async function recordTriggerDecision(

@@ -86,6 +86,13 @@ export function createGithubWebhook(
         ...(delivery && /^[A-Za-z0-9-]{1,100}$/.test(delivery)
           ? { deliveryId: delivery }
           : {}),
+      }).catch(() => {
+        // oxlint-disable-next-line no-console -- IDs and allowlisted enums only; detail must not change the webhook result.
+        console.warn("Trigger diagnostic write failed", {
+          ...c.get("diagnosticRequest"),
+          reason,
+          outcome,
+        });
       });
     };
     const ignore = async (reason: TriggerDiagnostic["reason"]) => {

@@ -69,6 +69,8 @@ Span の親子関係は因果関係を表す。`occurredAt` と保存側の `rec
 
 Agent の成功と Run の成功を分ける。外部へのリクエストがタイムアウトした場合は `unknown` を使い、相手側の未実行や失敗を断定しない。正常な状態ポーリングは毎回保存せず、失敗・復旧の変化を記録する。
 
+起動対象外の判定やスケジュール失敗の補足は best effort とし、診断ストアが失敗しても元の HTTP 応答を変えない。失敗時は ID と許可済みの判定コードだけを Workers Logs に残す。Run を新規受理する際の起動理由・関係は、業務上の受理と同じ batch で保証する。
+
 Codex Adapter は対応する item の開始・完了と、Tailos の GitHub ツールを記録する。プロバイダが通知しない処理や内部の推論は記録できない。未知の raw RPC、認証 RPC、app-server の stderr 全文は保存しない。
 
 ## 保存先と保証
@@ -102,6 +104,8 @@ Runner は実行中から、検査済みの記録を1.5秒ごとに送信する�
 6. ACK 消失時は同じ ID と内容で再送する。同一 ID の異なる内容や、他の Run/producer の記録は拒否する。
 7. 終了時に最終 seq と省略件数を送る。終了直後の送信には2分の猶予を設け、Runner は D1/R2 の資格情報を持たない。
 
+Runner は、終了の記録と最終マーカーを送る機会を設けてから終端状態を公開する。待機は最大4秒で、業務の締切直前には予算を縮める。診断先が応答しなくても業務結果の通知を待たせ続けない。
+
 R2 key は `diagnostics/v1/{traceId}/{batchId}-{digest}.json`。同じ object を複数 producer で共有せず、Event の本文を読む際はバッチ内の eventId を参照する。公開用の差分チェックポイントは別の用途・寿命なので流用しない。
 
 D1 と R2 の横断トランザクションは前提にしない。R2 成功・D1 失敗では ACK を返さず、再送と未参照 object の清掃で扱う。R2 の強整合性を利用して、本文保存後に D1 の参照を公開する。[D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) · [R2 の整合性](https://developers.cloudflare.com/r2/reference/consistency/)
@@ -131,6 +135,8 @@ Secretlint で検出できない形式の資格情報には、既知の秘密値
 | 経路・Event の保持 | 90日 |
 
 上限の目的は巨大な本文や高頻度の delta で業務 D1 と実行環境を圧迫しないこと。D1 のプラットフォーム上限とは別に、アプリ側で制限する。[D1 の制限](https://developers.cloudflare.com/d1/platform/limits/)
+
+保存上限は413で通知し、Runner は拒否されたバッチを省略件数に計上して同じ本文を再送し続けない。API は本文の R2 書き込み前にも上限を確認し、最後の partial マーカー用の領域を確保する。
 
 `captureState` は `collecting / complete / partial / unknown`。complete は、最終位置までの Event と終了マーカーがそろい、既知の省略がない場合にだけ付ける。Run 成功から推定しない。未完了 Span、本文の省略、検査失敗は partial、コンテナ消失で最終位置が不明なら unknown として扱う。
 

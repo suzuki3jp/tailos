@@ -1,5 +1,11 @@
 import type { DiagnosticAttributes } from "@tailos/core/diagnostics";
 
+export class DiagnosticStorageLimit extends Error {
+  constructor() {
+    super("Diagnostic storage limit");
+  }
+}
+
 export type TriggerDiagnostic = {
   traceId: string;
   requestId: string;

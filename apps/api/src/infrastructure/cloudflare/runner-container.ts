@@ -49,6 +49,7 @@ import {
   recordRunDiagnostic,
   registerDiagnosticProducer,
 } from "@/infrastructure/diagnostics/store.ts";
+import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -256,14 +257,19 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return false;
     if (!this.env.RUN_ARTIFACTS)
       throw new Error("Diagnostic storage unavailable");
-    await ingestDiagnostics(
-      this.env.DB,
-      this.env.RUN_ARTIFACTS,
-      runId,
-      lease.producerId,
-      batch,
-      [bearer],
-    );
+    try {
+      await ingestDiagnostics(
+        this.env.DB,
+        this.env.RUN_ARTIFACTS,
+        runId,
+        lease.producerId,
+        batch,
+        [bearer],
+      );
+    } catch (error) {
+      if (error instanceof DiagnosticStorageLimit) return "limit" as const;
+      throw error;
+    }
     return true;
   }
 

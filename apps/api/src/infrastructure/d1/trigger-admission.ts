@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { diagnosticRetentionMs } from "@tailos/core/diagnostics";
 
 import type {
   Admission,
@@ -66,9 +67,9 @@ export async function admitTrigger(
       ),
     db
       .prepare(`INSERT INTO diagnostic_traces (id, owner_id, session_id, run_id, source, created_at, expires_at)
-      SELECT 'run/' || r.id, s.owner_id, r.session_id, r.id, 'run', r.created_at, r.created_at + 7776000000
+      SELECT 'run/' || r.id, s.owner_id, r.session_id, r.id, 'run', r.created_at, r.created_at + ?
       FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ?`)
-      .bind(runId),
+      .bind(diagnosticRetentionMs, runId),
     db
       .prepare(`INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, occurred_at, received_at, name, attributes)
       SELECT 'run/' || id || '/admitted', 'run/' || id, 'run/' || id, 'database', created_at, created_at, 'run.admitted',
@@ -91,7 +92,7 @@ export async function admitTrigger(
       FROM trigger_events e JOIN runs r ON r.id = e.run_id JOIN sessions s ON s.id = r.session_id
       WHERE e.source = ? AND e.idempotency_key = ? AND s.owner_id = ? ON CONFLICT(id) DO NOTHING`)
       .bind(
-        now + 7776000000,
+        now + diagnosticRetentionMs,
         input.source,
         input.idempotencyKey,
         input.ownerId,
@@ -123,7 +124,7 @@ export async function admitTrigger(
         input.idempotencyKey,
         requestId,
         now,
-        now + 90 * 24 * 60 * 60_000,
+        now + diagnosticRetentionMs,
         input.source,
         input.idempotencyKey,
         input.ownerId,

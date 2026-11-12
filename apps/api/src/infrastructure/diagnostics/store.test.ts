@@ -1,6 +1,7 @@
 import { assert, expect, test } from "vitest";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
-import { runTraceId } from "@tailos/core/diagnostics";
+import { maxDiagnosticBytes, runTraceId } from "@tailos/core/diagnostics";
+import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import {
   createTestBindings,
   createTestDb,
@@ -269,4 +270,51 @@ test("recovers runs admitted by an older Worker during rollout", async (t) => {
     "run.started",
     "run.finished",
   ]);
+});
+
+test("rejects the storage quota before an R2 write and reserves room for a partial marker", async (t) => {
+  const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
+  const { runId } = await admitTrigger(DB, request);
+  const producer = crypto.randomUUID();
+  await registerDiagnosticProducer(DB, runId, producer);
+  const traceId = runTraceId(runId);
+  await DB.prepare(
+    "INSERT INTO diagnostic_artifacts (id, trace_id, span_id, object_key, digest, bytes, expires_at) VALUES (?, ?, ?, 'fixture', 'fixture', ?, ?)",
+  )
+    .bind(
+      crypto.randomUUID(),
+      traceId,
+      traceId,
+      maxDiagnosticBytes - 1024,
+      Date.now() + 60_000,
+    )
+    .run();
+  await DB.prepare("UPDATE diagnostic_traces SET body_bytes = ? WHERE id = ?")
+    .bind(maxDiagnosticBytes - 1024, traceId)
+    .run();
+  let writes = 0;
+  const bucket = {
+    get: RUN_ARTIFACTS.get.bind(RUN_ARTIFACTS),
+    async put(key: string, body: string) {
+      writes++;
+      return RUN_ARTIFACTS.put(key, body);
+    },
+  };
+  await expect(
+    ingestDiagnostics(DB, bucket, runId, producer, batch(producer)),
+  ).rejects.toBeInstanceOf(DiagnosticStorageLimit);
+  expect(writes).toBe(0);
+  const end: DiagnosticBatch = {
+    version: 1,
+    batchId: crypto.randomUUID(),
+    producerId: producer,
+    records: [],
+    completed: { lastSeq: 1, dropped: 1 },
+  };
+  await ingestDiagnostics(DB, bucket, runId, producer, end);
+  expect(
+    await DB.prepare("SELECT capture_state FROM diagnostic_traces WHERE id = ?")
+      .bind(traceId)
+      .first("capture_state"),
+  ).toBe("partial");
 });

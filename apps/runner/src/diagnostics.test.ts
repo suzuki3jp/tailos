@@ -77,3 +77,16 @@ test("omits bodies whose JSON escaping would exceed the wire limit", async () =>
 function parse(input: string) {
   return v.parse(diagnosticBatchSchema, JSON.parse(input));
 }
+
+test("drops a permanently rejected packet and sends a partial completion marker", async () => {
+  const sent: string[] = [];
+  const diagnostics = new RunnerDiagnostics(job(), async (_url, init) => {
+    sent.push(String(init?.body));
+    return new Response(null, { status: sent.length === 1 ? 413 : 204 });
+  });
+  const span = diagnostics.start("command", "some output");
+  diagnostics.end(span);
+  await diagnostics.finish();
+  expect(sent).toHaveLength(2);
+  expect(parse(sent[1]!).completed).toEqual({ lastSeq: 2, dropped: 2 });
+});

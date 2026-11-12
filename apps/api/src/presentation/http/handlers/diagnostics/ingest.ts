@@ -36,6 +36,8 @@ export function createDiagnosticIngestRoutes(
         const accepted = await c.env.RUNNER.getByName(
           runId.output,
         ).ingestDiagnostics(runId.output, bearer, batch.output);
+        if (accepted === "limit")
+          return c.json({ error: "diagnostics_limit" }, 413);
         return accepted
           ? c.body(null, 204)
           : c.json({ error: "invalid_lease" }, 401);

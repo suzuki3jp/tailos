@@ -17,6 +17,7 @@ export class RunnerDiagnostics implements Diagnostics {
   private readonly context;
   private readonly secrets = new Set<string>();
   private readonly queue: DiagnosticRecord[] = [];
+  private readonly reservations = new Map<string, number>();
   private readonly operations = new Map<
     string,
     {
@@ -144,9 +145,13 @@ export class RunnerDiagnostics implements Diagnostics {
       this.dropped++;
       attributes = { ...attributes, reason: "limit" };
     }
-    this.totalBytes += body === undefined ? 0 : bytes;
     const reservation =
       (body === undefined ? 0 : Math.min(bytes * 10, maxDiagnosticBody)) + 1024;
+    if (this.reservedBytes + reservation > 4 * 1024 * 1024) {
+      this.dropped++;
+      return;
+    }
+    this.totalBytes += body === undefined ? 0 : bytes;
     this.reservedBytes += reservation;
     const record: DiagnosticRecord = {
       eventId: crypto.randomUUID(),
@@ -159,6 +164,7 @@ export class RunnerDiagnostics implements Diagnostics {
       attributes,
       ...(this.requestId && { requestId: this.requestId }),
     };
+    this.reservations.set(record.eventId, reservation);
     this.work = this.work.then(async () => {
       try {
         if (body !== undefined)
@@ -215,30 +221,31 @@ export class RunnerDiagnostics implements Diagnostics {
           count: records.length,
         };
       }
-      if (!(await this.send(this.packet.body, deadline))) return;
-      this.queue.splice(0, this.packet.count);
+      const outcome = await this.send(this.packet.body, deadline);
+      if (outcome === "retry") return;
+      if (outcome === "limit") this.dropped += this.packet.count;
+      for (const record of this.queue.splice(0, this.packet.count)) {
+        this.reservedBytes -= this.reservations.get(record.eventId) ?? 0;
+        this.reservations.delete(record.eventId);
+      }
       this.packet = undefined;
-      this.reservedBytes = this.queue.reduce(
-        (total, record) =>
-          total +
-          1024 +
-          (record.body === undefined ? 0 : Buffer.byteLength(record.body)),
-        0,
-      );
     }
   }
 
-  private async send(body: string, deadline: number) {
+  private async send(
+    body: string,
+    deadline: number,
+  ): Promise<"accepted" | "retry" | "limit"> {
     if (
       !this.context ||
       Date.now() >= deadline ||
       Date.now() >= this.context.expiresAt
     )
-      return false;
+      return "retry";
     try {
       const url = new URL(this.context.url);
       if (url.protocol !== "https:" || url.username || url.password)
-        return false;
+        return "retry";
       // Validate before sending; failures never serialize the rejected input.
       v.parse(diagnosticBatchSchema, JSON.parse(body));
       const response = await this.http(url, {
@@ -254,27 +261,51 @@ export class RunnerDiagnostics implements Diagnostics {
         ),
       });
       await response.body?.cancel();
-      return response.status === 204;
+      return response.status === 204
+        ? "accepted"
+        : response.status === 413
+          ? "limit"
+          : "retry";
     } catch {
-      return false;
+      return "retry";
     }
   }
 
-  async finish() {
+  async finish(budgetMs = 4_000) {
     if (this.timer) clearInterval(this.timer);
     if (!this.context || this.closed) return;
     this.dropped += this.operations.size;
     this.operations.clear();
     this.closed = true;
-    await this.flush();
-    if (this.queue.length) return; // Missing final marker is explicitly unknown, not complete.
-    const batch: DiagnosticBatch = {
-      version: 1,
-      batchId: crypto.randomUUID(),
-      producerId: this.context.producerId,
-      records: [],
-      completed: { lastSeq: this.seq, dropped: this.dropped },
-    };
-    await this.send(JSON.stringify(batch), Date.now() + 1_000);
+    if (budgetMs <= 0) return;
+    const context = this.context;
+    const deadline = Date.now() + budgetMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        (async () => {
+          await this.flush(
+            Math.max(0, budgetMs - Math.min(1_000, budgetMs / 4)),
+          );
+          if (this.queue.length || Date.now() >= deadline) return;
+          const batch: DiagnosticBatch = {
+            version: 1,
+            batchId: crypto.randomUUID(),
+            producerId: context.producerId,
+            records: [],
+            completed: { lastSeq: this.seq, dropped: this.dropped },
+          };
+          await this.send(JSON.stringify(batch), deadline);
+        })(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, budgetMs);
+          timer.unref();
+        }),
+      ]);
+    } catch {
+      // A telemetry failure cannot prevent the business result from being read.
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

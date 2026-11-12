@@ -612,29 +612,7 @@
         "run_id": {
           "name": "run_id",
           "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'issue-comment'"
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target": {
-          "name": "target",
-          "type": "text",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
@@ -652,13 +630,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'processing'"
-        },
-        "applied_state": {
-          "name": "applied_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "version": {
           "name": "version",
@@ -718,11 +689,6 @@
           "name": "issue_notification_due",
           "columns": ["next_attempt_at"],
           "isUnique": false
-        },
-        "issue_notification_run_kind": {
-          "name": "issue_notification_run_kind",
-          "columns": ["run_id", "kind"],
-          "isUnique": true
         }
       },
       "foreignKeys": {

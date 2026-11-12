@@ -5,17 +5,24 @@ const sharp = require(process.env.SHARP_PATH);
   const ico = fs.readFileSync("apps/web/public/favicon.ico");
   const offset = ico.readUInt32LE(50);
   const icon = ico.subarray(offset, offset + ico.readUInt32LE(46));
+  // Use the favicon's background so its opaque square blends into each frame.
+  const [r, g, b] = await sharp(icon)
+    .extract({ left: 0, top: 0, width: 1, height: 1 })
+    .removeAlpha()
+    .raw()
+    .toBuffer();
+  const background = { r, g, b };
   const frames = [];
   for (let i = 0; i < 100; i++) {
     const mark = await sharp(icon)
-      .rotate(i * 14.4, { background: "#f0f0f000" })
+      .rotate(i * 14.4, { background: { ...background, alpha: 0 } })
       .png()
       .toBuffer();
     const meta = await sharp(mark).metadata();
     const x = Math.round(i * 5);
     frames.push(
       await sharp({
-        create: { width: 600, height: 72, channels: 4, background: "#f0f0f0" },
+        create: { width: 600, height: 72, channels: 4, background },
       })
         .composite([
           { input: mark, left: x, top: Math.round((72 - meta.height) / 2) },
@@ -43,7 +50,7 @@ const sharp = require(process.env.SHARP_PATH);
       `<svg width="360" height="72"><rect y="68" width="360" height="4" fill="${color}"/><circle cx="224" cy="36" r="10" fill="${color}"/></svg>`,
     );
     await sharp({
-      create: { width: 360, height: 72, channels: 4, background: "#f0f0f0" },
+      create: { width: 360, height: 72, channels: 4, background },
     })
       .composite([{ input: icon, left: 156, top: 12 }, { input: badge }])
       .png()

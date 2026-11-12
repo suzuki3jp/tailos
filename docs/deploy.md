@@ -67,6 +67,8 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設定を参照し、作業ディレクトリで適用できる整形・lint・テストなどを実行する。実行結果と、実行できなかった検証の理由を返答に記載する。Runner イメージには Tailos 自体を検証するための pnpm・oxfmt・oxlint を組み込む。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。
 
+Codex の Run は `standard-3`（8 GiB、2 vCPU）で起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
+
 チェックアウトを伴う Run では、ホーム・一時領域・キャッシュ・pnpm のロック用領域・ユーザー用ツールの配置先を Run ごとに作成し、作業ディレクトリと合わせて書き込みを許可する。これらの環境変数はサンドボックス内のコマンドに渡し、app-server 自身は Agent のホームや一時領域を使用しない。領域は Codex の認証用ディレクトリと分け、Run 終了時に削除する。
 
 Agent のコマンドによるネットワーク利用は既定で無効。依存取得などで必要なプロジェクトは、運用者が `TAILOS_PROJECTS` の該当項目に `"agentNetworkAccess": true` を設定して許可する。設定は Run 作成時に保存され、Issue 本文やリポジトリ内の設定からは変更できない。有効にした Run では、依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信でき、非公開ソースや読み取り可能なデータが外部に送信される可能性がある。この条件を許容できるプロジェクトに限って有効にする。

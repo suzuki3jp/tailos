@@ -12,18 +12,21 @@
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
+    "mcp:key": "node scripts/mcp-key.mjs",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc -b --stopBuildOnErrors"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.15",
+    "@modelcontextprotocol/server": "2.4.0",
     "@tailos/core": "workspace:*",
     "better-auth": "1.7.15",
     "drizzle-orm": "0.45.2",
     "hono": "4.13.10",
     "jose": "6.2.14",
     "valibot": "1.3.0",
-    "@tailos/diagnostics": "workspace:*"
+    "@tailos/diagnostics": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261006.1",

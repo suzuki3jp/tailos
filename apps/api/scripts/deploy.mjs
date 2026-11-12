@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { safeParse } from "valibot";
 import { readLoginConfig } from "./login-config.mjs";
 import { projectsSchema } from "../src/application/triggers/projects.ts";
+import { parseMcpKeyConfig } from "../src/application/auth/mcp-key.ts";
 import {
   findD1Database,
   hasR2Bucket,
@@ -25,8 +26,18 @@ const runtimeSecrets = [
 
 const env = { ...process.env };
 const login = readLoginConfig(env, origin);
+const mcpConfig = env.TAILOS_MCP_READ_KEY_CONFIG;
+if (
+  mcpConfig &&
+  (!parseMcpKeyConfig(mcpConfig) || !login.vars.TAILOS_OPERATOR_GITHUB_ID)
+) {
+  throw new Error(
+    "TAILOS_MCP_READ_KEY_CONFIG requires valid key metadata and a configured GitHub operator.",
+  );
+}
 const secrets = {
   ...login.secrets,
+  ...(mcpConfig ? { TAILOS_MCP_READ_KEY_CONFIG: mcpConfig } : {}),
   ...Object.fromEntries(
     runtimeSecrets
       .filter((name) => Boolean(env[name]))
@@ -124,6 +135,7 @@ config.vars = {
   ...login.vars,
   TAILOS_PUBLIC_ORIGIN: origin,
   TAILOS_WEB_ORIGIN: webOrigin,
+  TAILOS_MCP_ENABLED: mcpConfig ? "true" : "false",
   TAILOS_GH_APP_ID: appId,
   PROJECTS: JSON.stringify(checkedProjects.output),
 };

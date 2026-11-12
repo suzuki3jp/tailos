@@ -33,6 +33,10 @@ import {
 import { createDiagnosticRoutes } from "@/presentation/http/handlers/diagnostics/diagnostics.ts";
 import { createDiagnosticIngestRoutes } from "@/presentation/http/handlers/diagnostics/ingest.ts";
 
+import { authenticateMcpKey } from "@/infrastructure/auth/mcp-key.ts";
+import { inspectionStore } from "@/infrastructure/inspection.ts";
+import { createMcpRoutes } from "@/presentation/http/handlers/mcp/mcp.ts";
+
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
 const { sessionRoutes, userSessionRoutes } = createSessionRoutes(
@@ -117,6 +121,7 @@ export type BrowserApi = ApplyGlobalResponse<
 
 app.route("/api", browserApi);
 app.route("/api/auth", loginRoutes);
+app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);
 app.route(

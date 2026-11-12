@@ -29,6 +29,13 @@
       "when": 1794418588622,
       "tag": "0003_early_gunslinger",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794466624971,
+      "tag": "0004_inspection_indexes",
+      "breakpoints": true
     }
   ]
 }

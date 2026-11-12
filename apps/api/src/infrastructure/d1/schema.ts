@@ -11,13 +11,17 @@ import {
   type SQLiteTableExtraConfigValue,
 } from "drizzle-orm/sqlite-core";
 
-export const sessions = sqliteTable("sessions", {
-  id: text().primaryKey().notNull(),
-  ownerId: text("owner_id").notNull(),
-  projectId: text("project_id"),
-  target: text(),
-  createdAt: integer("created_at").notNull(),
-});
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: text().primaryKey().notNull(),
+    ownerId: text("owner_id").notNull(),
+    projectId: text("project_id"),
+    target: text(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("session_owner_created").on(t.ownerId, t.createdAt, t.id)],
+);
 
 export const sessionMessages = sqliteTable(
   "session_messages",
@@ -92,6 +96,7 @@ export const runs = sqliteTable(
     index("run_next_action")
       .on(t.nextActionAt, t.id)
       .where(sql`${t.status} in ('queued', 'running')`),
+    index("run_session_created").on(t.sessionId, t.createdAt, t.id),
   ],
 );
 

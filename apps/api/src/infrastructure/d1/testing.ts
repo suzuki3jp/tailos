@@ -2,15 +2,22 @@ import { readFile, readdir } from "node:fs/promises";
 import type { TestContext } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
-export async function createTestBindings(t: TestContext): Promise<{
+export async function createTestBindings(
+  t: TestContext,
+  options: { script?: string; bindings?: Record<string, string> } = {},
+): Promise<{
   DB: Awaited<ReturnType<Miniflare["getD1Database"]>>;
   RUN_ARTIFACTS: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
+  worker: Miniflare;
 }> {
   const worker = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
-      script: "export default { fetch: () => new Response(null) }",
+      script:
+        options.script ?? "export default { fetch: () => new Response(null) }",
+      bindings: options.bindings,
       compatibilityDate: "2026-10-06",
+      compatibilityFlags: ["nodejs_compat"],
       d1Databases: ["DB"],
       r2Buckets: ["RUN_ARTIFACTS"],
     }),
@@ -30,7 +37,11 @@ export async function createTestBindings(t: TestContext): Promise<{
     );
   }
 
-  return { DB: db, RUN_ARTIFACTS: await worker.getR2Bucket("RUN_ARTIFACTS") };
+  return {
+    DB: db,
+    RUN_ARTIFACTS: await worker.getR2Bucket("RUN_ARTIFACTS"),
+    worker,
+  };
 }
 
 export async function createTestDb(t: TestContext) {

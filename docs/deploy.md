@@ -24,6 +24,7 @@ API ジョブは Wrangler 設定の名前で既存の D1 と R2 を探し、D1 �
 | Variable | `TAILOS_OPERATOR_GITHUB_ID` | 運用者の GitHub ユーザー ID（数値） |
 | Secret | `TAILOS_GITHUB_OAUTH_CLIENT_SECRET` | ログイン専用 GitHub OAuth App の Client Secret |
 | Secret | `BETTER_AUTH_SECRET` | ログイン用に `openssl rand -base64 32` で生成した鍵 |
+| Secret | `TAILOS_MCP_READ_KEY_CONFIG` | 任意。read 専用 MCP のキー設定。[発行・接続手順](mcp.md)を参照 |
 | Secret | `CREDENTIAL_ENCRYPTION_KEY` | `openssl rand -base64 32` で生成した暗号化キー |
 | Variable | `TAILOS_GH_APP_ID` | GitHub App ID |
 | Secret | `TAILOS_GH_APP_PRIVATE_KEY` | GitHub App の PEM 秘密鍵 |

@@ -5,6 +5,8 @@ import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
 import { createCodexAgent } from "@/codex-agent.ts";
+import { RunnerDiagnostics } from "@/diagnostics.ts";
+import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
 
 const script = `
   const { createInterface } = require("node:readline");
@@ -94,6 +96,12 @@ const script = `
         request.result.accessToken !== "new-access" ||
         request.result.chatgptAccountId !== "account-id"
       ) throw new Error("Unexpected credential refresh response");
+      send({ method: "item/started", params: { threadId: "test-thread", item: {
+        id: "command-1", type: "commandExecution", command: "pnpm test", cwd: workspace, status: "inProgress",
+      } } });
+      send({ method: "item/completed", params: { threadId: "test-thread", item: {
+        id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed new-access", exitCode: 0, status: "completed",
+      } } });
       send({ method: "item/completed", params: {
         threadId: "test-thread",
         item: { type: "agentMessage", text: mode === "workspaceWrite"
@@ -210,6 +218,50 @@ test("rejects the job before login if Codex cannot start its command sandbox", a
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(AgentSandboxUnavailable);
+});
+
+test("records effective input and command results without refreshed credentials", async () => {
+  const job = testJob();
+  job.diagnostics = {
+    traceId: `run/${job.runId}`,
+    parentSpanId: `run/${job.runId}`,
+    producerId: randomUUID(),
+    url: "https://tailos.example/diagnostics",
+    bearer: "b".repeat(64),
+    expiresAt: Date.now() + 60_000,
+  };
+  const sent: string[] = [];
+  const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+    sent.push(String(init?.body));
+    return new Response(null, { status: 204 });
+  });
+  const agent = createCodexAgent(launchStub("readOnly"), async () =>
+    Response.json({
+      ...job.access,
+      accessToken: "new-access",
+      accessVersion: randomUUID(),
+    }),
+  );
+  await agent.run(job, AbortSignal.timeout(10_000), undefined, diagnostics);
+  await diagnostics.finish();
+  expect(sent.join("")).not.toContain("new-access");
+  expect(sent.join("")).not.toContain("old-access");
+  const records = sent.flatMap(
+    (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+  );
+  expect(
+    records.some(
+      (record) =>
+        record.attributes.operation === "input" && record.body === job.prompt,
+    ),
+  ).toBe(true);
+  const command = records.find(
+    (record) =>
+      record.attributes.operation === "command" &&
+      record.name === "span.finished",
+  );
+  expect(command?.attributes.exitCode).toBe(0);
+  expect(command?.body).toContain("checks passed [REDACTED]");
 });
 
 test("preserves an RPC rejection from the sandbox probe", async () => {

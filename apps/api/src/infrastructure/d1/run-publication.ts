@@ -3,6 +3,10 @@ import type {
   LegacyPublication,
   PendingPublication,
 } from "@/application/runs/publication.ts";
+import {
+  ensureRunTrace,
+  publicationEvent,
+} from "@/infrastructure/diagnostics/journal.ts";
 
 export async function stageRunPublication(
   db: D1Database,
@@ -12,7 +16,7 @@ export async function stageRunPublication(
   const payload = JSON.stringify(work);
   const baseSha = work.kind === "checked" ? work.baseSha : null;
   const now = Date.now();
-  const updated = await db
+  const update = db
     .prepare(
       `UPDATE runs
      SET step_state = CASE WHEN ? IS NULL
@@ -27,7 +31,7 @@ export async function stageRunPublication(
          ELSE json_extract(step_state, '$.baseSha') = ? AND deadline_at > ?
        END)
        AND (json_extract(step_state, '$.pendingPublication') IS NULL
-         OR json_extract(step_state, '$.pendingPublication') = json(?))`,
+         OR json_extract(step_state, '$.pendingPublication') = json(?)) RETURNING id`,
     )
     .bind(
       baseSha,
@@ -40,9 +44,29 @@ export async function stageRunPublication(
       baseSha,
       now,
       payload,
-    )
-    .run();
-  return updated.meta.changes === 1;
+    );
+  const results = await db.batch([
+    ...ensureRunTrace(db, runId, now),
+    update,
+    publicationEvent(
+      db,
+      runId,
+      `publication/${runId}/${work.kind}/${work.kind === "checked" ? work.digest : work.sha}`,
+      "publication.staged",
+      now,
+      work.kind === "checked"
+        ? {
+            kind: work.kind,
+            branch: work.branch,
+            baseSha: work.baseSha,
+            digest: work.digest,
+          }
+        : { kind: work.kind, branch: work.branch, sha: work.sha },
+      "changes() = 1 AND json_extract(step_state, '$.pendingPublication') = json(?)",
+      [payload],
+    ),
+  ]);
+  return results.at(-2)?.results.length === 1;
 }
 
 export async function beginPublicationReconciliation(
@@ -51,7 +75,8 @@ export async function beginPublicationReconciliation(
   work: LegacyPublication,
   pushed: boolean,
 ) {
-  const updated = await db
+  const now = Date.now();
+  const update = db
     .prepare(
       `UPDATE runs SET step_state = json_set(
        step_state,
@@ -59,9 +84,22 @@ export async function beginPublicationReconciliation(
        '$.pendingPublication.kind', CASE WHEN ? THEN 'pushed' ELSE json_extract(step_state, '$.pendingPublication.kind') END)
      WHERE id = ? AND status = 'running'
        AND json_extract(step_state, '$.pendingPublication.branch') = ?
-       AND json_extract(step_state, '$.pendingPublication.sha') = ?`,
+       AND json_extract(step_state, '$.pendingPublication.sha') = ? RETURNING id`,
     )
-    .bind(Date.now(), Number(pushed), runId, work.branch, work.sha)
-    .run();
-  return updated.meta.changes === 1;
+    .bind(now, Number(pushed), runId, work.branch, work.sha);
+  const results = await db.batch([
+    ...ensureRunTrace(db, runId, now),
+    update,
+    publicationEvent(
+      db,
+      runId,
+      `reconciliation/${runId}/${work.sha}/${pushed ? "confirmed" : "started"}`,
+      "publication.reconciled",
+      now,
+      { branch: work.branch, sha: work.sha, confirmed: pushed },
+      "changes() = 1 AND json_extract(step_state, '$.pendingPublication.branch') = ? AND json_extract(step_state, '$.pendingPublication.sha') = ?",
+      [work.branch, work.sha],
+    ),
+  ]);
+  return results.at(-2)?.results.length === 1;
 }

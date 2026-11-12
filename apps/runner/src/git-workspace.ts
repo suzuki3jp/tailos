@@ -12,6 +12,7 @@ import {
   type RunnerPublication,
 } from "@tailos/core/runner";
 import * as v from "valibot";
+import type { Diagnostics } from "@tailos/core/diagnostics";
 import { PublicationFailed, type AgentResult } from "@/agent.ts";
 
 const exec = promisify(execFile);
@@ -26,6 +27,7 @@ export async function runInGitWorkspace(
   work: (cwd: string) => Promise<AgentResult>,
   stage: (work: CheckedWork) => Promise<void>,
   remote = `https://github.com/${checkout.repository}.git`,
+  diagnostics?: Diagnostics,
 ): Promise<{ reply: string; publication: RunnerPublication }> {
   const metadata = await mkdtemp(
     join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-git-"),
@@ -90,6 +92,14 @@ export async function runInGitWorkspace(
     }
   };
   try {
+    const checkoutSpan = diagnostics?.start(
+      "checkout",
+      JSON.stringify({
+        repository: checkout.repository,
+        baseSha: checkout.baseSha,
+        branch: checkout.branch,
+      }),
+    );
     await git(["init", "--quiet"]);
     await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, { flag: "wx" });
     await git(
@@ -105,9 +115,11 @@ export async function runInGitWorkspace(
       true,
     );
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+    if (checkoutSpan) diagnostics?.end(checkoutSpan);
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
     const { reply, headline } = await work(cwd);
+    const inspectSpan = diagnostics?.start("workspace");
     if (!(await readFile(configPath)).equals(trustedConfig))
       throw new Error("Git metadata configuration changed");
 
@@ -123,7 +135,10 @@ export async function runInGitWorkspace(
       checkout.baseSha,
       tree,
     ]);
-    if (!paths.length) return { reply, publication: { kind: "no_changes" } };
+    if (!paths.length) {
+      if (inspectSpan) diagnostics?.end(inspectSpan, {}, "no_changes");
+      return { reply, publication: { kind: "no_changes" } };
+    }
     const validatedHeadline = v.safeParse(changeHeadline, headline);
     if (!validatedHeadline.success)
       throw new PublicationFailed("invalid_change_headline");
@@ -159,6 +174,17 @@ export async function runInGitWorkspace(
     }
 
     signal.throwIfAborted();
+    if (inspectSpan)
+      diagnostics?.end(
+        inspectSpan,
+        {},
+        JSON.stringify({
+          additions: changes.additions.map((file) => file.path),
+          deletions: changes.deletions.map((file) => file.path),
+          tree,
+        }),
+      );
+    const publicationSpan = diagnostics?.start("publication");
     await stage({
       branch: checkout.branch,
       baseSha: checkout.baseSha,
@@ -167,6 +193,7 @@ export async function runInGitWorkspace(
       reply,
       changes,
     });
+    if (publicationSpan) diagnostics?.end(publicationSpan);
     return { reply, publication: { kind: "checked" } };
   } finally {
     await Promise.all([

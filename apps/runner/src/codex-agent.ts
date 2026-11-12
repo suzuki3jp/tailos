@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexAccessSchema, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
+import type { Diagnostics } from "@tailos/core/diagnostics";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import {
@@ -12,7 +13,11 @@ import {
   githubToolCallSchema,
 } from "@/github-tool.ts";
 
-const threadSchema = v.object({ thread: v.object({ id: v.string() }) });
+const threadSchema = v.object({
+  thread: v.object({ id: v.string() }),
+  model: v.optional(v.string()),
+  modelProvider: v.optional(v.string()),
+});
 const sandboxProbeSchema = v.object({
   exitCode: v.pipe(v.number(), v.safeInteger()),
 });
@@ -64,7 +69,7 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd) {
+    async run(job, signal, cwd, diagnostics) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const directory = await mkdtemp(join(tmpdir(), "tailos-codex-"));
       try {
@@ -75,6 +80,7 @@ export function createCodexAgent(
           job,
           signal,
           http,
+          diagnostics,
         );
       } finally {
         await rm(directory, { recursive: true, force: true });
@@ -102,6 +108,7 @@ async function runTurn(
   job: Extract<RunnerJob, { engine: "codex" }>,
   signal: AbortSignal,
   http: typeof fetch,
+  diagnostics?: Diagnostics,
 ) {
   const rpc = new CodexRpc(child);
   const abort = () => rpc.close();
@@ -109,6 +116,37 @@ async function runTurn(
   let access = job.access;
   let threadId: string | undefined;
   let reply = "";
+  const agentSpan = diagnostics?.start(
+    "agent",
+    JSON.stringify({
+      engine: "codex",
+      version: process.env.TAILOS_CODEX_VERSION ?? "unknown",
+      sandbox: job.checkout ? "workspace-write" : "read-only",
+    }),
+  );
+  let agentSucceeded = false;
+  const itemSpans = new Map<string, string>();
+  const diagnosticItemSchema = v.object({
+    threadId: v.string(),
+    item: v.object({
+      id: v.optional(v.string()),
+      type: v.string(),
+      command: v.optional(v.string()),
+      cwd: v.optional(v.string()),
+      aggregatedOutput: v.optional(v.nullable(v.string())),
+      exitCode: v.optional(v.nullable(v.pipe(v.number(), v.safeInteger()))),
+      text: v.optional(v.string()),
+      tool: v.optional(v.string()),
+      server: v.optional(v.string()),
+      arguments: v.optional(v.unknown()),
+      result: v.optional(v.unknown()),
+      query: v.optional(v.string()),
+      status: v.optional(v.string()),
+      changes: v.optional(
+        v.array(v.object({ path: v.string(), diff: v.optional(v.string()) })),
+      ),
+    }),
+  });
   const sensitive = new Set([access.accessToken, job.refresh.bearer]);
   if (job.checkout) sensitive.add(job.checkout.token);
   const loginParams = () => ({
@@ -124,7 +162,32 @@ async function runTurn(
         const call = v.parse(githubToolCallSchema, params);
         if (call.threadId !== threadId)
           throw new Error("Unexpected tool thread");
-        return getGitHubItem(job.checkout, call.arguments, signal, http);
+        const span = diagnostics?.start(
+          "tool",
+          JSON.stringify({
+            name: "tailos_github_get",
+            arguments: call.arguments,
+          }),
+          agentSpan,
+        );
+        try {
+          const result = await getGitHubItem(
+            job.checkout,
+            call.arguments,
+            signal,
+            http,
+          );
+          if (span)
+            diagnostics?.end(
+              span,
+              { outcome: result.success ? "succeeded" : "failed" },
+              JSON.stringify(result),
+            );
+          return result;
+        } catch (error) {
+          if (span) diagnostics?.end(span, { outcome: "failed" });
+          throw error;
+        }
       }
       if (method !== "account/chatgptAuthTokens/refresh")
         throw new Error("Interactive requests are disabled");
@@ -150,9 +213,72 @@ async function runTurn(
         throw new Error("Connection changed");
       access = next;
       sensitive.add(next.accessToken);
+      diagnostics?.addSecret(next.accessToken);
       return loginParams();
     };
     rpc.onNotification = (method, params) => {
+      if (
+        diagnostics &&
+        (method === "item/started" || method === "item/completed")
+      ) {
+        const parsed = v.safeParse(diagnosticItemSchema, params);
+        if (parsed.success && parsed.output.threadId === threadId) {
+          const item = parsed.output.item;
+          const operation =
+            item.type === "commandExecution"
+              ? "command"
+              : item.type === "fileChange"
+                ? "file_change"
+                : item.type === "agentMessage"
+                  ? "reply"
+                  : item.type === "mcpToolCall" || item.type === "webSearch"
+                    ? "tool"
+                    : undefined;
+          if (operation) {
+            const id = item.id ?? "reply";
+            let span = itemSpans.get(id);
+            if (!span && itemSpans.size < 1000) {
+              span = diagnostics.start(
+                operation,
+                item.command === undefined
+                  ? undefined
+                  : JSON.stringify({ command: item.command, cwd: item.cwd }),
+                agentSpan,
+              );
+              itemSpans.set(id, span);
+            }
+            if (span && method === "item/completed") {
+              diagnostics.end(
+                span,
+                {
+                  outcome:
+                    item.exitCode != null
+                      ? item.exitCode === 0
+                        ? "succeeded"
+                        : "failed"
+                      : item.status === "failed"
+                        ? "failed"
+                        : operation === "reply" || item.status === "completed"
+                          ? "succeeded"
+                          : "unknown",
+                  ...(item.exitCode == null ? {} : { exitCode: item.exitCode }),
+                },
+                JSON.stringify({
+                  output: item.aggregatedOutput,
+                  text: item.text,
+                  changes: item.changes,
+                  tool: item.tool,
+                  server: item.server,
+                  arguments: item.arguments,
+                  result: item.result,
+                  query: item.query,
+                }),
+              );
+              itemSpans.delete(id);
+            }
+          }
+        }
+      }
       if (method === "item/completed") {
         const item = v.safeParse(messageSchema, params);
         if (item.success && item.output.threadId === threadId)
@@ -204,22 +330,33 @@ async function runTurn(
       }),
     );
     threadId = thread.thread.id;
+    if (agentSpan && (thread.model || thread.modelProvider))
+      diagnostics?.output(
+        agentSpan,
+        JSON.stringify({
+          model: thread.model,
+          modelProvider: thread.modelProvider,
+        }),
+      );
+    const effectivePrompt = job.checkout
+      ? job.prompt +
+        "\n\nUse tailos_github_get to look up issues or pull requests in the target repository when needed. " +
+        "Use the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
+        "For pnpm repositories, run /opt/tailos-checks/node_modules/.bin/pnpm --version from outside the checkout to check the Runner's bundled version. " +
+        "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
+        "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
+        "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
+        "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
+        "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
+      : job.prompt;
+    const inputSpan = diagnostics?.start("input", effectivePrompt, agentSpan);
+    if (inputSpan) diagnostics?.end(inputSpan);
     await rpc.call("turn/start", {
       threadId,
       input: [
         {
           type: "text",
-          text: job.checkout
-            ? job.prompt +
-              "\n\nUse tailos_github_get to look up issues or pull requests in the target repository when needed. " +
-              "Use the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
-              "For pnpm repositories, run /opt/tailos-checks/node_modules/.bin/pnpm --version from outside the checkout to check the Runner's bundled version. " +
-              "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
-              "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
-              "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
-              "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
-              "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
-            : job.prompt,
+          text: effectivePrompt,
           text_elements: [],
         },
       ],
@@ -236,6 +373,7 @@ async function runTurn(
       }),
     });
     await completed;
+    agentSucceeded = true;
 
     const redact = (text: string) => {
       for (const secret of sensitive)
@@ -252,6 +390,10 @@ async function runTurn(
         : {}),
     };
   } finally {
+    if (agentSpan)
+      diagnostics?.end(agentSpan, {
+        outcome: agentSucceeded ? "succeeded" : "failed",
+      });
     signal.removeEventListener("abort", abort);
     rpc.close();
   }

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./runner": "./src/runner.ts"
+    "./runner": "./src/runner.ts",
+    "./diagnostics": "./src/diagnostics.ts"
   },
   "scripts": {
     "typecheck": "tsc -b --stopBuildOnErrors"

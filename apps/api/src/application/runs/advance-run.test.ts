@@ -201,7 +201,7 @@ test("ends a run whose container disappeared without creating a replacement", as
   ).toBe("runner_lost");
 });
 
-test("records artifact_write_failed when R2 rejects a successful result", async (t) => {
+test("preserves the reply and required history when detailed R2 artifacts fail", async (t) => {
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, request);
   const artifacts = {
@@ -228,13 +228,13 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
         artifacts,
       )
     )?.status,
-  ).toBe("failed");
+  ).toBe("succeeded");
   expect(
     await db
       .prepare("SELECT error_code FROM runs WHERE id = ?")
       .bind(runId)
       .first("error_code"),
-  ).toBe("artifact_write_failed");
+  ).toBe(null);
   expect(
     await db
       .prepare(
@@ -242,7 +242,15 @@ test("records artifact_write_failed when R2 rejects a successful result", async 
       )
       .bind(sessionId)
       .first("count"),
-  ).toBe(1);
+  ).toBe(2);
+  expect(
+    await db
+      .prepare(
+        "SELECT name FROM diagnostic_events WHERE trace_id = ? AND name = 'run.finished'",
+      )
+      .bind(`run/${runId}`)
+      .first("name"),
+  ).toBe("run.finished");
 });
 
 test("reconciles a late publication checkpoint and retries saving the published reply", async (t) => {

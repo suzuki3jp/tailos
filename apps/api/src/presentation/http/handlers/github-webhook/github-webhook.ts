@@ -6,6 +6,7 @@ import type { ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import { projectsSchema } from "@/application/triggers/projects.ts";
+import type { TriggerDiagnostic } from "@/application/diagnostics/store.ts";
 
 const id = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repository = v.pipe(
@@ -47,6 +48,10 @@ export function createGithubWebhook(
     header: string | undefined,
     body: ArrayBuffer,
   ) => Promise<boolean>,
+  recordDecision: (
+    env: Bindings,
+    event: TriggerDiagnostic,
+  ) => Promise<void> = async () => {},
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -68,18 +73,50 @@ export function createGithubWebhook(
       ))
     )
       return c.json({ error: "invalid_signature" }, 401);
-    if (c.req.header("X-GitHub-Event") !== "issues") return c.body(null, 204);
+    const decision = async (
+      reason: TriggerDiagnostic["reason"],
+      outcome: TriggerDiagnostic["outcome"] = "ignored",
+    ) => {
+      const delivery = c.req.header("X-GitHub-Delivery");
+      await recordDecision(c.env, {
+        ...c.get("diagnosticRequest"),
+        source: "github.issue-label",
+        reason,
+        outcome,
+        ...(delivery && /^[A-Za-z0-9-]{1,100}$/.test(delivery)
+          ? { deliveryId: delivery }
+          : {}),
+      });
+    };
+    const ignore = async (reason: TriggerDiagnostic["reason"]) => {
+      await decision(reason);
+      return c.body(null, 204);
+    };
+    if (c.req.header("X-GitHub-Event") !== "issues") {
+      await decision("event_type");
+      return c.body(null, 204);
+    }
 
     const event = parseJson(new TextDecoder().decode(bytes));
-    if (!event || typeof event !== "object" || !("action" in event))
+    if (!event || typeof event !== "object" || !("action" in event)) {
+      await decision("invalid_event", "failed");
       return c.json({ error: "invalid_event" }, 400);
-    if (event.action !== "labeled") return c.body(null, 204);
+    }
+    if (event.action !== "labeled") {
+      await decision("action");
+      return c.body(null, 204);
+    }
     const issueEvent = v.safeParse(payload, event);
-    if (!issueEvent.success) return c.json({ error: "invalid_event" }, 400);
+    if (!issueEvent.success) {
+      await decision("invalid_event", "failed");
+      return c.json({ error: "invalid_event" }, 400);
+    }
 
     const config = v.safeParse(projectsSchema, parseJson(c.env.PROJECTS));
-    if (!config.success)
+    if (!config.success) {
+      await decision("project_config", "failed");
       return c.json({ error: "invalid_project_config" }, 503);
+    }
     const data = issueEvent.output;
     const target = config.output.find(
       (item) => item.repositoryId === data.repository.id,
@@ -87,23 +124,32 @@ export function createGithubWebhook(
     if (
       !target ||
       target.repository.toLowerCase() !==
-        data.repository.full_name.toLowerCase() ||
-      target.installationId !== data.installation.id ||
-      target.triggerLabel !== data.label.name ||
+        data.repository.full_name.toLowerCase()
+    )
+      return ignore("repository");
+    if (target.installationId !== data.installation.id)
+      return ignore("installation");
+    if (target.triggerLabel !== data.label.name) return ignore("label");
+    if (
       !target.allowedActors.some(
         (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
-      ) ||
-      data.issue.state !== "open" ||
-      data.issue.pull_request
+      )
     )
-      return c.body(null, 204);
+      return ignore("actor");
+    if (data.issue.state !== "open") return ignore("issue_state");
+    if (data.issue.pull_request) return ignore("pull_request");
 
     const delivery = c.req.header("X-GitHub-Delivery");
-    if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery))
+    if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
+      await decision("delivery", "failed");
       return c.json({ error: "missing_delivery_id" }, 400);
+    }
 
     const ownerId = await findOperatorUserId(c.env);
-    if (!ownerId) return c.json({ error: "operator_not_initialized" }, 503);
+    if (!ownerId) {
+      await decision("operator", "failed");
+      return c.json({ error: "operator_not_initialized" }, 503);
+    }
 
     const executionContext = {
       version: 1,
@@ -145,9 +191,11 @@ export function createGithubWebhook(
       prompt,
       executionContext: JSON.stringify(executionContext),
       timeoutMs: target.maxRunMinutes * 60_000,
+      diagnostics: c.get("diagnosticRequest"),
     });
-    await scheduleRun(c.env)?.(result.runId).catch(() => {
+    await scheduleRun(c.env)?.(result.runId).catch(async () => {
       // The recovery sweep can schedule the committed run.
+      await decision("schedule", "unknown");
     });
     return c.json(result, 202);
   });

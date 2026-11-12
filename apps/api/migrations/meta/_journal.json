@@ -22,6 +22,13 @@
       "when": 1793980290740,
       "tag": "0002_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794418588622,
+      "tag": "0003_early_gunslinger",
+      "breakpoints": true
     }
   ]
 }

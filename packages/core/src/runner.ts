@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { diagnosticContextSchema } from "./diagnostics.js";
 
 const positiveId = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repositoryName = v.pipe(
@@ -85,6 +86,7 @@ const job = {
   runId: v.pipe(v.string(), v.uuid()),
   prompt: v.pipe(v.string(), v.minLength(1), v.maxLength(4000)),
   deadlineAt: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  diagnostics: v.optional(diagnosticContextSchema),
 };
 
 const secret = v.pipe(v.string(), v.minLength(1), v.maxLength(12_000));

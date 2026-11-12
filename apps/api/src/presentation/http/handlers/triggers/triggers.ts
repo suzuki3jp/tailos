@@ -58,6 +58,7 @@ export function createTriggerRoutes(
           : { version: 1, engine },
       ),
       timeoutMs: 5 * 60_000,
+      diagnostics: c.get("diagnosticRequest"),
     });
     if (admission.disposition === "started") {
       await scheduleRun(c.env)?.(admission.runId).catch(() => {

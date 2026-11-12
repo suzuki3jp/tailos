@@ -8,6 +8,7 @@ export type TriggerAdmission = {
   prompt: string;
   executionContext: string;
   timeoutMs: number;
+  diagnostics?: { traceId: string; requestId: string };
 };
 
 export type Admission = {

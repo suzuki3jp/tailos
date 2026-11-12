@@ -1,0 +1,20 @@
+{
+  "name": "@tailos/diagnostics",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/redact.ts"
+  },
+  "scripts": {
+    "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
+    "typecheck": "tsc -b --stopBuildOnErrors"
+  },
+  "dependencies": {
+    "@secretlint/core": "13.1.0",
+    "@secretlint/profiler": "13.1.0",
+    "@secretlint/secretlint-rule-preset-recommend": "13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0"
+  }
+}

@@ -8,6 +8,76 @@ import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+import type { DiagnosticBatch } from "@tailos/core/diagnostics";
+import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
+
+test("a diagnostics lease accepts late telemetry but cannot publish or refresh credentials", async (t) => {
+  const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
+  const { runId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "diagnostics",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  const producerId = crypto.randomUUID();
+  await registerDiagnosticProducer(DB, runId, producerId);
+  await DB.prepare("UPDATE runs SET status = 'running' WHERE id = ?")
+    .bind(runId)
+    .run();
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const bearer = newRunLease();
+  const lease = {
+    runId,
+    producerId,
+    expiresAt: Date.now() + 60_000,
+    digest: await hashRunLease(bearer),
+  };
+  const runner = new RunnerContainer(
+    {
+      storage: {
+        async get(key: string) {
+          return key === "diagnosticLease" ? lease : undefined;
+        },
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { DB, RUN_ARTIFACTS },
+  );
+  const batch: DiagnosticBatch = {
+    version: 1,
+    batchId: crypto.randomUUID(),
+    producerId,
+    records: [],
+    completed: { lastSeq: 0, dropped: 0 },
+  };
+  expect(await runner.ingestDiagnostics(runId, newRunLease(), batch)).toBe(
+    false,
+  );
+  expect(
+    await runner.ingestDiagnostics(crypto.randomUUID(), bearer, batch),
+  ).toBe(false);
+  expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(true);
+  expect(
+    await runner.refreshAccess(runId, bearer, crypto.randomUUID()),
+  ).toBeNull();
+  expect(
+    await runner.stagePublication(runId, bearer, {
+      kind: "prepared",
+      branch: `tailos/issue-1/${runId}`,
+      sha: "a".repeat(40),
+      reply: "test",
+      events: [],
+    }),
+  ).toBe(false);
+  lease.expiresAt = Date.now() - 1;
+  expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(false);
+});
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {

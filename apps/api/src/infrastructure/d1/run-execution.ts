@@ -9,19 +9,27 @@ import {
   writeRunArtifacts,
   type RunArtifactsBucket,
 } from "@/infrastructure/r2/run-artifacts.ts";
+import {
+  ensureRunTrace,
+  executionTransition,
+} from "@/infrastructure/diagnostics/journal.ts";
 
 function d1RunStore(db: D1Database): RunStore {
   return {
-    claim(runId: string, now: number) {
-      return db
-        .prepare(
-          `UPDATE runs SET status = 'running', next_action_at = ?
+    async claim(runId: string, now: number) {
+      const results = await db.batch<RunInput>([
+        ...ensureRunTrace(db, runId, now),
+        executionTransition(db, runId, "queued", "running", now),
+        db
+          .prepare(
+            `UPDATE runs SET status = 'running', next_action_at = ?
      WHERE id = ? AND status = 'queued'
      RETURNING start_message_id AS messageId, execution_context AS executionContext,
                deadline_at AS deadlineAt, step_state AS stepState`,
-        )
-        .bind(now, runId)
-        .first<RunInput>();
+          )
+          .bind(now, runId),
+      ]);
+      return results.at(-1)?.results[0] ?? null;
     },
     load(runId: string) {
       return db
@@ -52,7 +60,16 @@ function d1RunStore(db: D1Database): RunStore {
       result: string,
       finishedAt: number,
     ) {
-      const [, update] = await db.batch([
+      const [, , update] = await db.batch([
+        executionTransition(
+          db,
+          runId,
+          "running",
+          "succeeded",
+          finishedAt,
+          null,
+          result,
+        ),
         db
           .prepare(
             `INSERT INTO session_messages (id, session_id, seq, author_kind, body, run_id, created_at)
@@ -63,11 +80,11 @@ function d1RunStore(db: D1Database): RunStore {
           .bind(crypto.randomUUID(), reply, finishedAt, runId),
         db
           .prepare(
-            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running'",
+            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING id",
           )
           .bind(result, finishedAt, runId),
       ]);
-      return update?.meta.changes === 1;
+      return update?.results.length === 1;
     },
     async readStatus(runId: string) {
       const stored = await db
@@ -82,13 +99,23 @@ function d1RunStore(db: D1Database): RunStore {
       finishedAt: number,
       result: string | null = null,
     ) {
-      const failed = await db
-        .prepare(
-          "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
-        )
-        .bind(code, finishedAt, result, runId)
-        .first<{ status: "failed" }>();
-      return failed?.status;
+      const [, failed] = await db.batch<{ status: "failed" }>([
+        executionTransition(
+          db,
+          runId,
+          "running",
+          "failed",
+          finishedAt,
+          code,
+          result,
+        ),
+        db
+          .prepare(
+            "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
+          )
+          .bind(code, finishedAt, result, runId),
+      ]);
+      return failed?.results[0]?.status;
     },
   };
 }

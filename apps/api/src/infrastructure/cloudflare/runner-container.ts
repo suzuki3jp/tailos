@@ -204,10 +204,26 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
 
+    // Initialize before start; never fall back to unrestricted Internet.
+    if (enableInternet) {
+      const handler = this.ctx.exports.RunnerEgress;
+      if (!handler || !this.ctx.exports.DependencyEgress)
+        throw new Error("Runner egress policy unavailable");
+      const closed = await this.ctx.storage.get<boolean>(
+        "dependencyNetworkClosed",
+      );
+      await container.interceptOutboundHttps(
+        "registry.npmjs.org",
+        closed ? handler : this.ctx.exports.DependencyEgress,
+      );
+      await container.interceptAllOutboundHttp(handler);
+      await container.interceptOutboundHttps("*", handler);
+    }
     container.start({
       image,
       instance: enableInternet ? "standard-3" : "lite",
-      enableInternet,
+      enableInternet: false,
+      env: enableInternet ? { TAILOS_REQUIRE_EGRESS_CA: "1" } : {},
     });
     await container.setInactivityTimeout(
       Math.max(30_000, deadlineAt - Date.now() + 30_000),
@@ -302,6 +318,24 @@ export class RunnerContainer extends DurableObject<Bindings> {
       bearer,
       expiresAt,
     };
+  }
+
+  async closeDependencyNetwork(runId: string, bearer: string) {
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (
+      !lease ||
+      lease.runId !== runId ||
+      lease.expiresAt <= Date.now() ||
+      !matchRunLease(await hashRunLease(bearer), lease.digest)
+    )
+      return false;
+    await this.ctx.storage.put("dependencyNetworkClosed", true);
+    if (!this.ctx.container) throw new Error("Runner binding unavailable");
+    await this.ctx.container.interceptOutboundHttps(
+      "registry.npmjs.org",
+      this.ctx.exports.RunnerEgress,
+    );
+    return true;
   }
 
   async refreshAccess(runId: string, bearer: string, accessVersion: string) {
@@ -534,7 +568,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         baseSha: checkout.baseSha,
         branch: checkout.branch,
         token: checkout.token,
-        agentNetworkAccess: target.agentNetworkAccess ?? false,
+        agentNetworkAccess: false,
       };
     }
     const port = await observeRun(this.env.DB, request.runId, "container", () =>

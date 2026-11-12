@@ -25,3 +25,11 @@ export type Bindings = {
   TAILOS_GITHUB_OAUTH_CLIENT_SECRET?: string;
   TAILOS_OPERATOR_GITHUB_ID?: string;
 };
+
+declare global {
+  namespace Cloudflare {
+    interface GlobalProps {
+      mainModule: typeof import("./infrastructure/cloudflare/runner-egress.ts");
+    }
+  }
+}

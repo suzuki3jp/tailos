@@ -552,3 +552,106 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
     `tailos-api/v1/runs/${runId}/execution.json`,
   ]);
 });
+
+test("egress initialization fails closed before container startup", async () => {
+  const start = vi.fn();
+  const intercept = vi
+    .fn()
+    .mockRejectedValue(new Error("intercept unavailable"));
+  const runner = new RunnerContainer(
+    {
+      storage: { get: async () => undefined },
+      exports: { RunnerEgress: {}, DependencyEgress: {} },
+      container: {
+        images: { runner: "image" },
+        start,
+        interceptOutboundHttps: intercept,
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {} as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await expect(runner["startRunner"](Date.now() + 1_000, true)).rejects.toThrow(
+    "intercept unavailable",
+  );
+  expect(start).not.toHaveBeenCalled();
+});
+
+test("only the Runner lease can permanently close dependency egress", async () => {
+  const bearer = newRunLease();
+  const lease = {
+    runId: "run",
+    expiresAt: Date.now() + 60_000,
+    digest: await hashRunLease(bearer),
+  };
+  const put = vi.fn();
+  const intercept = vi.fn();
+  const handler = {};
+  const runner = new RunnerContainer(
+    {
+      storage: { get: async () => lease, put },
+      exports: { RunnerEgress: handler },
+      container: { interceptOutboundHttps: intercept },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {} as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  expect(await runner.closeDependencyNetwork("run", newRunLease())).toBe(false);
+  expect(await runner.closeDependencyNetwork("other", bearer)).toBe(false);
+  expect(intercept).not.toHaveBeenCalled();
+  expect(await runner.closeDependencyNetwork("run", bearer)).toBe(true);
+  expect(put).toHaveBeenCalledWith("dependencyNetworkClosed", true);
+  expect(intercept).toHaveBeenCalledExactlyOnceWith(
+    "registry.npmjs.org",
+    handler,
+  );
+  lease.expiresAt = 0;
+  expect(await runner.closeDependencyNetwork("run", bearer)).toBe(false);
+});
+
+test.each([false, true])(
+  "starts with Internet disabled and preserves closed dependency state (%s)",
+  async (closed) => {
+    const handler = {};
+    const dependencyHandler = {};
+    const order: string[] = [];
+    const start = vi.fn(() => {
+      order.push("start");
+    });
+    const https = vi.fn(async () => {
+      order.push("https");
+    });
+    const runner = new RunnerContainer(
+      {
+        storage: { get: async () => closed },
+        exports: { RunnerEgress: handler, DependencyEgress: dependencyHandler },
+        container: {
+          images: { runner: "image" },
+          start,
+          interceptOutboundHttps: https,
+          interceptAllOutboundHttp: async () => {
+            order.push("http");
+          },
+          setInactivityTimeout: async () => {},
+          getTcpPort: () => ({
+            fetch: async () =>
+              Response.json({ status: "ok", service: "runner" }),
+          }),
+        },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+      {} as ConstructorParameters<typeof RunnerContainer>[1],
+    );
+    await runner["startRunner"](Date.now() + 10_000, true);
+    expect(https).toHaveBeenNthCalledWith(
+      1,
+      "registry.npmjs.org",
+      closed ? handler : dependencyHandler,
+    );
+    expect(https).toHaveBeenNthCalledWith(2, "*", handler);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableInternet: false,
+        env: { TAILOS_REQUIRE_EGRESS_CA: "1" },
+      }),
+    );
+    expect(order).toEqual(["https", "http", "https", "start"]);
+  },
+);

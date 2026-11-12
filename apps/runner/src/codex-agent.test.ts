@@ -11,6 +11,11 @@ import { createCodexAgent } from "@/codex-agent.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
 import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
 
+vi.mock("@/dependency-setup.ts", () => ({
+  prefetchDependencies: vi.fn(),
+  closeDependencyNetwork: vi.fn(),
+}));
+
 const script = `
   const { createInterface } = require("node:readline");
   const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
@@ -178,7 +183,7 @@ test.for([
   ["workspaceWrite", false],
   ["workspaceWrite", true],
 ] as const)(
-  "enforces project network opt-in, scopes GitHub reads and refreshes credentials (%s)",
+  "ignores project network opt-in, scopes GitHub reads and refreshes credentials (%s)",
   async ([mode, agentNetworkAccess]) => {
     const job = testJob();
     if (mode === "workspaceWrite") {
@@ -191,7 +196,7 @@ test.for([
       };
     }
     const agent = createCodexAgent(
-      launchStub(mode, undefined, agentNetworkAccess === true),
+      launchStub(mode, undefined, false),
       async (url, init) => {
         const headers = new Headers(init?.headers);
         if (String(url) !== job.refresh.url) {
@@ -377,4 +382,17 @@ test("reports an invalid probe response as a protocol failure", async () => {
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(ValiError);
+});
+
+test("does not launch Codex when dependency network closure fails", async () => {
+  const { closeDependencyNetwork } = await import("@/dependency-setup.ts");
+  vi.mocked(closeDependencyNetwork).mockRejectedValueOnce(
+    new Error("closure unavailable"),
+  );
+  const launch = vi.fn();
+  const agent = createCodexAgent(launch);
+  await expect(
+    agent.run(testJob(), AbortSignal.timeout(10_000)),
+  ).rejects.toThrow("closure unavailable");
+  expect(launch).not.toHaveBeenCalled();
 });

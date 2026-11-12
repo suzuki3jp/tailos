@@ -72,5 +72,24 @@ export function createRefreshRoutes(
     },
   );
 
+  refreshRoutes.post("/:runId/network-closed", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const runId = v.safeParse(uuid, c.req.param("runId"));
+    const bearer = runnerBearer.exec(c.req.header("Authorization") ?? "")?.[1];
+    if (!runId.success || !bearer || !c.env.RUNNER)
+      return c.json({ error: "invalid_lease" }, 401);
+    try {
+      if (!(await findActiveRun(c.env, runId.output, Date.now())))
+        return c.json({ error: "invalid_lease" }, 401);
+      const closed = await c.env.RUNNER.getByName(
+        runId.output,
+      ).closeDependencyNetwork(runId.output, bearer);
+      return closed
+        ? c.body(null, 204)
+        : c.json({ error: "invalid_lease" }, 401);
+    } catch {
+      return c.json({ error: "network_policy_unavailable" }, 503);
+    }
+  });
   return refreshRoutes;
 }

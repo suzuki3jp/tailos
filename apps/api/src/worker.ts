@@ -32,3 +32,8 @@ export default {
     ctx.waitUntil(runner.getByName("diagnostics-cleanup").cleanupDiagnostics());
   },
 };
+
+export {
+  RunnerEgress,
+  DependencyEgress,
+} from "@/infrastructure/cloudflare/runner-egress.ts";

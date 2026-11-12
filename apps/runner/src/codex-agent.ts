@@ -5,6 +5,10 @@ import { delimiter, join } from "node:path";
 import { CodexAccess, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
+import {
+  prefetchDependencies,
+  closeDependencyNetwork,
+} from "@/dependency-setup.ts";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import {
@@ -44,6 +48,10 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
         XDG_CACHE_HOME: join(environment, "cache"),
         PNPM_HOME: join(environment, "tools"),
         npm_config_prefix: join(environment, "tools"),
+        npm_config_store_dir: join(environment, "store"),
+        pnpm_config_store_dir: join(environment, "store"),
+        npm_config_verify_deps_before_run: "false",
+        pnpm_config_verify_deps_before_run: "false",
         PATH: [
           join(environment, "tools", "bin"),
           join(environment, "tools"),
@@ -79,6 +87,7 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
       detached: true,
       env: {
         PATH: process.env.PATH,
+        NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
         CODEX_HOME: directory,
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
@@ -109,6 +118,9 @@ export function createCodexAgent(
               mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
             ),
           );
+        if (environment && cwd)
+          await prefetchDependencies(cwd, environment, signal);
+        await closeDependencyNetwork(job.refresh, signal, http);
         return await runTurn(
           launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
@@ -151,7 +163,7 @@ async function runTurn(
     ? {
         type: "workspaceWrite" as const,
         writableRoots: [cwd, environment],
-        networkAccess: job.checkout?.agentNetworkAccess === true,
+        networkAccess: false,
         excludeSlashTmp: true,
         excludeTmpdirEnvVar: true,
       }
@@ -384,6 +396,7 @@ async function runTurn(
         "Use the repository instructions and CI configuration to choose and run the applicable formatting, linting, and other verification commands in the workspace. " +
         "For pnpm repositories, run /opt/tailos-checks/node_modules/.bin/pnpm --version from outside the checkout to check the Runner's bundled version. " +
         "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
+        "Dependencies from the initial pnpm lockfile were prefetched. Agent commands have no network access; use pnpm install --offline --frozen-lockfile with the configured store, and do not enable network access. " +
         "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
         "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
         "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +

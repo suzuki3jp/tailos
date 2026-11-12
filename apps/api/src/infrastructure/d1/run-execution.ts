@@ -60,6 +60,8 @@ function d1RunStore(db: D1Database): RunStore {
       result: string,
       finishedAt: number,
     ) {
+      // The issue_notification_terminal SQL trigger advances the notification
+      // state/version atomically with this batch's terminal runs.status update.
       const [, , update] = await db.batch([
         executionTransition(
           db,
@@ -99,6 +101,8 @@ function d1RunStore(db: D1Database): RunStore {
       finishedAt: number,
       result: string | null = null,
     ) {
+      // issue_notification_terminal also advances failed notifications here,
+      // including timeouts and other failure paths that use this store.
       const [, failed] = await db.batch<{ status: "failed" }>([
         executionTransition(
           db,

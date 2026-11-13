@@ -6,6 +6,11 @@ import {
 } from "@/infrastructure/auth/testing.ts";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import app from "@/bootstrap/http.ts";
+import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
+import {
+  acceptPlanningInput,
+  dispatchPlanningInputs,
+} from "@/infrastructure/d1/planning.ts";
 
 test.for([undefined, false, true] as const)(
   "accepts signed issue events with project network setting %s and rejects unauthorized actors",
@@ -346,3 +351,107 @@ test("accepts explicit new planning comments without labels and rejects ineligib
     ).status,
   ).toBe(401);
 });
+
+test.for([false, true])(
+  "delivers planning status after dispatch without blocking acknowledgement (schedule fails: %s)",
+  async (scheduleFails, t) => {
+    const DB = await createTestDb(t);
+    let releaseDispatch: () => void = () => {};
+    const dispatchGate = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+    const background: Promise<unknown>[] = [];
+    const recordDecision = vi.fn(async () => {});
+    const notify = vi.fn(async () => {
+      expect(
+        await DB.prepare("SELECT count(*) AS n FROM issue_notifications").first(
+          "n",
+        ),
+      ).toBe(1);
+    });
+    const webhook = createGithubWebhook(
+      () => undefined,
+      () => async () => {
+        throw new Error("Unexpected label admission");
+      },
+      async () => "operator",
+      async () => true,
+      recordDecision,
+      notify,
+      (env, input) => acceptPlanningInput(env.DB, input),
+      async (env) => {
+        await dispatchGate;
+        expect(await dispatchPlanningInputs(env.DB)).toHaveLength(1);
+        if (scheduleFails) throw new Error("Alarm unavailable");
+      },
+    );
+    const response = await webhook.request(
+      "/",
+      {
+        method: "POST",
+        headers: {
+          "X-GitHub-Event": "issue_comment",
+          "X-GitHub-Delivery": "planning-notification-order",
+        },
+        body: JSON.stringify({
+          action: "created",
+          repository: {
+            id: 42,
+            full_name: "owner/repo",
+            default_branch: "main",
+          },
+          installation: { id: 19 },
+          issue: { number: 8, state: "open", title: "Plan", body: "Details" },
+          sender: { login: "allowed", type: "User" },
+          comment: {
+            id: 100,
+            user: { login: "allowed", type: "User" },
+            body: "@tailos plan",
+            html_url: "https://github.com/owner/repo/issues/8#issuecomment-100",
+          },
+        }),
+      },
+      {
+        DB,
+        TAILOS_GH_WEBHOOK_SECRET: "secret",
+        TAILOS_GH_APP_ID: "100",
+        TAILOS_GH_APP_PRIVATE_KEY: "unused",
+        PROJECTS: JSON.stringify([
+          {
+            id: "project",
+            repository: "owner/repo",
+            repositoryId: 42,
+            installationId: 19,
+            triggerLabel: "tailos:run",
+            allowedActors: ["allowed"],
+          },
+        ]),
+      },
+      {
+        waitUntil: (task) => {
+          background.push(task);
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      sessionId: expect.any(String),
+      inputId: expect.any(Number),
+    });
+    expect(notify).not.toHaveBeenCalled();
+    expect(await DB.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(
+      0,
+    );
+    releaseDispatch();
+    await Promise.all(background);
+    expect(notify).toHaveBeenCalledOnce();
+    if (scheduleFails) {
+      expect(recordDecision).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ reason: "schedule", outcome: "unknown" }),
+      );
+    } else expect(recordDecision).not.toHaveBeenCalled();
+  },
+);

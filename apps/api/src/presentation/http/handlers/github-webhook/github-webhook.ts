@@ -171,12 +171,13 @@ export function createGithubWebhook(
         timeoutMs: target.maxRunMinutes * 60_000,
       });
       c.executionCtx.waitUntil(
-        processPlans(c.env).catch(async () => {
-          // The recovery sweep can dispatch and schedule the persisted input.
-          await decision("schedule", "unknown");
-        }),
+        processPlans(c.env)
+          .catch(async () => {
+            // The recovery sweep can dispatch and schedule the persisted input.
+            await decision("schedule", "unknown");
+          })
+          .then(() => notify(c.env)),
       );
-      c.executionCtx.waitUntil(notify(c.env));
       return c.json(receipt, 202);
     }
     const prompt = [

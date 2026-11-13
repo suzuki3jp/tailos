@@ -306,14 +306,19 @@ export function openIndex(root, records) {
 
 function pathMatch(pattern, path) {
   const expression = pattern
-    .split("**")
-    .map((part) =>
-      part
-        .split("*")
-        .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-        .join("[^/]*"),
+    .split("**/")
+    .map((segment) =>
+      segment
+        .split("**")
+        .map((part) =>
+          part
+            .split("*")
+            .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+            .join("[^/]*"),
+        )
+        .join(".*"),
     )
-    .join(".*");
+    .join("(?:.*/)?");
   return new RegExp(`^${expression}$`).test(path);
 }
 

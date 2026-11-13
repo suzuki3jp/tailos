@@ -173,6 +173,33 @@ test("path hints add candidates without excluding cross-cutting policies", (t) =
   );
 });
 
+test("path globstars match zero or more directories without broadening single stars", (t) => {
+  const root = fixture(t);
+  for (const [pattern, matches, misses] of [
+    ["apps/**/*.ts", ["apps/x.ts", "apps/a/b/x.ts"], ["x.ts", "apps/x.js"]],
+    ["a/**/b.ts", ["a/b.ts", "a/x/y/b.ts"], ["ab.ts", "a/x/c.ts"]],
+    ["**/x.ts", ["x.ts", "a/b/x.ts"], ["ax.ts", "a/x.tsx"]],
+    ["docs/pdr/**", ["docs/pdr/x.md", "docs/pdr/records/x.md"], ["docs/x.md"]],
+    ["apps/*.ts", ["apps/x.ts"], ["apps/a/x.ts", "apps/xXts"]],
+    ["a/**/b/**/c.ts", ["a/b/c.ts", "a/x/b/y/z/c.ts"], ["a/b/x.ts"]],
+  ]) {
+    put(root, "PDR-1", { paths: [pattern] });
+    const records = readRecords(root);
+    for (const path of matches)
+      assert.equal(
+        search(root, records, { paths: [path] }).total,
+        1,
+        `${pattern}: ${path}`,
+      );
+    for (const path of misses)
+      assert.equal(
+        search(root, records, { paths: [path] }).total,
+        0,
+        `${pattern}: ${path}`,
+      );
+  }
+});
+
 test("routes historical matches to current decisions and keeps drafts visible", (t) => {
   const root = fixture(t);
   put(

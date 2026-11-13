@@ -502,6 +502,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         ? request.context.repository
         : undefined;
     if (target && job.engine === "codex") {
+      job.githubContext = { kind: "issue", number: target.issueNumber };
       const github = this.github;
       const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
       if (!github || !key)

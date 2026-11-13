@@ -135,6 +135,9 @@ export const RunnerJob = v.variant("engine", [
   v.strictObject({
     ...job,
     engine: v.literal("codex"),
+    githubContext: v.optional(
+      v.strictObject({ kind: v.literal("issue"), number: positiveId }),
+    ),
     access: CodexAccess,
     checkout: v.optional(
       v.strictObject({

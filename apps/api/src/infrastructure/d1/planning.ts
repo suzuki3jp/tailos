@@ -199,7 +199,7 @@ export async function savePlanningSnapshot(
       baseSha: snapshot.baseSha,
       prompt: planningPrompt,
       context: JSON.stringify({
-        ...snapshot,
+        baseSha: snapshot.baseSha,
         conversation: JSON.parse(snapshot.conversation),
       }),
     }

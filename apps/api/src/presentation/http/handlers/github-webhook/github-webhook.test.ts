@@ -142,7 +142,10 @@ test.for([undefined, false, true] as const)(
       env,
     );
     expect(view.status).toBe(200);
-    expect(await view.text()).toMatch(/Private issue details/);
+    const session = await view.text();
+    expect(session).toContain("structured job context");
+    expect(session).not.toContain("Private issue details");
+    expect(session).not.toContain("Fix an issue");
     await db
       .prepare(
         "INSERT INTO sessions (id, owner_id, created_at) VALUES (?, ?, ?)",

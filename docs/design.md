@@ -160,7 +160,11 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 
 Session、初回 inbox と delivery の受付は一つの D1 batch で保存する。最古の pending 入力の message / queued Run 作成・assigned への更新・状態通知の登録も一つの batch とし、既存の Session 単位の active Run 一意制約を維持する。実行中の入力は pending として残る。Cron と Run 終了時が次入力を割り当てる。作成済み queued Run は既存の Run 復旧が起動するため、Run 作成後・起動前と終了後・次入力処理前の停止から回収できる。
 
-Run 開始時の checkout と同じ GitHub 読み取りで最新のタイトル・本文と base SHA を取得する。`planning_snapshots` に使用した Issue、SHA、対象 input ID と受理済み会話を不変保存する。以後の編集で過去の入力を変更しない。任意の GitHub コメント一覧や ephemeral Codex Thread に再開を依存させない。固定 prompt は 4,000 文字以内とし、構造化会話を別の `planningContext` で渡す。全文を保持して最終ジョブの UTF-8 サイズを Runner の既存 32 KiB 上限と照合し、超過時は `planning_input_too_large`、スナップショット保存失敗は `planning_snapshot_failed`、checkout・Issue 取得失敗は `repository_unavailable` として返信待ちを残す。秘密情報の有無にかかわらず最終ジョブ全体が対象なので、利用できる会話量は入力と資格情報のサイズに依存する。
+Run 開始時の checkout で確認したタイトル・本文、base SHA、対象 input ID と受理済み会話を `planning_snapshots` に不変保存する。これは開始前の監査用スナップショットであり、Agent が実際に取得する時点の Issue とは編集により異なりうる。Runner にはタイトル・本文を埋め込まず、`githubContext: { kind: "issue", number }` と、基準 SHA・受理済み会話だけを含む `planningContext` を渡す。実装ラベルの開始 prompt も固定の作業指示とし、Issue の参照情報は同じ JSON で渡す。
+
+Agent は対象リポジトリに限定された `tailos_github_get` を呼び、Issue のタイトル・本文を取得する。本文は既存の 16,000 UTF-16 単位を一回の上限として、`nextBodyOffset` を `bodyOffset` に指定して最後まで読む。サロゲートペアを分割せず、対象 Issue のページは最初の取得結果を保持して返す。対象本文を取得しきらない成功結果は `agent_failed` とする。診断が有効ならツールの入力・取得結果を既存経路へ記録する。Agent に GitHub の資格情報を直接公開せず、任意のコメントを自動で指示に取り込まない。
+
+固定 prompt の 4,000 文字と、最終ジョブ全体の UTF-8 サイズの 32 KiB 上限は維持する。Issue 本文はジョブのサイズを消費しなくなるが、受理済み会話は引き続き全文を渡すため、会話の超過時は `planning_input_too_large`、スナップショット保存失敗は `planning_snapshot_failed`、checkout・Issue 確認失敗は `repository_unavailable` として返信待ちを残す。新 Runner を先に利用可能にし、その後に新フィールドを送る API を導入する。`githubContext` を持たない旧ジョブも引き続き受け付ける。
 
 結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。`planning_issues.latest_run_id` は最新試行、`latest_plan_run_id` は計画提示に成功した最新 Run を指す。質問のみ・失敗は後者を更新しないため、後続の実装引継ぎでは両 ID・結果フラグと未処理 inbox の確認が必要になる。最新試行の ID は queued Run 作成時点で更新する。質問は正常終了し、コンテナを停止する。
 

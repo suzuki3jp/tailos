@@ -180,13 +180,8 @@ export function createGithubWebhook(
       );
       return c.json(receipt, 202);
     }
-    const prompt = [
-      `Implement GitHub issue #${data.issue.number} in ${target.repository}.`,
-      "Make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
-      "",
-      data.issue.title.slice(0, 240),
-      (data.issue.body ?? "").slice(0, 3200),
-    ].join("\n");
+    const prompt =
+      "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
     const result = await admit(c.env)({
       source: "github.issue-label",

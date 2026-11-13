@@ -532,6 +532,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 
 function replyJob(mode: "plain" | "implement" | "plan") {
   const job = testJob();
+  if (mode === "implement") job.deadlineAt = Date.now() + 120_000;
   if (mode !== "plain") {
     job.mode = mode;
     job.checkout = {
@@ -631,7 +632,7 @@ test.for(["revisions", "deadline"] as const)(
   "preserves implementation work when reply repair reaches its %s limit",
   async (limit, t) => {
     const job = replyJob("implement");
-    if (limit === "deadline") job.deadlineAt = Date.now() + 3000;
+    if (limit === "deadline") job.deadlineAt = Date.now() + 59_000;
     const count = limit === "deadline" ? 1 : 3;
     const { agent, turns } = await replyFixture(
       t,
@@ -646,6 +647,46 @@ test.for(["revisions", "deadline"] as const)(
     expect(await turns()).toHaveLength(count);
   },
 );
+
+test("a stalled implementation revision leaves time for publication and stops the agent", async (t) => {
+  const job = replyJob("implement");
+  job.deadlineAt = Date.now() + 65_000;
+  let started = () => {};
+  const revisionStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const { agent, turns, codexHome } = await replyFixture(
+    t,
+    job,
+    ["x".repeat(8001), null],
+    () => started(),
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  t.onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  const result = agent.run(job, AbortSignal.timeout(5000));
+  await revisionStarted;
+  await vi.advanceTimersByTimeAsync(30_000);
+  await expect(result).resolves.toMatchObject({
+    headline: "fix: preserve the changes",
+  });
+  expect((await result).reply).toContain("要約を取得できませんでした");
+  expect(job.deadlineAt - Date.now()).toBeGreaterThan(30_000);
+  expect(await turns()).toHaveLength(2);
+  await expect(stat(dirname(codexHome()))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+test("an invalid implementation revision preserves the completed work", async (t) => {
+  const job = replyJob("implement");
+  const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
+  const result = await agent.run(job, AbortSignal.timeout(5000));
+  expect(result.reply).toContain("要約を取得できませんでした");
+  expect(result.headline).toBe("fix: preserve the changes");
+  expect(await turns()).toHaveLength(2);
+});
 
 test("an aborted revision stops the agent and cleans up its workspace", async (t) => {
   const job = replyJob("plan");

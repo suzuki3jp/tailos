@@ -439,9 +439,42 @@ async function runTurn(
     };
     let prompt = effectivePrompt;
     let implementationHeadline: string | null | undefined;
+    const implementation = !!job.checkout && job.mode !== "plan";
+    const replyWithHeadline = (text: string) => ({
+      reply: text,
+      ...(implementationHeadline != null &&
+      redact(implementationHeadline) === implementationHeadline
+        ? { headline: implementationHeadline }
+        : {}),
+    });
+    const implementationFallback = () => {
+      // Summary failure must not discard completed code or silently truncate
+      // the answer. The original headline still describes the verified work.
+      const text = v.parse(
+        replyText,
+        `Agent の作業は完了しましたが、最終説明文が ${maxReplyLength} 文字の上限を超え、要約を取得できませんでした。`,
+      );
+      agentSucceeded = true;
+      return replyWithHeadline(text);
+    };
+    const parseReply = () =>
+      job.mode === "plan"
+        ? v.parse(planReplySchema, JSON.parse(reply))
+        : job.checkout
+          ? v.parse(repositoryReplySchema, JSON.parse(reply))
+          : { reply };
     for (let revision = 0; ; revision++) {
       signal.throwIfAborted();
-      if (failure) throw failure;
+      if (failure) {
+        if (implementation && revision > 0) return implementationFallback();
+        throw failure;
+      }
+      if (
+        implementation &&
+        revision > 0 &&
+        job.deadlineAt - Date.now() < 60_000
+      )
+        return implementationFallback();
       reply = "";
       // Arm a new completion before turn/start: notifications can arrive before
       // the RPC response. Never reuse a previous turn's reply or completion.
@@ -452,43 +485,52 @@ async function runTurn(
       void completed.catch(() => {});
       const inputSpan = diagnostics?.start("input", prompt, agentSpan);
       if (inputSpan) diagnostics?.end(inputSpan);
-      await rpc.call("turn/start", {
-        threadId,
-        // Revisions may only summarize the existing answer, never edit code.
-        sandboxPolicy: revision === 0 ? sandboxPolicy : { type: "readOnly" },
-        input: [{ type: "text", text: prompt, text_elements: [] }],
-        ...(outputSchema && { outputSchema }),
-      });
-      await completed;
-      signal.throwIfAborted();
-      if (failure) throw failure;
-      const result =
-        job.mode === "plan"
-          ? v.parse(planReplySchema, JSON.parse(reply))
-          : job.checkout
-            ? v.parse(repositoryReplySchema, JSON.parse(reply))
-            : { reply };
+      // Reserve at least 30 seconds for implementation staging/publication.
+      // On timeout close the disposable app-server: no more turns are needed.
+      const revisionTimer =
+        implementation && revision > 0
+          ? setTimeout(
+              () => rpc.close(),
+              Math.min(30_000, job.deadlineAt - Date.now() - 30_000),
+            )
+          : undefined;
+      let result: ReturnType<typeof parseReply>;
+      try {
+        await rpc.call("turn/start", {
+          threadId,
+          // Revisions may only summarize the existing answer, never edit code.
+          sandboxPolicy: revision === 0 ? sandboxPolicy : { type: "readOnly" },
+          input: [{ type: "text", text: prompt, text_elements: [] }],
+          ...(outputSchema && { outputSchema }),
+        });
+        await completed;
+        signal.throwIfAborted();
+        if (failure) throw failure;
+        result = parseReply();
+      } catch (error) {
+        signal.throwIfAborted();
+        if (implementation && revision > 0) return implementationFallback();
+        throw error;
+      } finally {
+        clearTimeout(revisionTimer);
+      }
       if (revision === 0 && "headline" in result)
         implementationHeadline = result.headline;
-      let text = redact(result.reply);
+      const text = redact(result.reply);
       if (text.length > maxReplyLength) {
         const exhausted = revision >= 2;
-        const insufficientTime = job.deadlineAt - Date.now() < 5_000;
+        const insufficientTime =
+          job.deadlineAt - Date.now() < (implementation ? 60_000 : 5_000);
         if (!exhausted && !insufficientTime) {
           prompt = `Your reply contains ${text.length} UTF-16 code units after redaction, exceeding the ${maxReplyLength} limit. Rewrite only the previous answer, aiming for ${maxReplyLength - 1000} UTF-16 code units or fewer. Preserve the essential plan, assumptions, questions and verification results, and keep any headline, planPresented and needsAnswer fields consistent. Do not investigate again, run checks, use tools or change files. Return the same response format.`;
           continue;
         }
-        if (job.checkout && job.mode !== "plan") {
-          // Keep completed implementation work publishable without silently
-          // cutting the user-facing answer or discarding its original headline.
-          text = `Agent の作業は完了しましたが、最終説明文が ${maxReplyLength} 文字の上限を超え、要約を取得できませんでした。`;
-        } else {
-          throw new Error(
-            exhausted
-              ? "Agent reply remains too long"
-              : "Insufficient time to shorten agent reply",
-          );
-        }
+        if (implementation) return implementationFallback();
+        throw new Error(
+          exhausted
+            ? "Agent reply remains too long"
+            : "Insufficient time to shorten agent reply",
+        );
       }
       const validatedReply = v.parse(replyText, text);
       agentSucceeded = true;
@@ -500,13 +542,7 @@ async function runTurn(
             needsAnswer: result.needsAnswer,
           },
         };
-      return {
-        reply: validatedReply,
-        ...(implementationHeadline != null &&
-        redact(implementationHeadline) === implementationHeadline
-          ? { headline: implementationHeadline }
-          : {}),
-      };
+      return replyWithHeadline(validatedReply);
     }
   } finally {
     if (agentSpan)

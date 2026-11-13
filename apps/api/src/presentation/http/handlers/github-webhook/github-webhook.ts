@@ -7,7 +7,7 @@ import type {
   PlanningAdmission,
   PlanningReceipt,
 } from "@/application/triggers/planning.ts";
-import type { ExecutionContext } from "@tailos/core/runner";
+import { githubIssueDigest, type ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import { projectsSchema } from "@/application/triggers/projects.ts";
@@ -149,6 +149,9 @@ export function createGithubWebhook(
         repositoryId: target.repositoryId,
         installationId: target.installationId,
         issueNumber: data.issue.number,
+        ...(normalized.kind === "label" && {
+          issueContentHash: await githubIssueDigest(data.issue),
+        }),
         defaultBranch: data.repository.default_branch,
         triggerLabel: target.triggerLabel,
         agentNetworkAccess: target.agentNetworkAccess,
@@ -180,13 +183,8 @@ export function createGithubWebhook(
       );
       return c.json(receipt, 202);
     }
-    const prompt = [
-      `Implement GitHub issue #${data.issue.number} in ${target.repository}.`,
-      "Make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
-      "",
-      data.issue.title.slice(0, 240),
-      (data.issue.body ?? "").slice(0, 3200),
-    ].join("\n");
+    const prompt =
+      "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
     const result = await admit(c.env)({
       source: "github.issue-label",

@@ -6,6 +6,7 @@ import {
 } from "@/infrastructure/auth/testing.ts";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import app from "@/bootstrap/http.ts";
+import { githubIssueDigest } from "@tailos/core/runner";
 import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
 import {
   acceptPlanningInput,
@@ -126,6 +127,9 @@ test.for([undefined, false, true] as const)(
       .bind(data.runId)
       .first<string>("execution_context");
     expect(JSON.parse(run ?? "null").connectionId).toBe(`codex/${operator.id}`);
+    expect(JSON.parse(run ?? "null").repository.issueContentHash).toBe(
+      await githubIssueDigest(event.issue),
+    );
     expect(JSON.parse(run ?? "null").repository.agentNetworkAccess).toBe(
       agentNetworkAccess ?? false,
     );
@@ -142,7 +146,10 @@ test.for([undefined, false, true] as const)(
       env,
     );
     expect(view.status).toBe(200);
-    expect(await view.text()).toMatch(/Private issue details/);
+    const session = await view.text();
+    expect(session).toContain("structured job context");
+    expect(session).not.toContain("Private issue details");
+    expect(session).not.toContain("Fix an issue");
     await db
       .prepare(
         "INSERT INTO sessions (id, owner_id, created_at) VALUES (?, ?, ?)",

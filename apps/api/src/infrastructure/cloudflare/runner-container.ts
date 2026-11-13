@@ -502,6 +502,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
         ? request.context.repository
         : undefined;
     if (target && job.engine === "codex") {
+      job.githubContext = {
+        kind: "issue",
+        number: target.issueNumber,
+        ...(target.issueContentHash && {
+          contentHash: target.issueContentHash,
+        }),
+      };
       const github = this.github;
       const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
       if (!github || !key)
@@ -529,6 +536,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
             checkout.baseSha = snapshot.baseSha;
             job.prompt = snapshot.prompt;
             job.planningContext = snapshot.context;
+            job.githubContext.contentHash = snapshot.contentHash;
           }
         }
       } catch {

@@ -654,13 +654,19 @@ test("planning refuses publication recovery and stops its container after saving
   ).toBe("succeeded");
 });
 
-test.for([false, true])(
-  "snapshots planning inputs before submission and diagnoses oversized history (oversized: %s)",
-  async (oversized, t) => {
+test.for([
+  { largeIssue: false, oversized: false },
+  { largeIssue: true, oversized: false },
+  { largeIssue: false, oversized: true },
+])(
+  "passes an issue reference while retaining snapshots and diagnosing oversized conversation (%j)",
+  async ({ largeIssue, oversized }, t) => {
     const { acceptPlanningInput, dispatchPlanningInputs } =
       await import("@/infrastructure/d1/planning.ts");
     const DB = await createTestDb(t);
-    const requestBody = "@tailos plan\n" + "Details ".repeat(650);
+    const requestBody =
+      "@tailos plan\n" +
+      (oversized ? "指".repeat(32_000) : "Details ".repeat(650));
     const target = {
       repository: "owner/repo",
       repositoryId: 1,
@@ -703,7 +709,15 @@ test.for([false, true])(
         });
       const job = JSON.parse(String(init.body));
       expect(job.mode).toBe("plan");
-      expect(JSON.parse(job.planningContext).title).toBe("Current title");
+      expect(job.githubContext).toMatchObject({
+        kind: "issue",
+        number: 3,
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(JSON.parse(job.planningContext)).not.toHaveProperty("title");
+      expect(JSON.parse(job.planningContext)).not.toHaveProperty("body");
+      expect(String(init.body)).not.toContain("Current title");
+      expect(String(init.body)).not.toContain("Current issue");
       expect(JSON.parse(job.planningContext).conversation[0].body).toBe(
         requestBody,
       );
@@ -727,7 +741,7 @@ test.for([false, true])(
       branch: `tailos/issue-3/${runId}`,
       issueSnapshot: {
         title: "Current title",
-        body: oversized ? "長".repeat(32_000) : "Current issue",
+        body: largeIssue ? "長".repeat(32_000) : "Current issue",
       },
     });
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
@@ -788,12 +802,10 @@ test.for([false, true])(
       expect(
         await DB.prepare("SELECT error_code FROM runs").first("error_code"),
       ).toBe("planning_input_too_large");
-      expect(
-        await DB.prepare(
-          "SELECT length(body) AS n FROM planning_snapshots",
-        ).first("n"),
-      ).toBe(32_000);
     } else expect(start).toHaveBeenCalledOnce();
+    expect(
+      await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
+    ).toBe(largeIssue ? "長".repeat(32_000) : "Current issue");
     expect(destroy).toHaveBeenCalledOnce();
     expect(
       await DB.prepare("SELECT count(*) AS n FROM planning_replies").first("n"),

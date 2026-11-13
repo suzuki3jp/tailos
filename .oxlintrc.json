@@ -8,7 +8,8 @@
     "typescript/no-non-null-asserted-optional-chain": "warn",
     "typescript/no-this-alias": "off",
     "unicorn/no-empty-file": "off",
-    "tailos/api-layers": "error"
+    "tailos/api-layers": "error",
+    "tailos-web/boundaries": "error"
   },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -18,5 +19,5 @@
     "**/temp/**",
     ".claude/worktrees/**"
   ],
-  "jsPlugins": ["./lint/api-layers.mjs"]
+  "jsPlugins": ["./lint/api-layers.mjs", "./lint/web-boundaries.mjs"]
 }

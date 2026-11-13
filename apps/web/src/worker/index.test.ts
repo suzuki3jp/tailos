@@ -6,7 +6,7 @@ const render = vi.hoisted(() =>
 );
 
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
-vi.mock("@/api-origin.ts", () => ({
+vi.mock("@/shared/config", () => ({
   apiOrigin: "https://api.tailos.example",
 }));
 

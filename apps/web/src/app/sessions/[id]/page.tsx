@@ -1,4 +1,4 @@
-import { SessionDetail } from "@/app/sessions/[id]/session-detail";
+import { SessionDetail } from "@/_pages/session-detail";
 
 export default async function SessionPage({
   params,

@@ -2,34 +2,16 @@ import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
-import type { ExecutionContext } from "@tailos/core/runner";
+import { parseGithubEvent } from "@/application/triggers/github-event.ts";
+import type {
+  PlanningAdmission,
+  PlanningReceipt,
+} from "@/application/triggers/planning.ts";
+import { githubIssueDigest, type ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import { projectsSchema } from "@/application/triggers/projects.ts";
 import type { TriggerDiagnostic } from "@/application/diagnostics/store.ts";
-
-const id = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
-const repository = v.pipe(
-  v.string(),
-  v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-);
-const payload = v.object({
-  repository: v.object({
-    id,
-    full_name: repository,
-    default_branch: v.pipe(v.string(), v.minLength(1), v.maxLength(255)),
-  }),
-  installation: v.object({ id }),
-  issue: v.object({
-    number: id,
-    title: v.string(),
-    body: v.nullable(v.string()),
-    state: v.string(),
-    pull_request: v.optional(v.unknown()),
-  }),
-  label: v.object({ name: v.string() }),
-  sender: v.object({ login: v.string() }),
-});
 
 function parseJson(body: string): unknown {
   try {
@@ -53,6 +35,11 @@ export function createGithubWebhook(
     event: TriggerDiagnostic,
   ) => Promise<void> = async () => {},
   notify: (env: Bindings) => Promise<void> = async () => {},
+  acceptPlan?: (
+    env: Bindings,
+    input: PlanningAdmission,
+  ) => Promise<PlanningReceipt>,
+  processPlans: (env: Bindings) => Promise<void> = async () => {},
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -81,7 +68,10 @@ export function createGithubWebhook(
       const delivery = c.req.header("X-GitHub-Delivery");
       await recordDecision(c.env, {
         ...c.get("diagnosticRequest"),
-        source: "github.issue-label",
+        source:
+          c.req.header("X-GitHub-Event") === "issue_comment"
+            ? "github.issue-plan"
+            : "github.issue-label",
         reason,
         outcome,
         ...(delivery && /^[A-Za-z0-9-]{1,100}$/.test(delivery)
@@ -100,22 +90,12 @@ export function createGithubWebhook(
       await decision(reason);
       return c.body(null, 204);
     };
-    if (c.req.header("X-GitHub-Event") !== "issues") {
-      await decision("event_type");
-      return c.body(null, 204);
-    }
-
-    const event = parseJson(new TextDecoder().decode(bytes));
-    if (!event || typeof event !== "object" || !("action" in event)) {
-      await decision("invalid_event", "failed");
-      return c.json({ error: "invalid_event" }, 400);
-    }
-    if (event.action !== "labeled") {
-      await decision("action");
-      return c.body(null, 204);
-    }
-    const issueEvent = v.safeParse(payload, event);
-    if (!issueEvent.success) {
+    const normalized = parseGithubEvent(
+      c.req.header("X-GitHub-Event"),
+      parseJson(new TextDecoder().decode(bytes)),
+    );
+    if (normalized.kind === "ignored") return ignore(normalized.reason);
+    if (normalized.kind === "invalid") {
       await decision("invalid_event", "failed");
       return c.json({ error: "invalid_event" }, 400);
     }
@@ -125,7 +105,7 @@ export function createGithubWebhook(
       await decision("project_config", "failed");
       return c.json({ error: "invalid_project_config" }, 503);
     }
-    const data = issueEvent.output;
+    const data = normalized.data;
     const target = config.output.find(
       (item) => item.repositoryId === data.repository.id,
     );
@@ -137,7 +117,8 @@ export function createGithubWebhook(
       return ignore("repository");
     if (target.installationId !== data.installation.id)
       return ignore("installation");
-    if (target.triggerLabel !== data.label.name) return ignore("label");
+    if ("label" in data && target.triggerLabel !== data.label.name)
+      return ignore("label");
     if (
       !target.allowedActors.some(
         (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
@@ -168,18 +149,42 @@ export function createGithubWebhook(
         repositoryId: target.repositoryId,
         installationId: target.installationId,
         issueNumber: data.issue.number,
+        ...(normalized.kind === "label" && {
+          issueContentHash: await githubIssueDigest(data.issue),
+        }),
         defaultBranch: data.repository.default_branch,
         triggerLabel: target.triggerLabel,
         agentNetworkAccess: target.agentNetworkAccess,
       },
     } satisfies ExecutionContext;
-    const prompt = [
-      `Implement GitHub issue #${data.issue.number} in ${target.repository}.`,
-      "Make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
-      "",
-      data.issue.title.slice(0, 240),
-      (data.issue.body ?? "").slice(0, 3200),
-    ].join("\n");
+    if ("comment" in data && normalized.kind === "comment") {
+      if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
+      const receipt = await acceptPlan(c.env, {
+        ownerId,
+        projectId: target.id,
+        repositoryId: target.repositoryId,
+        issueNumber: data.issue.number,
+        commentId: data.comment.id,
+        actor: data.comment.user.login,
+        url: data.comment.html_url,
+        body: data.comment.body,
+        deliveryId: delivery,
+        start: normalized.command.start,
+        executionContext: JSON.stringify({ ...executionContext, mode: "plan" }),
+        timeoutMs: target.maxRunMinutes * 60_000,
+      });
+      c.executionCtx.waitUntil(
+        processPlans(c.env)
+          .catch(async () => {
+            // The recovery sweep can dispatch and schedule the persisted input.
+            await decision("schedule", "unknown");
+          })
+          .then(() => notify(c.env)),
+      );
+      return c.json(receipt, 202);
+    }
+    const prompt =
+      "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
     const result = await admit(c.env)({
       source: "github.issue-label",

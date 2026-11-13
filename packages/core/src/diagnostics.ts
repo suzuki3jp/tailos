@@ -75,6 +75,7 @@ export const DiagnosticAttributes = v.strictObject({
       "repository",
       "installation",
       "label",
+      "command",
       "actor",
       "issue_state",
       "pull_request",

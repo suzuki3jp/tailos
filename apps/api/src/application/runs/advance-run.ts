@@ -39,7 +39,9 @@ type RunOutcome =
         | "publication_unconfirmed"
         | "provider_unavailable"
         | "invalid_execution_context"
-        | "artifact_write_failed";
+        | "artifact_write_failed"
+        | "planning_snapshot_failed"
+        | "planning_input_too_large";
       events?: RunnerEvent[];
     };
 

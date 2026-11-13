@@ -329,53 +329,80 @@ test("reconciles a lost signing response only for the verified commit with the e
   expect(mutations).toBe(1);
 });
 
-test("recovers an ambiguous comment across all pages and rejects copied markers", async () => {
-  const marker = "<!-- tailos:run:run:v1 -->";
-  const calls: string[] = [];
-  const github = new GitHubApp(
-    { appId: "100", privateKey },
-    async (input, init) => {
-      const url = new URL(String(input));
-      calls.push(`${init?.method} ${url.pathname}${url.search}`);
-      if (url.pathname.endsWith("/access_tokens")) {
-        expect(JSON.parse(String(init?.body)).permissions).toEqual({
-          issues: "write",
-        });
-        return Response.json({
-          token: "grant",
-          expires_at: new Date(Date.now() + 60_000).toISOString(),
-        });
-      }
-      if (init?.method === "DELETE") return new Response(null, { status: 204 });
-      if (init?.method === "PATCH") {
-        expect(url.pathname).toBe("/repos/owner/private/issues/comments/123");
-        return Response.json({ id: 123 });
-      }
-      const comment = {
-        id: 1,
-        body: marker,
-        user: { type: "User" },
-        performed_via_github_app: null,
-      };
-      if (url.searchParams.get("page") === "1")
-        return Response.json(Array(100).fill(comment));
-      return Response.json([
-        {
-          ...comment,
-          id: 123,
-          user: { type: "Bot" },
-          performed_via_github_app: { id: 100 },
-        },
-      ]);
-    },
-  );
-  expect(await github.issueComment(target, marker, "terminal", null)).toBe(123);
-  expect(calls.some((c) => c.includes("page=2"))).toBe(true);
-  expect(
-    calls.filter((c) => c.startsWith("POST") && c.includes("/comments")),
-  ).toEqual([]);
-  expect(calls.at(-1)).toBe("DELETE /installation/token");
-});
+test.for([
+  "<!-- tailos:run:run:v1 -->",
+  "<!-- tailos:plan:run:input:1:reply:v1 -->",
+])(
+  "recovers an ambiguous comment across all pages and rejects copied markers: %s",
+  async (marker) => {
+    const calls: string[] = [];
+    let posted = false;
+    const github = new GitHubApp(
+      { appId: "100", privateKey },
+      async (input, init) => {
+        const url = new URL(String(input));
+        calls.push(`${init?.method} ${url.pathname}${url.search}`);
+        if (url.pathname.endsWith("/access_tokens")) {
+          expect(JSON.parse(String(init?.body)).permissions).toEqual({
+            issues: "write",
+          });
+          return Response.json({
+            token: "grant",
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+          });
+        }
+        if (init?.method === "DELETE")
+          return new Response(null, { status: 204 });
+        if (init?.method === "POST") {
+          posted = true;
+          throw new Error("Response lost after posting");
+        }
+        if (init?.method === "PATCH") {
+          expect(url.pathname).toBe("/repos/owner/private/issues/comments/123");
+          return Response.json({ id: 123 });
+        }
+        const comment = {
+          id: 1,
+          body: marker,
+          user: { type: "User" },
+          performed_via_github_app: null,
+        };
+        if (url.searchParams.get("page") === "1")
+          return Response.json(
+            Array.from({ length: 100 }, (_, index) =>
+              index % 2
+                ? comment
+                : {
+                    ...comment,
+                    user: { type: "Bot" },
+                    performed_via_github_app: { id: 999 },
+                  },
+            ),
+          );
+        if (!posted) return Response.json([]);
+        return Response.json([
+          {
+            ...comment,
+            id: 123,
+            user: { type: "Bot" },
+            performed_via_github_app: { id: 100 },
+          },
+        ]);
+      },
+    );
+    await expect(
+      github.issueComment(target, marker, "terminal", null),
+    ).rejects.toThrow("Response lost after posting");
+    expect(await github.issueComment(target, marker, "terminal", null)).toBe(
+      123,
+    );
+    expect(calls.some((c) => c.includes("page=2"))).toBe(true);
+    expect(
+      calls.filter((c) => c.startsWith("POST") && c.includes("/comments")),
+    ).toHaveLength(1);
+    expect(calls.at(-1)).toBe("DELETE /installation/token");
+  },
+);
 
 test.for([
   [403, {}, "permission", "Resource not accessible by integration"],
@@ -545,7 +572,12 @@ test("planning checks out an unlabelled issue without publication branch rules",
       if (path === "/repos/owner/private")
         return Response.json({ id: 42, default_branch: "main" });
       if (path.endsWith("/issues/8"))
-        return Response.json({ state: "open", labels: [] });
+        return Response.json({
+          state: "open",
+          labels: [],
+          title: "Plan issue",
+          body: "Current body",
+        });
       if (path.endsWith("/git/ref/heads/main"))
         return Response.json({ object: { sha } });
       expect(path).toBe("/installation/token");

@@ -3,9 +3,12 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
-import { api } from "@/app/api";
-import { RequestState } from "@/app/request-state";
+import { RequestState } from "@/widgets/request-state";
+import {
+  diagnosticBodyQueryOptions,
+  diagnosticEventsQueryOptions,
+  diagnosticTracesQueryOptions,
+} from "../api/queries";
 
 function DiagnosticBody({
   artifactId,
@@ -15,19 +18,7 @@ function DiagnosticBody({
   eventId: string;
 }) {
   const [open, setOpen] = useState(false);
-  const query = useQuery({
-    queryKey: ["diagnostics", "body", artifactId],
-    enabled: open,
-    queryFn: async ({ signal }) => {
-      const response = await api.diagnostics.artifacts[":id"].$get(
-        { param: { id: artifactId } },
-        { init: { signal } },
-      );
-      return response.ok
-        ? { batch: parseDiagnosticBatch(await response.json()) }
-        : { error: response.status };
-    },
-  });
+  const query = useQuery(diagnosticBodyQueryOptions(artifactId, open));
   const body =
     query.data && "batch" in query.data
       ? query.data.batch?.records.find((record) => record.eventId === eventId)
@@ -81,59 +72,19 @@ export function DiagnosticsExplorer() {
     deliveryId: "",
   });
   const [selected, setSelected] = useState<string | null>(null);
-  const traces = useInfiniteQuery({
-    queryKey: ["diagnostics", "traces", filter],
-    initialPageParam: "",
-    queryFn: async ({ signal, pageParam }) => {
-      const response = await api.diagnostics.traces.$get(
-        {
-          query: {
-            runId: filter.runId || undefined,
-            source: filter.deliveryId ? "github.issue-label" : undefined,
-            deliveryId: filter.deliveryId || undefined,
-            before: pageParam || undefined,
-          },
-        },
-        { init: { signal } },
-      );
-      if (!response.ok) throw new Error(String(response.status));
-      const result = await response.json();
-      if (!("traces" in result)) throw new Error("Invalid traces response");
-      return result;
-    },
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-    refetchInterval: 5000,
-  });
+  const traces = useInfiniteQuery(diagnosticTracesQueryOptions(filter));
   const allTraces = traces.data?.pages.flatMap((page) => page.traces) ?? [];
   const traceId =
     selected ?? (filter.runId ? `run/${filter.runId}` : allTraces[0]?.id);
   const trace = allTraces.find((item) => item.id === traceId);
-  const events = useInfiniteQuery({
-    queryKey: ["diagnostics", "events", traceId],
-    initialPageParam: 0,
-    enabled: Boolean(traceId),
-    queryFn: async ({ signal, pageParam }) => {
-      const response = await api.diagnostics.traces[":id"].events.$get(
-        {
-          param: { id: encodeURIComponent(traceId ?? "") },
-          query: { after: String(pageParam) },
-        },
-        { init: { signal } },
-      );
-      if (!response.ok) throw new Error(String(response.status));
-      const result = await response.json();
-      if (!("events" in result)) throw new Error("Invalid events response");
-      return result;
-    },
-    getNextPageParam: (last) =>
-      last.events.length === 100 ? last.nextCursor : undefined,
-    refetchInterval:
+  const events = useInfiniteQuery(
+    diagnosticEventsQueryOptions(
+      traceId,
       trace?.runStatus === "queued" ||
-      trace?.runStatus === "running" ||
-      trace?.captureState === "collecting"
-        ? 3000
-        : false,
-  });
+        trace?.runStatus === "running" ||
+        trace?.captureState === "collecting",
+    ),
+  );
   const allEvents = events.data?.pages.flatMap((page) => page.events) ?? [];
   const parents = new Map(
     allEvents.map((event) => [event.spanId, event.parentSpanId]),

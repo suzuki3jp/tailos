@@ -1,5 +1,1 @@
-import { DiagnosticsExplorer } from "@/app/diagnostics/explorer";
-
-export default function DiagnosticsPage() {
-  return <DiagnosticsExplorer />;
-}
+export { DiagnosticsExplorer as default } from "@/_pages/diagnostics";

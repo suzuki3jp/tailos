@@ -1,3 +1,10 @@
-import LoginPage from "@/app/login/page";
+import { AccountPage } from "@/_pages/account";
 
-export default LoginPage;
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string | string[] }>;
+}) {
+  const { error } = await searchParams;
+  return <AccountPage error={error} />;
+}

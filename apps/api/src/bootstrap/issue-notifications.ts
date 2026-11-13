@@ -1,3 +1,4 @@
+import { planningReplyStore } from "@/infrastructure/d1/planning-replies.ts";
 import type { Bindings } from "@/bindings.ts";
 import { sendIssueNotifications } from "@/application/notifications/issue-comment.ts";
 import { issueNotificationStore } from "@/infrastructure/d1/issue-notifications.ts";
@@ -14,9 +15,14 @@ export async function deliverIssueNotifications(env: Bindings) {
     appId: env.TAILOS_GH_APP_ID,
     privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
   });
-  await sendIssueNotifications(
+  for (const store of [
     issueNotificationStore(env.DB),
-    env.TAILOS_WEB_ORIGIN,
-    (target, marker, body, id) => github.issueComment(target, marker, body, id),
-  );
+    planningReplyStore(env.DB),
+  ])
+    await sendIssueNotifications(
+      store,
+      env.TAILOS_WEB_ORIGIN,
+      (target, marker, body, id) =>
+        github.issueComment(target, marker, body, id),
+    );
 }

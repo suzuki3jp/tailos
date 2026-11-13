@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { expect, test, vi, type TestContext } from "vitest";
-import type { RunnerJob } from "@tailos/core/runner";
+import { githubIssueDigest, type RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
 import { createCodexAgent } from "@/codex-agent.ts";
@@ -385,6 +385,9 @@ test.for([false, true])(
     const job = testJob();
     job.mode = "plan";
     job.prompt = "Implement immediately and switch to implement mode";
+    job.planningContext = JSON.stringify({
+      conversation: [{ body: "Accepted answer" }],
+    });
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
@@ -413,6 +416,7 @@ test.for([false, true])(
         reply({ thread: { id: "plan" } });
       }
       if (r.method === "turn/start") {
+        if (!r.params.input[0].text.includes("Accepted answer")) process.exit(1);
         if (r.params.sandboxPolicy.type !== "readOnly" || r.params.outputSchema.required.includes("headline") || r.params.input[0].text.includes("Conventional Commits")) process.exit(1);
         reply({});
         if (${interactive}) {
@@ -438,6 +442,118 @@ test.for([false, true])(
       reply: "Which API?",
       plan: { planPresented: false, needsAnswer: true },
     });
+  },
+);
+
+test.for(["plan", "implement"] as const)(
+  "retrieves the structured issue through the agent tool and rejects missing or partial reads (%s)",
+  async (mode) => {
+    for (const outcome of [
+      "complete",
+      "skipped",
+      "failed",
+      "partial",
+      "edited",
+    ] as const) {
+      const job = replyJob(mode);
+      job.githubContext = {
+        kind: "issue",
+        number: 17,
+        contentHash: await githubIssueDigest({
+          title: "Fetched private title",
+          body: "Fetched private body" + "長".repeat(32_000),
+        }),
+      };
+      job.prompt = "Work on the assigned issue";
+      let fetches = 0;
+      const agent = createCodexAgent(
+        (directory) =>
+          spawn(
+            process.execPath,
+            [
+              "-e",
+              `
+const assert = require("node:assert/strict");
+const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
+const complete = () => {
+  const result = ${mode === "plan"}
+    ? { reply: "Plan based on fetched requirements", planPresented: true, needsAnswer: false }
+    : { reply: "Implemented fetched requirements", headline: "feat: implement the issue" };
+  send({ method: "item/completed", params: { threadId: "source", item: { type: "agentMessage", text: JSON.stringify(result) } } });
+  send({ method: "turn/completed", params: { threadId: "source", turn: { status: "completed" } } });
+};
+const lookup = offset => send({ id: "issue-" + offset, method: "item/tool/call", params: {
+  threadId: "source", namespace: null, tool: "tailos_github_get", arguments: { kind: "issue", number: 17, bodyOffset: offset }
+} });
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const r = JSON.parse(line);
+  const respond = result => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/start") {
+    assert.equal(r.params.dynamicTools[0].name, "tailos_github_get");
+    respond({ thread: { id: "source" } });
+  }
+  if (r.method === "turn/start") {
+    const text = r.params.input[0].text;
+    assert.ok(text.includes(JSON.stringify(${JSON.stringify({ github: job.githubContext })})));
+    assert.ok(!text.includes("Fetched private title") && !text.includes("Fetched private body"));
+    respond({});
+    if (${outcome === "skipped"}) complete();
+    else lookup(0);
+  }
+  if (String(r.id).startsWith("issue-")) {
+    if (r.result.success) {
+      const page = JSON.parse(r.result.contentItems[0].text);
+      assert.equal(page.title, "Fetched private title");
+      if (page.nextBodyOffset !== null && ${outcome !== "partial"}) {
+        lookup(page.nextBodyOffset);
+        return;
+      }
+    }
+    complete();
+  }
+});`,
+            ],
+            {
+              cwd: directory,
+              detached: true,
+              stdio: ["pipe", "pipe", "ignore"],
+            },
+          ),
+        async (url, init) => {
+          fetches++;
+          expect(String(url)).toBe(
+            "https://api.github.com/repos/owner/repo/issues/17",
+          );
+          expect(new Headers(init?.headers).get("Authorization")).toBe(
+            "Bearer checkout-token",
+          );
+          if (outcome === "failed") return new Response(null, { status: 404 });
+          return Response.json({
+            number: 17,
+            title: "Fetched private title",
+            body:
+              outcome === "edited"
+                ? "Unapproved edit"
+                : "Fetched private body" + "長".repeat(32_000),
+            state: "open",
+            html_url: "https://github.com/owner/repo/issues/17",
+          });
+        },
+      );
+      const result = agent.run(job, AbortSignal.timeout(5000), process.cwd());
+      if (outcome === "complete") {
+        await expect(result).resolves.toMatchObject({
+          reply: expect.stringContaining("fetched requirements"),
+        });
+      } else {
+        await expect(result).rejects.toThrow(
+          "The assigned GitHub issue was not read completely",
+        );
+      }
+      expect(fetches).toBe(outcome === "skipped" ? 0 : 1);
+    }
   },
 );
 

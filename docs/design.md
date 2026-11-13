@@ -151,3 +151,23 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 | 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
 | 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチに署名付きコミットを作成し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
 | 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `tailos.app` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |
+
+### Issue コメントによる計画会話
+
+許可されたユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、タイトル・本文だけで調査を開始できる。追加依頼文と `tailos:run` ラベルは不要。同じ Issue の `@tailos <回答・修正依頼>` と再度の `@tailos plan` は同じ Session の次の Run になる。開始前の回答には開始方法を返信する。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。コメントから実装・公開を起動する経路はない。
+
+`planning_issues` は owner / project / repository ID / Issue 番号を一意キーとして Session に対応付ける。リポジトリ名を会話の識別子にしない。`planning_inbox` は comment ID、投稿者、元 URL、本文、受理時の実行設定、受付時刻と状態を保存し、連番 ID を受付順とする。`planning_deliveries` で delivery の再送も区別する。同じコメントが別 delivery で届いても再割当しない。最初の開始コメントより先に永続化された回答は案内だけになり、後から過去の結果を変更しない。
+
+Session、初回 inbox と delivery の受付は一つの D1 batch で保存する。最古の pending 入力の message / queued Run 作成・assigned への更新・状態通知の登録も一つの batch とし、既存の Session 単位の active Run 一意制約を維持する。実行中の入力は pending として残る。Cron と Run 終了時が次入力を割り当てる。作成済み queued Run は既存の Run 復旧が起動するため、Run 作成後・起動前と終了後・次入力処理前の停止から回収できる。
+
+Run 開始時の checkout で確認したタイトル・本文、base SHA、対象 input ID と受理済み会話を `planning_snapshots` に不変保存する。Runner にはタイトル・本文を埋め込まず、`githubContext: { kind: "issue", number, contentHash }` と、基準 SHA・受理済み会話だけを含む `planningContext` を渡す。計画の contentHash は保存済みスナップショットから計算する。実装ラベルの開始 prompt も固定の作業指示とし、Webhook 受付時のタイトル・本文の SHA-256 を実行コンテキストに保存して同じ JSON で渡す。Agent が取得した内容が一致しない場合は指示として返さないため、ラベル付与後の未確認の編集を実装に使用しない。
+
+Agent は対象リポジトリに限定された `tailos_github_get` を呼び、Issue のタイトル・本文を取得する。本文は既存の 16,000 UTF-16 単位を一回の上限として、`nextBodyOffset` を `bodyOffset` に指定して最後まで読む。サロゲートペアを分割せず、対象 Issue のページは最初の取得結果を保持して返す。対象本文を取得しきらない成功結果は `agent_failed` とする。診断が有効ならツールの入力・取得結果を既存経路へ記録する。Agent に GitHub の資格情報を直接公開せず、任意のコメントを自動で指示に取り込まない。
+
+固定 prompt の 4,000 文字と、最終ジョブ全体の UTF-8 サイズの 32 KiB 上限は維持する。Issue 本文はジョブのサイズを消費しなくなるが、受理済み会話は引き続き全文を渡すため、会話の超過時は `planning_input_too_large`、スナップショット保存失敗は `planning_snapshot_failed`、checkout・Issue 確認失敗は `repository_unavailable` として返信待ちを残す。`githubContext` を持たない旧ジョブも引き続き受け付ける。
+
+Tailos は `wrangler.jsonc` の `scheduling_policy: durable_object` と名前付きイメージを使う。この方式では `ctx.container.images` は DO を実行する Worker バージョンの不変なイメージ参照を持つ。[Cloudflare の Image Management](https://developers.cloudflare.com/containers/guides/image-management/) を根拠に、Worker と Runner イメージを同じリリースとして扱う。コード上も `runStarter` は Run ID ごとの DO を選び、`startRunner` はその DO の `images.runner` を明示して新しいジョブのコンテナを起動するため、新ジョブを application-wide rollout 中の任意の旧コンテナへ送る構成ではない。既存の実行中 Run は同じコンテナを poll し、更新時にジョブを再送・強制再起動しない。Worker 更新全般が無停止であることを保証するものではなく、イメージを削除すると旧版の起動もできなくなるため、ロールバックに必要なイメージは保持する。
+
+結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。`planning_issues.latest_run_id` は最新試行、`latest_plan_run_id` は計画提示に成功した最新 Run を指す。質問のみ・失敗は後者を更新しないため、後続の実装引継ぎでは両 ID・結果フラグと未処理 inbox の確認が必要になる。最新試行の ID は queued Run 作成時点で更新する。質問は正常終了し、コンテナを停止する。
+
+`planning_replies` は Run 終了の SQL trigger により結果・会話と同じトランザクションで保存される。画像の `issue_notifications` と別のコメントにし、Run / input / reply のマーカーで識別する。共通の通知リース・再試行を使い、前の返信が送信済みか恒久失敗になるまで同じ会話の次の返信を送らない。権限不足・恒久失敗は failed と error_category を残して後続を解放する。期限切れリースと未送信返信は Cron で回収する。GitHub 投稿結果不明時は全ページで Bot と App ID とマーカーを照合するため、exactly-once 配送を前提にしない。本文中のメンションと予約マーカーは無効化し、投稿の書き込み資格情報は API だけが持つ。

@@ -7,12 +7,6 @@ export function RequestState({
   missing: string;
   retry: () => void;
 }) {
-  if (status === 401)
-    return (
-      <a href="/login" className="action action-primary">
-        GitHub でログイン
-      </a>
-    );
   if (status === 404) return <p className="text-muted">{missing}</p>;
   return (
     <div className="space-y-3">

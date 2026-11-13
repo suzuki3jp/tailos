@@ -653,3 +653,162 @@ test("planning refuses publication recovery and stops its container after saving
       .first("status"),
   ).toBe("succeeded");
 });
+
+test.for([
+  { largeIssue: false, oversized: false },
+  { largeIssue: true, oversized: false },
+  { largeIssue: false, oversized: true },
+])(
+  "passes an issue reference while retaining snapshots and diagnosing oversized conversation (%j)",
+  async ({ largeIssue, oversized }, t) => {
+    const { acceptPlanningInput, dispatchPlanningInputs } =
+      await import("@/infrastructure/d1/planning.ts");
+    const DB = await createTestDb(t);
+    const requestBody =
+      "@tailos plan\n" +
+      (oversized ? "指".repeat(32_000) : "Details ".repeat(650));
+    const target = {
+      repository: "owner/repo",
+      repositoryId: 1,
+      installationId: 2,
+      issueNumber: 3,
+      defaultBranch: "main",
+      triggerLabel: "tailos:run",
+    };
+    await acceptPlanningInput(DB, {
+      ownerId: "owner",
+      projectId: "project",
+      repositoryId: 1,
+      issueNumber: 3,
+      commentId: 100,
+      actor: "allowed",
+      url: "https://github.com/owner/repo/issues/3#issuecomment-100",
+      body: requestBody,
+      deliveryId: "plan",
+      start: true,
+      executionContext: JSON.stringify({
+        version: 1,
+        engine: "codex",
+        mode: "plan",
+        connectionId: `codex/${crypto.randomUUID()}`,
+        repository: target,
+      }),
+      timeoutMs: 60_000,
+    });
+    const [runId] = await dispatchPlanningInputs(DB);
+    const memory = new Map<string, unknown>([["runId", runId]]);
+    const submit = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (_url.endsWith("/health"))
+        return Response.json({ status: "ok", service: "runner" });
+      if (init?.method !== "POST")
+        return Response.json({
+          status: "succeeded",
+          reply: "Plan",
+          plan: { planPresented: true, needsAnswer: false },
+          events: [],
+        });
+      const job = JSON.parse(String(init.body));
+      expect(job.mode).toBe("plan");
+      expect(job.githubContext).toMatchObject({
+        kind: "issue",
+        number: 3,
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(JSON.parse(job.planningContext)).not.toHaveProperty("title");
+      expect(JSON.parse(job.planningContext)).not.toHaveProperty("body");
+      expect(String(init.body)).not.toContain("Current title");
+      expect(String(init.body)).not.toContain("Current issue");
+      expect(JSON.parse(job.planningContext).conversation[0].body).toBe(
+        requestBody,
+      );
+      expect(job.checkout.baseSha).toBe("a".repeat(40));
+      return Response.json(
+        {
+          status: "succeeded",
+          reply: "Plan",
+          plan: { planPresented: true, needsAnswer: false },
+          events: [],
+        },
+        { status: 202 },
+      );
+    });
+    const start = vi.fn();
+    const destroy = vi.fn(async () => {});
+    vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
+      token: "read-token",
+      expiresAt: Date.now() + 60_000,
+      baseSha: "a".repeat(40),
+      branch: `tailos/issue-3/${runId}`,
+      issueSnapshot: {
+        title: "Current title",
+        body: largeIssue ? "長".repeat(32_000) : "Current issue",
+      },
+    });
+    vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
+    t.onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const runner = new RunnerContainer(
+      {
+        storage: {
+          async setAlarm() {},
+          async get(key: string) {
+            return memory.get(key);
+          },
+          async put(key: string, value: unknown) {
+            memory.set(key, value);
+          },
+          async delete(key: string) {
+            memory.delete(key);
+          },
+        },
+        container: {
+          images: { runner: "image" },
+          start,
+          running: true,
+          async setInactivityTimeout() {},
+          getTcpPort: () => ({ fetch: submit }),
+          destroy,
+        },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+      {
+        DB,
+        TAILOS_GH_APP_ID: "100",
+        TAILOS_GH_APP_PRIVATE_KEY: "unused",
+        TAILOS_PUBLIC_ORIGIN: "https://api.tailos.app",
+        CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        CREDENTIALS: {
+          getByName: () => ({
+            issueAccess: async () => ({
+              accessToken: "access",
+              accountId: "account",
+              connectionVersion: crypto.randomUUID(),
+              accessVersion: crypto.randomUUID(),
+            }),
+          }),
+        },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+    );
+    await runner.alarm();
+    if (!oversized) await runner.alarm();
+    expect(
+      await DB.prepare("SELECT title FROM planning_snapshots").first("title"),
+    ).toBe("Current title");
+    expect(await DB.prepare("SELECT status FROM runs").first("status")).toBe(
+      oversized ? "failed" : "succeeded",
+    );
+    if (oversized) {
+      expect(start).not.toHaveBeenCalled();
+      expect(
+        await DB.prepare("SELECT error_code FROM runs").first("error_code"),
+      ).toBe("planning_input_too_large");
+    } else expect(start).toHaveBeenCalledOnce();
+    expect(
+      await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
+    ).toBe(largeIssue ? "長".repeat(32_000) : "Current issue");
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(
+      await DB.prepare("SELECT count(*) AS n FROM planning_replies").first("n"),
+    ).toBe(1);
+  },
+);

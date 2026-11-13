@@ -454,6 +454,8 @@ test.for(["plan", "implement"] as const)(
       "failed",
       "partial",
       "edited",
+      "title-edited",
+      "diagnostics-failed",
     ] as const) {
       const job = replyJob(mode);
       job.githubContext = {
@@ -465,6 +467,34 @@ test.for(["plan", "implement"] as const)(
         }),
       };
       job.prompt = "Work on the assigned issue";
+      const changed = ["edited", "title-edited", "diagnostics-failed"].includes(
+        outcome,
+      );
+      job.diagnostics = {
+        traceId: `run/${job.runId}`,
+        parentSpanId: `run/${job.runId}`,
+        producerId: randomUUID(),
+        url: "https://tailos.example/diagnostics",
+        bearer: "b".repeat(64),
+        expiresAt: Date.now() + 60_000,
+      };
+      const sent: string[] = [];
+      const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+        sent.push(String(init?.body));
+        return new Response(null, { status: 204 });
+      });
+      const end = diagnostics.end.bind(diagnostics);
+      const recordedReasons: string[] = [];
+      diagnostics.end = (span, attributes, body) => {
+        if (attributes?.reason) recordedReasons.push(attributes.reason);
+        if (
+          outcome === "diagnostics-failed" &&
+          attributes?.reason === "issue_changed"
+        ) {
+          throw new Error("diagnostic recording failed");
+        }
+        end(span, attributes, body);
+      };
       let fetches = 0;
       const agent = createCodexAgent(
         (directory) =>
@@ -503,6 +533,8 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
     else lookup(0);
   }
   if (String(r.id).startsWith("issue-")) {
+    assert.equal(Object.hasOwn(r.result, "diagnosticReason"), false);
+    assert.ok(!JSON.stringify(r.result).includes("Unapproved"));
     if (r.result.success) {
       const page = JSON.parse(r.result.contentItems[0].text);
       assert.equal(page.title, "Fetched private title");
@@ -532,9 +564,12 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
           if (outcome === "failed") return new Response(null, { status: 404 });
           return Response.json({
             number: 17,
-            title: "Fetched private title",
+            title:
+              outcome === "title-edited"
+                ? "Unapproved title"
+                : "Fetched private title",
             body:
-              outcome === "edited"
+              changed && outcome !== "title-edited"
                 ? "Unapproved edit"
                 : "Fetched private body" + "長".repeat(32_000),
             state: "open",
@@ -542,7 +577,12 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
           });
         },
       );
-      const result = agent.run(job, AbortSignal.timeout(5000), process.cwd());
+      const result = agent.run(
+        job,
+        AbortSignal.timeout(5000),
+        process.cwd(),
+        diagnostics,
+      );
       if (outcome === "complete") {
         await expect(result).resolves.toMatchObject({
           reply: expect.stringContaining("fetched requirements"),
@@ -553,6 +593,29 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
         );
       }
       expect(fetches).toBe(outcome === "skipped" ? 0 : 1);
+      await diagnostics.finish();
+      expect(recordedReasons).toEqual(changed ? ["issue_changed"] : []);
+      const records = sent.flatMap(
+        (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+      );
+      const mismatch = records.filter(
+        (record) => record.attributes.reason === "issue_changed",
+      );
+      expect(mismatch).toHaveLength(
+        changed && outcome !== "diagnostics-failed" ? 1 : 0,
+      );
+      if (mismatch.length) {
+        expect(mismatch[0]).toMatchObject({
+          name: "span.finished",
+          attributes: { operation: "tool", outcome: "failed" },
+        });
+        expect(mismatch[0]!.parentSpanId).toBeDefined();
+      }
+      if (changed) {
+        expect(sent.join("")).not.toContain("Unapproved");
+        expect(sent.join("")).not.toContain("Fetched private body");
+        expect(sent.join("")).not.toContain("checkout-token");
+      }
     }
   },
 );

@@ -78,6 +78,7 @@ export const DiagnosticAttributes = v.strictObject({
       "command",
       "actor",
       "issue_state",
+      "issue_changed",
       "pull_request",
       "delivery",
       "operator",

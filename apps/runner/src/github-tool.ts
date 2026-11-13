@@ -49,12 +49,18 @@ export const githubToolCallSchema = v.object({
   arguments: v.unknown(),
 });
 
-const toolResult = (success: boolean, text: string) => ({
+const toolResult = (
+  success: boolean,
+  text: string,
+  diagnosticReason?: "issue_changed",
+) => ({
+  diagnosticReason,
   success,
   contentItems: [{ type: "inputText", text }],
 });
 
 class GitHubLookupFailed extends Error {}
+class IssueChanged extends GitHubLookupFailed {}
 
 // Only the assigned source is retained: pagination sees one immutable item,
 // while arbitrary lookups cannot grow a per-turn cache without bound.
@@ -124,7 +130,7 @@ export function createGitHubReader(
             sourceContentHash &&
             (await githubIssueDigest(loaded)) !== sourceContentHash
           )
-            throw new GitHubLookupFailed(
+            throw new IssueChanged(
               "The assigned issue changed after authorization; its content cannot be used for this run",
             );
           return loaded;
@@ -187,6 +193,7 @@ export function createGitHubReader(
           error instanceof GitHubLookupFailed
             ? error.message
             : "GitHub item lookup failed",
+          error instanceof IssueChanged ? "issue_changed" : undefined,
         );
       }
     },

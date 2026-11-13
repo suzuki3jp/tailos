@@ -9,11 +9,14 @@ export const metadata = {
   robots: { index: false, follow: false },
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      {
+        url: "/favicon.ico",
+        sizes: "16x16 32x32 48x48",
+        media: "(prefers-color-scheme: dark)",
+      },
       {
         url: "/favicon-dark.ico",
         sizes: "16x16 32x32 48x48",
-        media: "(prefers-color-scheme: dark)",
       },
     ],
   },

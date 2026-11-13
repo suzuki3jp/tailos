@@ -438,6 +438,7 @@ async function runTurn(
       return text;
     };
     let prompt = effectivePrompt;
+    let implementationHeadline: string | null | undefined;
     for (let revision = 0; ; revision++) {
       signal.throwIfAborted();
       if (failure) throw failure;
@@ -467,13 +468,27 @@ async function runTurn(
           : job.checkout
             ? v.parse(repositoryReplySchema, JSON.parse(reply))
             : { reply };
-      const text = redact(result.reply);
+      if (revision === 0 && "headline" in result)
+        implementationHeadline = result.headline;
+      let text = redact(result.reply);
       if (text.length > maxReplyLength) {
-        if (revision >= 2) throw new Error("Agent reply remains too long");
-        if (job.deadlineAt - Date.now() < 5_000)
-          throw new Error("Insufficient time to shorten agent reply");
-        prompt = `Your reply contains ${text.length} UTF-16 code units after redaction, exceeding the ${maxReplyLength} limit. Rewrite only the previous answer, aiming for ${maxReplyLength - 1000} UTF-16 code units or fewer. Preserve the essential plan, assumptions, questions and verification results, and keep any headline, planPresented and needsAnswer fields consistent. Do not investigate again, run checks, use tools or change files. Return the same response format.`;
-        continue;
+        const exhausted = revision >= 2;
+        const insufficientTime = job.deadlineAt - Date.now() < 5_000;
+        if (!exhausted && !insufficientTime) {
+          prompt = `Your reply contains ${text.length} UTF-16 code units after redaction, exceeding the ${maxReplyLength} limit. Rewrite only the previous answer, aiming for ${maxReplyLength - 1000} UTF-16 code units or fewer. Preserve the essential plan, assumptions, questions and verification results, and keep any headline, planPresented and needsAnswer fields consistent. Do not investigate again, run checks, use tools or change files. Return the same response format.`;
+          continue;
+        }
+        if (job.checkout && job.mode !== "plan") {
+          // Keep completed implementation work publishable without silently
+          // cutting the user-facing answer or discarding its original headline.
+          text = `Agent の作業は完了しましたが、最終説明文が ${maxReplyLength} 文字の上限を超え、要約を取得できませんでした。`;
+        } else {
+          throw new Error(
+            exhausted
+              ? "Agent reply remains too long"
+              : "Insufficient time to shorten agent reply",
+          );
+        }
       }
       const validatedReply = v.parse(replyText, text);
       agentSucceeded = true;
@@ -487,10 +502,9 @@ async function runTurn(
         };
       return {
         reply: validatedReply,
-        ...("headline" in result &&
-        result.headline !== null &&
-        redact(result.headline) === result.headline
-          ? { headline: result.headline }
+        ...(implementationHeadline != null &&
+        redact(implementationHeadline) === implementationHeadline
+          ? { headline: implementationHeadline }
           : {}),
       };
     }

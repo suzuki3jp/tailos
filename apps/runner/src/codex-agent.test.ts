@@ -501,7 +501,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     const text = ${job.mode === "plan"}
       ? JSON.stringify({ reply: answer, planPresented: false, needsAnswer: true })
       : ${!!job.checkout}
-        ? JSON.stringify({ reply: answer, headline: "fix: preserve the changes" })
+        ? JSON.stringify({ reply: answer, headline: turns.length === 1 ? "fix: preserve the changes" : "docs: shorten the reply" })
         : answer;
     send({ method: "item/completed", params: { threadId: "reply-thread", item: { type: "agentMessage", text } } });
   }
@@ -626,6 +626,26 @@ test("does not start a reply revision without enough time remaining", async (t) 
   );
   expect(await turns()).toHaveLength(1);
 });
+
+test.for(["revisions", "deadline"] as const)(
+  "preserves implementation work when reply repair reaches its %s limit",
+  async (limit, t) => {
+    const job = replyJob("implement");
+    if (limit === "deadline") job.deadlineAt = Date.now() + 3000;
+    const count = limit === "deadline" ? 1 : 3;
+    const { agent, turns } = await replyFixture(
+      t,
+      job,
+      Array.from({ length: count }, () => "x".repeat(8001)),
+    );
+    const result = await agent.run(job, AbortSignal.timeout(5000));
+    expect(result.reply).toContain("最終説明文");
+    expect(result.reply).toContain("要約を取得できませんでした");
+    expect(result.reply.length).toBeLessThanOrEqual(8000);
+    expect(result.headline).toBe("fix: preserve the changes");
+    expect(await turns()).toHaveLength(count);
+  },
+);
 
 test("an aborted revision stops the agent and cleans up its workspace", async (t) => {
   const job = replyJob("plan");

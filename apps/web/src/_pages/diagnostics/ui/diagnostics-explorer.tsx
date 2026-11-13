@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { RequestState } from "@/shared/ui/request-state";
+import { RequestState } from "@/widgets/request-state";
 import {
   diagnosticBodyQueryOptions,
   diagnosticEventsQueryOptions,
@@ -45,11 +45,6 @@ function DiagnosticBody({
           </pre>
         ) : (
           <RequestState
-            unauthorized={
-              <a href="/login" className="action action-primary">
-                GitHub でログイン
-              </a>
-            }
             missing="記録が見つかりません。"
             status={
               query.data && "error" in query.data ? query.data.error : undefined
@@ -144,11 +139,6 @@ export function DiagnosticsExplorer() {
       </form>
       {traces.isError ? (
         <RequestState
-          unauthorized={
-            <a href="/login" className="action action-primary">
-              GitHub でログイン
-            </a>
-          }
           missing="記録が見つかりません。"
           status={Number(traces.error.message)}
           retry={() => void traces.refetch()}
@@ -202,11 +192,6 @@ export function DiagnosticsExplorer() {
               </header>
               {events.isError ? (
                 <RequestState
-                  unauthorized={
-                    <a href="/login" className="action action-primary">
-                      GitHub でログイン
-                    </a>
-                  }
                   missing="記録が見つかりません。"
                   status={Number(events.error.message)}
                   retry={() => void events.refetch()}

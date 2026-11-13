@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RequestState } from "@/shared/ui/request-state";
+import { RequestState } from "@/widgets/request-state";
 import { connectionQueryOptions, connectionKey } from "../api/queries";
 import { updateConnection } from "../api/update-connection";
 
@@ -30,11 +30,6 @@ export function ConnectPage() {
           </p>
         ) : !status || "error" in status ? (
           <RequestState
-            unauthorized={
-              <a href="/login" className="action action-primary">
-                GitHub でログイン
-              </a>
-            }
             status={status?.error}
             missing="ChatGPT 接続は現在利用できません。"
             retry={() => void connection.refetch()}

@@ -1,17 +1,12 @@
-import type { ReactNode } from "react";
-
 export function RequestState({
   status,
-  unauthorized,
   missing,
   retry,
 }: {
   status?: number;
-  unauthorized: ReactNode;
   missing: string;
   retry: () => void;
 }) {
-  if (status === 401) return unauthorized;
   if (status === 404) return <p className="text-muted">{missing}</p>;
   return (
     <div className="space-y-3">

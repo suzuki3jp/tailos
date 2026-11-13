@@ -1,15 +1,14 @@
 # Tailos での適用
 
-## 導入済みの構成
-
-2026-11-14 に FSD と構造 lint を導入した。現行のコード・設定と合わせて確認する。
+## 構成
 
 - `apps/web`: Vinext / React / TanStack Query / Tailwind CSS / Cloudflare Worker。
 - `src/app`: `page.tsx`、layout、Provider、全体 CSS、health handler。画面の組み立てとルートパラメーターの解決を担当。
 - `src/_pages`: `account`、`connect`、`mcp-keys`、`session-detail`、`diagnostics`。各 slice の公開入口は `index.ts`、画面本体は `ui/`、取得・mutation・query key は `api/`。
 - `src/shared/api`: `@tailos/api/browser` を type-only import する Hono Client。Cookie の credentials を保持。
 - `src/shared/config`: 公開可能な API origin。Worker と client の双方から利用。
-- `src/shared/ui/request-state`: 汎用の失敗表示。401 のログイン導線は呼び出し元が渡す。
+- `src/widgets/request-state`: ログイン誘導を含む、保護された画面の共通の失敗表示。401 はここで扱い、その他の失敗は Shared の表示を使う。
+- `src/shared/ui/request-state`: 業務に依存しない404・再試行表示。401 をログアウト状態に変換する account slice はこれを直接使う。
 - `src/worker`: CSP などを付ける既存 Worker とテスト。Wrangler の `main` は既存配置のまま。
 
 全ソースを `apps/web/src` 内に置き、独立した `_app` は作らない。Features / Entities は実際の再利用が生まれたときに追加し、空ディレクトリを作らない。
@@ -23,8 +22,7 @@
 - Steiger は `0.9.0`、公式 plugin は `0.8.2`。`apps/web/steiger.config.ts` が正本。`src/app` と `src/worker` はフレームワーク規約のため除外し、独自 Oxlint rule が import の境界を補う。`_pages` の typo 診断だけを局所的に無効にし、依存検査は有効のまま。
 - `lint/web-architecture.test.mjs` は導入済み config と実際の CLI で正常例・禁止例を検証する。`pnpm test` と CI の test job に含まれる。
 - slice 内は相対 import。Shared の segment 間でも Steiger の import-locality に合わせて相対 import を使う。
-
-[導入計画と実装](../../../../docs/fsd-adoption-plan.md) に移行前後の対応表と設定理由を記載している。現在存在する slice と、将来の抽出例を区別する。
+- ファイル監視を制限する環境で Steiger が `EMFILE` / `watch` エラーになった場合は、`CHOKIDAR_USEPOLLING=1 pnpm lint` / `CHOKIDAR_USEPOLLING=1 pnpm test` で実行する。
 
 ## 対象外と挙動
 

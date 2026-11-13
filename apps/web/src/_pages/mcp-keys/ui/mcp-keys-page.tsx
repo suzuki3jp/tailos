@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RequestState } from "@/shared/ui/request-state";
+import { RequestState } from "@/widgets/request-state";
 import { mcpKeysQueryOptions, mcpKeysKey } from "../api/queries";
 import { createMcpKey, revokeMcpKey } from "../api/mutations";
 
@@ -67,11 +67,6 @@ export function McpKeysPage() {
         </p>
       ) : status === "error" || !data || "error" in data ? (
         <RequestState
-          unauthorized={
-            <a href="/login" className="action action-primary">
-              GitHub でログイン
-            </a>
-          }
           status={data && "error" in data ? data.error : undefined}
           missing="MCP 接続を利用できません。"
           retry={() => void keys.refetch()}

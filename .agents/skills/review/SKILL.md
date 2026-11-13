@@ -36,7 +36,7 @@ PR のコードや依存関係をローカルで実行する前に、[セキュ�
 - [TypeScript](references/typescript.md) — 厳密な型、型アサーション、外部データの検証、共有契約。
 - [JSX](references/jsx.md) — コンポーネントの責務、Hono JSX での画面と認証処理の境界。
 - [ディレクトリ構成](references/directory-structure.md) — API、Runner、共有パッケージの責務と依存方向。
-- [FSD](../fsd/SKILL.md) — Web の配置・依存・公開 API を変更する場合に参照する。導入計画の提案と、対象差分で移行済みの規則を区別する。
+- [FSD](../fsd/SKILL.md) — Web の配置・依存・公開 API を変更する場合に参照する。
 - [セキュリティ](references/security.md) — 外部入力や権限、Agent の実行環境、通信、ログ、GitHub への公開に関わる変更で確認する。
 
 あわせて、既存の動作や保存済みデータとの互換性、パフォーマンス、認証・認可、失敗時の復旧、ドキュメントとの整合性を変更に応じて確認する。

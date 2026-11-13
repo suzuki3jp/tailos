@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { RequestState } from "@/shared/ui/request-state";
+import { RequestState } from "@/widgets/request-state";
 import { sessionQueryOptions } from "../api/queries";
 
 const authorLabel = { agent: "Codex", automation: "GitHub", user: "ユーザー" };
@@ -73,11 +73,6 @@ export function SessionDetail({ id }: { id: string }) {
         </p>
       ) : !detail || "error" in detail ? (
         <RequestState
-          unauthorized={
-            <a href="/login" className="action action-primary">
-              GitHub でログイン
-            </a>
-          }
           status={detail?.error}
           missing="Session が見つかりません。"
           retry={() => void session.refetch()}

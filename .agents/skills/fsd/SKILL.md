@@ -5,7 +5,7 @@ description: Tailos Web の実装・設計・レビューで Feature-Sliced Desi
 
 # Feature-Sliced Design
 
-Web の配置や依存を決めるときに使う。まず [Tailos 固有の状況](references/tailos.md) を読み、現行コード・導入済みの規則・将来の抽出候補を区別する。導入計画の存在だけで、ファイル移動や新しい lint 設定の適用を依頼されたと解釈しない。
+Web の配置や依存を決めるときに使う。まず [Tailos 固有の構成と lint](references/tailos.md) を読み、現行コードと合わせて確認する。
 
 Tailos の配置方針は `src/app` にルートと App の責務、`src/_pages` に画面本体。ソースは `src` 内に収め、独立した `_app` は作らない。App の一般的な segment 規約よりフレームワークのファイル規約を優先する。
 
@@ -17,13 +17,14 @@ FSD 2.1 の Pages first を使う。まず画面の UI・取得処理・状態�
 | --- | --- |
 | App | 起動、ルーティングへの接続、Provider、全体の layout・styles。 |
 | Pages | 画面またはネストしたルートの大きな画面領域。画面固有の UI・操作・取得処理を置ける。 |
+| Widgets | 複数画面で再利用する独立した UI ブロック。業務上の表示と Shared の汎用 UI を組み立てる。 |
 | Features | 複数の利用箇所で再利用する、ユーザーに価値を与える操作とそれに必要な UI・状態。 |
 | Entities | 再利用する業務概念の型・読み取り・表現。バックエンドの全モデルを機械的に複製しない。 |
 | Shared | 通信基盤、汎用 UI、設定、用途が明確なライブラリ。上位 slice に依存しない。 |
 
-標準の依存順序は `App → Pages → Widgets → Features → Entities → Shared`。未使用レイヤーは省略できる。Processes は非推奨。現在の公式ガイドは Widgets も Features との責務の重複を理由に使用を勧めていない。単一画面の構成は Pages、再利用する操作と UI は Features、全体の layout は App をまず検討する。
+標準の依存順序は `App → Pages → Widgets → Features → Entities → Shared`。未使用レイヤーは省略できる。Processes は非推奨。Widgets と Features の責務が重ならないよう、操作の実装は Features、複数画面で共通の表示ブロックは Widgets として判断する。単一画面の構成は Pages、全体の layout は App に置く。
 
-Pages / Features / Entities などは `layer/slice/segment`、App / Shared は slice を持たず `layer/segment` とする。slice 名は業務や利用者の言葉に合わせる。segment は目的で分け、必要なものだけを作る。
+Pages / Widgets / Features / Entities は `layer/slice/segment`、App / Shared は slice を持たず `layer/segment` とする。slice 名は業務や利用者の言葉に合わせる。segment は目的で分け、必要なものだけを作る。
 
 - `ui`: 表示、コンポーネント、表示用の変換、局所的な UI state。
 - `api`: request、レスポンス型・変換、queryOptions、mutation と関連する key。
@@ -47,7 +48,7 @@ Pages / Features / Entities などは `layer/slice/segment`、App / Shared は s
 
 変更対象がどの画面・業務概念・通信基盤に属するかを判断し、既存 slice とその呼び出し元を確認する。再利用がまだなければ画面内に置く。依存先、公開 API、query key と invalidation の所有者を揃え、ルート adapter に画面の実装を増やさない。
 
-機械的な移動に polling・retry・401 の扱いなどの挙動変更を混ぜない。挙動を変える場合はリポジトリの PDR 運用を適用する。検証は現行 CI と導入済みの lint を使い、未導入の計画上のコマンドが存在すると仮定しない。
+機械的な移動に polling・retry・401 の扱いなどの挙動変更を混ぜない。挙動を変える場合はリポジトリの PDR 運用を適用する。検証には現行 CI のコマンドを使う。
 
 ## レビューで使う
 
@@ -59,7 +60,7 @@ Pages / Features / Entities などは `layer/slice/segment`、App / Shared は s
 - lint が対象ファイルを実際に検査し、導入済みルールの違反を CI で失敗させるか。ignore や warn への変更で問題を隠していないか。
 - 移動で認証、query key、invalidation、更新停止、エラー表示、CSP が変わっていないか。
 
-指摘は、導入済みの規則と具体的な影響に結び付ける。提案中のディレクトリ名との差だけで不具合としない。通常のレビュー観点・結果の報告は [review スキル](../review/SKILL.md) と併用する。
+指摘は、適用される規則と具体的な影響に結び付ける。通常のレビュー観点・結果の報告は [review スキル](../review/SKILL.md) と併用する。
 
 ## 参照先
 

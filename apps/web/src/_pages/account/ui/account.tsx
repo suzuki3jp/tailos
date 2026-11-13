@@ -18,11 +18,6 @@ export function Account() {
   if (account.isError || (data && "error" in data)) {
     return (
       <RequestState
-        unauthorized={
-          <a href="/login" className="action action-primary">
-            GitHub でログイン
-          </a>
-        }
         status={data && "error" in data ? data.error : undefined}
         missing="GitHub ログインが設定されていません。"
         retry={() => void account.refetch()}

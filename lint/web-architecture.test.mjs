@@ -73,6 +73,7 @@ test("Oxlint allows public adapters, framework composition and API types", async
     "src/app/layout.tsx":
       'import { Providers } from "./providers"; export { Providers };',
     "src/app/providers.tsx": 'export const Providers = "providers";',
+    "src/app/widget.ts": 'export { Panel } from "@/widgets/panel";',
     "src/worker/index.ts":
       'import { origin } from "@/shared/config"; export { origin };',
     "src/worker/index.test.ts":
@@ -103,6 +104,7 @@ test("Oxlint rejects adapter bypasses and backend implementation imports", async
       'export { Home as default } from "../../_pages/home/ui/home";',
     "src/app/other/page.tsx": 'export { default } from "../page";',
     "src/app/config.ts": 'export { origin } from "@/shared/config/origin";',
+    "src/app/widget.ts": 'export { Panel } from "@/widgets/panel/ui/panel";',
     "src/worker/screen.ts": 'export { Home } from "@/_pages/home";',
     "src/worker/client.ts": 'export { api } from "@/shared/api";',
     "src/shared/api/value.ts":
@@ -147,7 +149,10 @@ const validFsd = {
   "src/worker/index.ts": "export const worker = true;",
   "src/_pages/home/index.ts": 'export { Home } from "./ui/home";',
   "src/_pages/home/ui/home.ts":
-    'import { action } from "@/features/action"; import { Button } from "@/shared/ui/button"; export const Home = () => Button(action());',
+    'import { Panel } from "@/widgets/panel"; export const Home = Panel;',
+  "src/widgets/panel/index.ts": 'export { Panel } from "./ui/panel";',
+  "src/widgets/panel/ui/panel.ts":
+    'import { action } from "@/features/action"; import { Button } from "@/shared/ui/button"; export const Panel = () => Button(action());',
   "src/_pages/other/index.ts": 'export { Other } from "./ui/other";',
   "src/_pages/other/ui/other.ts": 'export const Other = "other";',
   "src/features/action/index.ts": 'export { action } from "./model/action";',
@@ -183,6 +188,30 @@ test("Steiger accepts _pages, public Shared modules and the adapter exceptions",
 });
 
 for (const [name, changes, rule] of [
+  [
+    "widgets importing pages",
+    {
+      "src/widgets/panel/ui/panel.ts":
+        'export { Home as Panel } from "@/_pages/home";',
+    },
+    "fsd/forbidden-imports",
+  ],
+  [
+    "features importing widgets",
+    {
+      "src/features/action/model/action.ts":
+        'export { Panel as action } from "@/widgets/panel";',
+    },
+    "fsd/forbidden-imports",
+  ],
+  [
+    "widget deep imports",
+    {
+      "src/_pages/home/ui/home.ts":
+        'export { Panel as Home } from "@/widgets/panel/ui/panel";',
+    },
+    "fsd/no-public-api-sidestep",
+  ],
   [
     "higher-layer type imports through _pages",
     {

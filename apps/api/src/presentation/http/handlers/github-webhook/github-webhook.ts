@@ -39,6 +39,7 @@ export function createGithubWebhook(
     env: Bindings,
     input: PlanningAdmission,
   ) => Promise<PlanningReceipt>,
+  processPlans: (env: Bindings) => Promise<void> = async () => {},
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -169,6 +170,12 @@ export function createGithubWebhook(
         executionContext: JSON.stringify({ ...executionContext, mode: "plan" }),
         timeoutMs: target.maxRunMinutes * 60_000,
       });
+      c.executionCtx.waitUntil(
+        processPlans(c.env).catch(async () => {
+          // The recovery sweep can dispatch and schedule the persisted input.
+          await decision("schedule", "unknown");
+        }),
+      );
       c.executionCtx.waitUntil(notify(c.env));
       return c.json(receipt, 202);
     }

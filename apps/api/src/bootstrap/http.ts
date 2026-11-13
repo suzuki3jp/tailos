@@ -62,11 +62,8 @@ const githubWebhook = createGithubWebhook(
   validSignature,
   (env, event) => recordTriggerDecision(env.DB, event),
   deliverIssueNotifications,
-  async (env, input) => {
-    const receipt = await acceptPlanningInput(env.DB, input);
-    await processPlanningInputs(env).catch(() => {});
-    return receipt;
-  },
+  (env, input) => acceptPlanningInput(env.DB, input),
+  processPlanningInputs,
 );
 
 const runRoutes = createRunRoutes(

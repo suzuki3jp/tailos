@@ -61,8 +61,8 @@ export function parseGithubEvent(
     if (!parsed.success) return { kind: "invalid" } as const;
     const data = parsed.output;
     const command = planningCommand(data.comment.body);
+    if (!command) return { kind: "ignored", reason: "command" } as const;
     if (
-      !command ||
       data.sender.type === "Bot" ||
       data.comment.user.type === "Bot" ||
       data.sender.login.toLowerCase() !== data.comment.user.login.toLowerCase()

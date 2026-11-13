@@ -156,6 +156,7 @@ test.for([undefined, false, true] as const)(
 test("accepts explicit new planning comments without labels and rejects ineligible comments", async (t) => {
   const db = await createTestDb(t);
   const schedule = vi.fn(async () => {});
+  const background: Promise<unknown>[] = [];
   const env = {
     ...testLoginBindings(db),
     RUNNER: { getByName: () => ({ schedule }) },
@@ -192,13 +193,14 @@ test("accepts explicit new planning comments without labels and rejects ineligib
       html_url: "https://github.com/owner/repo/issues/8#issuecomment-100",
     },
   };
-  const send = (
+  const send = async (
     payload: object,
     delivery = crypto.randomUUID(),
     secret = "secret",
+    waitForBackground = true,
   ) => {
     const body = JSON.stringify(payload);
-    return app.request(
+    const response = await app.request(
       "https://tailos.example/webhooks/github",
       {
         method: "POST",
@@ -211,8 +213,16 @@ test("accepts explicit new planning comments without labels and rejects ineligib
         },
       },
       env,
-      { waitUntil: () => {}, passThroughOnException: () => {}, props: {} },
+      {
+        waitUntil: (task) => {
+          background.push(task);
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
     );
+    if (waitForBackground) await Promise.all(background);
+    return response;
   };
   expect((await send(event, undefined, "invalid")).status).toBe(401);
   for (const body of [
@@ -227,6 +237,13 @@ test("accepts explicit new planning comments without labels and rejects ineligib
     expect(
       (await send({ ...event, comment: { ...event.comment, body } })).status,
     ).toBe(204);
+    expect(
+      await db
+        .prepare(
+          "SELECT json_extract(attributes, '$.reason') AS reason FROM diagnostic_events ORDER BY ingest_seq DESC LIMIT 1",
+        )
+        .first("reason"),
+    ).toBe("command");
   }
   for (const change of [
     { action: "edited" },
@@ -242,6 +259,13 @@ test("accepts explicit new planning comments without labels and rejects ineligib
     expect((await send({ ...event, ...change })).status).toBe(204);
   expect(schedule).not.toHaveBeenCalled();
   expect(
+    await db
+      .prepare(
+        "SELECT json_extract(attributes, '$.reason') AS reason FROM diagnostic_events ORDER BY ingest_seq DESC LIMIT 1",
+      )
+      .first("reason"),
+  ).toBe("actor");
+  expect(
     await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
   ).toBe(0);
   const guidance = await send({
@@ -250,11 +274,35 @@ test("accepts explicit new planning comments without labels and rejects ineligib
   });
   expect(guidance.status).toBe(202);
   expect(schedule).not.toHaveBeenCalled();
-  const first = await send({
-    ...event,
-    comment: { ...event.comment, id: 101 },
+  let rejectScheduling: (error: Error) => void = () => {};
+  const scheduling = new Promise<void>((_resolve, reject) => {
+    rejectScheduling = reject;
   });
+  schedule.mockImplementationOnce(() => scheduling);
+  const first = await send(
+    {
+      ...event,
+      comment: { ...event.comment, id: 101 },
+    },
+    undefined,
+    undefined,
+    false,
+  );
   expect(first.status).toBe(202);
+  // The response and durable receipt must be available while scheduling is blocked.
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM planning_inbox").first("n"),
+  ).toBe(2);
+  await vi.waitFor(() => expect(schedule).toHaveBeenCalledOnce());
+  rejectScheduling(new Error("Alarm unavailable"));
+  await Promise.all(background);
+  expect(
+    await db
+      .prepare(
+        "SELECT json_extract(attributes, '$.reason') AS reason FROM diagnostic_events ORDER BY ingest_seq DESC LIMIT 1",
+      )
+      .first("reason"),
+  ).toBe("schedule");
   const receipt = await first.json();
   assert(
     receipt &&

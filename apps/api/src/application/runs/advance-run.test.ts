@@ -404,3 +404,40 @@ test("preserves the agent failure when storing its R2 artifact also fails", asyn
       .first("error_code"),
   ).toBe("agent_failed");
 });
+
+test("stores questions-only planning results and the reply in the session", async (t) => {
+  const db = await createTestDb(t);
+  const { runId, sessionId } = await admitTrigger(db, {
+    ...request,
+    executionContext: '{"version":1,"engine":"fake","mode":"plan"}',
+  });
+  await advanceRun(db, runId, {
+    async start(job) {
+      expect(job.context.mode).toBe("plan");
+      return {
+        status: "succeeded",
+        reply: "Which behavior?",
+        plan: { planPresented: false, needsAnswer: true },
+        events: [],
+      };
+    },
+    poll: unexpectedPoll,
+  });
+  const result = await db
+    .prepare("SELECT status, result FROM runs WHERE id = ?")
+    .bind(runId)
+    .first();
+  expect(result).toEqual({
+    status: "succeeded",
+    result:
+      '{"version":1,"kind":"plan","planPresented":false,"needsAnswer":true}',
+  });
+  expect(
+    await db
+      .prepare(
+        "SELECT body FROM session_messages WHERE session_id = ? AND author_kind = 'agent'",
+      )
+      .bind(sessionId)
+      .first("body"),
+  ).toBe("Which behavior?");
+});

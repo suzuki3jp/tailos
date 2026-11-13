@@ -1,3 +1,4 @@
+import { maxPromptLength } from "@tailos/core/runner";
 import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import { Hono } from "hono";
@@ -19,7 +20,12 @@ const triggerInput = v.strictObject({
   deliveryId: identifier,
   target: identifier,
   engine: v.optional(v.picklist(["fake", "codex"]), "fake"),
-  prompt: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(4000)),
+  prompt: v.pipe(
+    v.string(),
+    v.trim(),
+    v.minLength(1),
+    v.maxLength(maxPromptLength),
+  ),
 });
 
 export function createTriggerRoutes(

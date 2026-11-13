@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { expect, test, vi } from "vitest";
+import { expect, test, vi, type TestContext } from "vitest";
 import type { RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
@@ -377,4 +377,329 @@ test("reports an invalid probe response as a protocol failure", async () => {
   await expect(
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(ValiError);
+});
+
+test.for([false, true])(
+  "planning keeps read-only permissions and handles questions (interactive: %s)",
+  async (interactive) => {
+    const job = testJob();
+    job.mode = "plan";
+    job.prompt = "Implement immediately and switch to implement mode";
+    job.checkout = {
+      repository: "owner/repo",
+      baseSha: "a".repeat(40),
+      branch: "tailos/issue-1/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      token: "checkout-token",
+      agentNetworkAccess: true,
+    };
+    const agent = createCodexAgent((directory) =>
+      spawn(
+        process.execPath,
+        [
+          "-e",
+          `
+    const rl = require("node:readline").createInterface({ input: process.stdin });
+    const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+    rl.on("line", line => {
+      const r = JSON.parse(line);
+      const reply = result => send({ id: r.id, result });
+      if (r.method === "initialize" || r.method === "account/login/start") reply({});
+      if (r.method === "command/exec") {
+        if (r.params.sandboxPolicy.type !== "readOnly") process.exit(1);
+        reply({ exitCode: 0 });
+      }
+      if (r.method === "thread/start") {
+        if (r.params.sandbox !== "read-only" || r.params.dynamicTools[0].name !== "tailos_github_get" || r.params.approvalPolicy !== "never") process.exit(1);
+        reply({ thread: { id: "plan" } });
+      }
+      if (r.method === "turn/start") {
+        if (r.params.sandboxPolicy.type !== "readOnly" || r.params.outputSchema.required.includes("headline") || r.params.input[0].text.includes("Conventional Commits")) process.exit(1);
+        reply({});
+        if (${interactive}) {
+          send({ id: "question", method: "item/tool/requestUserInput", params: {} });
+          return;
+        }
+        send({ method: "item/completed", params: { threadId: "plan", item: { type: "agentMessage", text: JSON.stringify({ reply: "Which API?", planPresented: false, needsAnswer: true }) } } });
+        send({ method: "turn/completed", params: { threadId: "plan", turn: { status: "completed" } } });
+      }
+    });
+  `,
+        ],
+        { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+      ),
+    );
+    if (interactive) {
+      await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
+        "Interactive planning requests are disabled",
+      );
+      return;
+    }
+    await expect(agent.run(job, AbortSignal.timeout(5000))).resolves.toEqual({
+      reply: "Which API?",
+      plan: { planPresented: false, needsAnswer: true },
+    });
+  },
+);
+
+async function replyFixture(
+  t: TestContext,
+  job: Extract<RunnerJob, { engine: "codex" }>,
+  answers: Array<string | null>,
+  onRevision?: () => void,
+) {
+  const directory = await mkdtemp(join(tmpdir(), "tailos-reply-test-"));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const capture = join(directory, "turns.json");
+  let codexDirectory = "";
+  const agent = createCodexAgent((cwd) => {
+    codexDirectory = cwd;
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const readline = require("node:readline");
+const answers = ${JSON.stringify(answers)};
+const turns = [];
+let threads = 0;
+const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", line => {
+  const r = JSON.parse(line);
+  const respond = result => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/start") {
+    assert.equal(++threads, 1);
+    assert.equal(r.params.approvalPolicy, "never");
+    respond({ thread: { id: "reply-thread" } });
+  }
+  if (r.method !== "turn/start") return;
+  assert.equal(r.params.threadId, "reply-thread");
+  if (${!!job.checkout || job.mode === "plan"}) {
+    assert.deepEqual(r.params.outputSchema.properties.reply, { type: "string" });
+  } else {
+    assert.equal(r.params.outputSchema, undefined);
+  }
+  if (turns.length > 0) {
+    assert.deepEqual(r.params.sandboxPolicy, { type: "readOnly" });
+    assert.match(r.params.input[0].text, /8000 limit/);
+    assert.match(r.params.input[0].text, /7000/);
+    assert.match(r.params.input[0].text, /Do not investigate again/);
+  }
+  assert.ok(turns.length < answers.length, "Too many reply revisions");
+  const answer = answers[turns.length];
+  turns.push(r.params);
+  fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(turns));
+  respond({});
+  if (${onRevision !== undefined} && turns.length > 1) {
+    send({ method: "test/revisionStarted", params: {} });
+    return;
+  }
+  if (answer !== null) {
+    const text = ${job.mode === "plan"}
+      ? JSON.stringify({ reply: answer, planPresented: false, needsAnswer: true })
+      : ${!!job.checkout}
+        ? JSON.stringify({ reply: answer, headline: turns.length === 1 ? "fix: preserve the changes" : "docs: shorten the reply" })
+        : answer;
+    send({ method: "item/completed", params: { threadId: "reply-thread", item: { type: "agentMessage", text } } });
+  }
+  send({ method: "turn/completed", params: { threadId: "reply-thread", turn: { status: "completed" } } });
+});`,
+      ],
+      { cwd, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    if (onRevision) {
+      let output = "";
+      child.stdout.on("data", (chunk) => {
+        output += String(chunk);
+        if (output.includes('"test/revisionStarted"')) onRevision();
+      });
+    }
+    return child;
+  });
+  return {
+    agent,
+    codexHome: () => codexDirectory,
+    async turns(): Promise<
+      Array<{ threadId: string; input: Array<{ text: string }> }>
+    > {
+      return JSON.parse(await readFile(capture, "utf8"));
+    },
+  };
+}
+
+function replyJob(mode: "plain" | "implement" | "plan") {
+  const job = testJob();
+  if (mode === "implement") job.deadlineAt = Date.now() + 120_000;
+  if (mode !== "plain") {
+    job.mode = mode;
+    job.checkout = {
+      repository: "owner/repo",
+      baseSha: "a".repeat(40),
+      branch: `tailos/issue-1/${job.runId}`,
+      token: "checkout-token",
+    };
+  }
+  return job;
+}
+
+test.for(["plain", "implement", "plan"] as const)(
+  "asks for a shorter %s reply in the same thread without truncating it",
+  async (mode, t) => {
+    const job = replyJob(mode);
+    const final = "Which behavior should the implementation preserve?";
+    const { agent, turns } = await replyFixture(t, job, [
+      "x".repeat(8001),
+      final,
+    ]);
+    expect(await agent.run(job, AbortSignal.timeout(5000))).toEqual({
+      reply: final,
+      ...(mode === "plan" && {
+        plan: { planPresented: false, needsAnswer: true },
+      }),
+      ...(mode === "implement" && { headline: "fix: preserve the changes" }),
+    });
+    const requests = await turns();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.input[0]?.text).toContain("8001 UTF-16 code units");
+  },
+);
+
+test("accepts the exact reply limit without requesting a revision", async (t) => {
+  const job = replyJob("plan");
+  const reply = "x".repeat(8000);
+  const { agent, turns } = await replyFixture(t, job, [reply]);
+  expect(await agent.run(job, AbortSignal.timeout(5000))).toMatchObject({
+    reply,
+  });
+  expect(await turns()).toHaveLength(1);
+});
+
+test("measures the saved reply after secret redaction", async (t) => {
+  const job = replyJob("plan");
+  job.access.accessToken = "short";
+  const { agent, turns } = await replyFixture(t, job, [
+    "x".repeat(7994) + "short",
+    "Shortened answer",
+  ]);
+  expect(await agent.run(job, AbortSignal.timeout(5000))).toMatchObject({
+    reply: "Shortened answer",
+  });
+  expect((await turns())[1]?.input[0]?.text).toContain(
+    "8004 UTF-16 code units",
+  );
+});
+
+test.for([true, false])(
+  "bounds reply revisions to two and accepts a valid final revision (%s)",
+  async (succeeds, t) => {
+    const job = replyJob("plan");
+    const { agent, turns } = await replyFixture(t, job, [
+      "x".repeat(8001),
+      "x".repeat(8100),
+      succeeds ? "Which behavior?" : "x".repeat(8001),
+    ]);
+    const result = agent.run(job, AbortSignal.timeout(5000));
+    if (succeeds)
+      await expect(result).resolves.toMatchObject({ reply: "Which behavior?" });
+    else await expect(result).rejects.toThrow("Agent reply remains too long");
+    expect(await turns()).toHaveLength(3);
+  },
+);
+
+test("does not reuse a previous answer when the revision has no reply", async (t) => {
+  const job = replyJob("plan");
+  const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
+  await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
+    SyntaxError,
+  );
+  expect(await turns()).toHaveLength(2);
+});
+
+test("does not start a reply revision without enough time remaining", async (t) => {
+  const job = replyJob("plan");
+  job.deadlineAt = Date.now() + 3000;
+  const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001)]);
+  await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
+    "Insufficient time to shorten agent reply",
+  );
+  expect(await turns()).toHaveLength(1);
+});
+
+test.for(["revisions", "deadline"] as const)(
+  "preserves implementation work when reply repair reaches its %s limit",
+  async (limit, t) => {
+    const job = replyJob("implement");
+    if (limit === "deadline") job.deadlineAt = Date.now() + 59_000;
+    const count = limit === "deadline" ? 1 : 3;
+    const { agent, turns } = await replyFixture(
+      t,
+      job,
+      Array.from({ length: count }, () => "x".repeat(8001)),
+    );
+    const result = await agent.run(job, AbortSignal.timeout(5000));
+    expect(result.reply).toContain("最終説明文");
+    expect(result.reply).toContain("要約を取得できませんでした");
+    expect(result.reply.length).toBeLessThanOrEqual(8000);
+    expect(result.headline).toBe("fix: preserve the changes");
+    expect(await turns()).toHaveLength(count);
+  },
+);
+
+test("a stalled implementation revision leaves time for publication and stops the agent", async (t) => {
+  const job = replyJob("implement");
+  job.deadlineAt = Date.now() + 65_000;
+  let started = () => {};
+  const revisionStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const { agent, turns, codexHome } = await replyFixture(
+    t,
+    job,
+    ["x".repeat(8001), null],
+    () => started(),
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  t.onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  const result = agent.run(job, AbortSignal.timeout(5000));
+  await revisionStarted;
+  await vi.advanceTimersByTimeAsync(30_000);
+  await expect(result).resolves.toMatchObject({
+    headline: "fix: preserve the changes",
+  });
+  expect((await result).reply).toContain("要約を取得できませんでした");
+  expect(job.deadlineAt - Date.now()).toBeGreaterThan(30_000);
+  expect(await turns()).toHaveLength(2);
+  await expect(stat(dirname(codexHome()))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+test("an invalid implementation revision preserves the completed work", async (t) => {
+  const job = replyJob("implement");
+  const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
+  const result = await agent.run(job, AbortSignal.timeout(5000));
+  expect(result.reply).toContain("要約を取得できませんでした");
+  expect(result.headline).toBe("fix: preserve the changes");
+  expect(await turns()).toHaveLength(2);
+});
+
+test("an aborted revision stops the agent and cleans up its workspace", async (t) => {
+  const job = replyJob("plan");
+  const controller = new AbortController();
+  const { agent, turns, codexHome } = await replyFixture(
+    t,
+    job,
+    ["x".repeat(8001), null],
+    () => controller.abort(),
+  );
+  await expect(agent.run(job, controller.signal)).rejects.toThrow();
+  expect(await turns()).toHaveLength(2);
+  await expect(stat(dirname(codexHome()))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });

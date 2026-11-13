@@ -28,7 +28,12 @@ export async function runInGitWorkspace(
   stage: (work: CheckedWork) => Promise<void>,
   remote = `https://github.com/${checkout.repository}.git`,
   diagnostics?: Diagnostics,
-): Promise<{ reply: string; publication: RunnerPublication }> {
+  mode?: RunnerJob["mode"],
+): Promise<{
+  reply: string;
+  publication?: RunnerPublication;
+  plan?: AgentResult["plan"];
+}> {
   const metadata = await mkdtemp(
     join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-git-"),
   );
@@ -118,7 +123,12 @@ export async function runInGitWorkspace(
     if (checkoutSpan) diagnostics?.end(checkoutSpan);
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
-    const { reply, headline } = await work(cwd);
+    const { reply, headline, plan } = await work(cwd);
+    signal.throwIfAborted();
+    if (mode === "plan") {
+      if (!plan) throw new Error("Missing plan result");
+      return { reply, plan };
+    }
     const inspectSpan = diagnostics?.start("workspace");
     if (!(await readFile(configPath)).equals(trustedConfig))
       throw new Error("Git metadata configuration changed");

@@ -347,6 +347,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
     bearer: string,
     work: CheckedPublication | LegacyPublication,
   ) {
+    const execution = await this.env.DB.prepare(
+      "SELECT execution_context FROM runs WHERE id = ?",
+    )
+      .bind(runId)
+      .first<{ execution_context: string }>();
+    if (!execution || JSON.parse(execution.execution_context).mode === "plan")
+      return false;
     const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
     if (
       !lease ||
@@ -400,6 +407,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     );
     const base = {
       version: 1 as const,
+      ...(context.mode === "plan" && { mode: "plan" as const }),
       runId,
       prompt,
       deadlineAt,
@@ -493,7 +501,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       const checkout = await github
-        .checkout(target, request.runId)
+        .checkout(target, request.runId, request.context.mode)
         .catch(() => null);
       if (!checkout)
         return {
@@ -562,6 +570,17 @@ export class RunnerContainer extends DurableObject<Bindings> {
     stepState: string | null,
   ) {
     const target = context.engine === "codex" ? context.repository : undefined;
+    if (context.mode === "plan") {
+      const status = await this.readRunnerStatus(runId);
+      if (status.status !== "succeeded") return status;
+      if (!status.plan || status.publication)
+        return {
+          status: "failed",
+          errorCode: "agent_failed",
+          events: status.events,
+        } as const;
+      return status;
+    }
     const pending = target ? pendingPublication(stepState) : null;
     if (target && pending?.kind === "checked") {
       const recoveryDeadline = publicationDeadline(stepState, deadlineAt);

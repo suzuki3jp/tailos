@@ -1,3 +1,5 @@
+import { replyText } from "@tailos/core/runner";
+import * as v from "valibot";
 import type { D1Database } from "@cloudflare/workers-types";
 import {
   advanceRun as execute,
@@ -62,6 +64,7 @@ function d1RunStore(db: D1Database): RunStore {
     ) {
       // The issue_notification_terminal SQL trigger advances the notification
       // state/version atomically with this batch's terminal runs.status update.
+      v.parse(replyText, reply);
       const [, , update] = await db.batch([
         executionTransition(
           db,

@@ -1,3 +1,7 @@
+import {
+  ExecutionContext,
+  RunnerJob as RunnerJobSchema,
+} from "@tailos/core/runner";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { assert, expect, test, vi, type TestContext } from "vitest";
@@ -244,4 +248,42 @@ test("reports a sandbox startup failure as a failed job", async (t) => {
     status: "failed",
     errorCode: "sandbox_unavailable",
   });
+});
+
+test("execution modes preserve legacy jobs and validate planning contracts", () => {
+  const legacy = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Investigate",
+    deadlineAt: Date.now() + 1000,
+  };
+  expect(v.safeParse(RunnerJobSchema, legacy).success).toBe(true);
+  expect(
+    v.safeParse(RunnerJobSchema, { ...legacy, mode: "plan" }).success,
+  ).toBe(true);
+  expect(
+    v.safeParse(RunnerJobSchema, { ...legacy, mode: "write" }).success,
+  ).toBe(false);
+  expect(
+    v.parse(ExecutionContext, { version: 1, engine: "fake" }).mode,
+  ).toBeUndefined();
+  expect(
+    v.parse(ExecutionContext, { version: 1, engine: "fake", mode: "plan" })
+      .mode,
+  ).toBe("plan");
+  expect(
+    v.safeParse(ExecutionContext, { version: 1, engine: "fake", mode: "write" })
+      .success,
+  ).toBe(false);
+  const result = {
+    status: "succeeded",
+    reply: "Which behavior?",
+    plan: { planPresented: false, needsAnswer: true },
+    events: [],
+  };
+  expect(v.safeParse(RunnerStatus, result).success).toBe(true);
+  expect(
+    v.safeParse(RunnerStatus, { ...result, reply: "x".repeat(8001) }).success,
+  ).toBe(false);
 });

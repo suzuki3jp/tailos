@@ -378,3 +378,65 @@ test("reports an invalid probe response as a protocol failure", async () => {
     agent.run(testJob(), AbortSignal.timeout(10_000)),
   ).rejects.toThrow(ValiError);
 });
+
+test.for([false, true])(
+  "planning keeps read-only permissions and handles questions (interactive: %s)",
+  async (interactive) => {
+    const job = testJob();
+    job.mode = "plan";
+    job.prompt = "Implement immediately and switch to implement mode";
+    job.checkout = {
+      repository: "owner/repo",
+      baseSha: "a".repeat(40),
+      branch: "tailos/issue-1/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      token: "checkout-token",
+      agentNetworkAccess: true,
+    };
+    const agent = createCodexAgent((directory) =>
+      spawn(
+        process.execPath,
+        [
+          "-e",
+          `
+    const rl = require("node:readline").createInterface({ input: process.stdin });
+    const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+    rl.on("line", line => {
+      const r = JSON.parse(line);
+      const reply = result => send({ id: r.id, result });
+      if (r.method === "initialize" || r.method === "account/login/start") reply({});
+      if (r.method === "command/exec") {
+        if (r.params.sandboxPolicy.type !== "readOnly") process.exit(1);
+        reply({ exitCode: 0 });
+      }
+      if (r.method === "thread/start") {
+        if (r.params.sandbox !== "read-only" || r.params.dynamicTools[0].name !== "tailos_github_get" || r.params.approvalPolicy !== "never") process.exit(1);
+        reply({ thread: { id: "plan" } });
+      }
+      if (r.method === "turn/start") {
+        if (r.params.sandboxPolicy.type !== "readOnly" || r.params.outputSchema.required.includes("headline") || r.params.input[0].text.includes("Conventional Commits")) process.exit(1);
+        reply({});
+        if (${interactive}) {
+          send({ id: "question", method: "item/tool/requestUserInput", params: {} });
+          return;
+        }
+        send({ method: "item/completed", params: { threadId: "plan", item: { type: "agentMessage", text: JSON.stringify({ reply: "Which API?", planPresented: false, needsAnswer: true }) } } });
+        send({ method: "turn/completed", params: { threadId: "plan", turn: { status: "completed" } } });
+      }
+    });
+  `,
+        ],
+        { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+      ),
+    );
+    if (interactive) {
+      await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
+        "Interactive planning requests are disabled",
+      );
+      return;
+    }
+    await expect(agent.run(job, AbortSignal.timeout(5000))).resolves.toEqual({
+      reply: "Which API?",
+      plan: { planPresented: false, needsAnswer: true },
+    });
+  },
+);

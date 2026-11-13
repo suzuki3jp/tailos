@@ -157,6 +157,13 @@ test("only the active Run lease can stage the expected work branch without overw
   expect(
     await runner.stagePublication(runId, bearer, { ...work, branch: "main" }),
   ).toBe(false);
+  await DB.prepare("UPDATE runs SET execution_context = ? WHERE id = ?")
+    .bind('{"version":1,"engine":"fake","mode":"plan"}', runId)
+    .run();
+  expect(await runner.stagePublication(runId, bearer, work)).toBe(false);
+  await DB.prepare("UPDATE runs SET execution_context = ? WHERE id = ?")
+    .bind('{"version":1,"engine":"fake"}', runId)
+    .run();
   expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
   expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
   expect(
@@ -551,4 +558,98 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
   expect(objects.objects.map(({ key }) => key)).toEqual([
     `tailos-api/v1/runs/${runId}/execution.json`,
   ]);
+});
+
+test("planning refuses publication recovery and stops its container after saving questions", async (t) => {
+  const DB = await createTestDb(t);
+  const context = {
+    version: 1,
+    engine: "codex",
+    mode: "plan",
+    connectionId: "codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
+    repository: {
+      repository: "owner/private",
+      repositoryId: 42,
+      installationId: 19,
+      issueNumber: 8,
+      defaultBranch: "main",
+      triggerLabel: "tailos:run",
+    },
+  };
+  const { runId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "plan",
+    concurrencyKey: "plan",
+    ownerId: "owner",
+    prompt: "Investigate",
+    executionContext: JSON.stringify(context),
+    timeoutMs: 60_000,
+  });
+  const pending = {
+    kind: "checked",
+    branch: `tailos/issue-8/${runId}`,
+    baseSha: "a".repeat(40),
+    tree: "b".repeat(40),
+    headline: "fix: injected change",
+    reply: "publish",
+    events: [],
+    digest: "c".repeat(64),
+  };
+  await DB.prepare(
+    "UPDATE runs SET status = 'running', step_state = ? WHERE id = ?",
+  )
+    .bind(
+      JSON.stringify({
+        baseSha: pending.baseSha,
+        branch: pending.branch,
+        pendingPublication: pending,
+      }),
+      runId,
+    )
+    .run();
+  const destroy = vi.fn(async () => {});
+  const commit = vi.spyOn(GitHubApp.prototype, "commitCheckedWork");
+  const publish = vi.spyOn(GitHubApp.prototype, "publish");
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  const runner = new RunnerContainer(
+    {
+      storage: {
+        async get(key: string) {
+          return key === "runId" ? runId : undefined;
+        },
+        async delete() {},
+        async setAlarm() {
+          throw new Error("Planning must end");
+        },
+      },
+      container: {
+        running: true,
+        destroy,
+        getTcpPort() {
+          return {
+            async fetch() {
+              return Response.json({
+                status: "succeeded",
+                reply: "Which behavior?",
+                plan: { planPresented: false, needsAnswer: true },
+                events: [{ type: "job_succeeded", at: Date.now() }],
+              });
+            },
+          };
+        },
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { DB },
+  );
+  await runner.alarm();
+  expect(destroy).toHaveBeenCalledOnce();
+  expect(commit).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  expect(
+    await DB.prepare("SELECT status FROM runs WHERE id = ?")
+      .bind(runId)
+      .first("status"),
+  ).toBe("succeeded");
 });

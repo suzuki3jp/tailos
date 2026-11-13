@@ -523,3 +523,39 @@ test("adopts an App comment after the successful POST response was lost", async 
   expect(posts).toBe(1);
   expect(revoked).toBe(2);
 });
+
+test("planning checks out an unlabelled issue without publication branch rules", async () => {
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/access_tokens")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.repository_ids).toEqual([42]);
+        expect(
+          Object.values(body.permissions).every(
+            (permission) => permission === "read",
+          ),
+        ).toBe(true);
+        return Response.json({
+          token: "read-grant",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      }
+      if (path === "/repos/owner/private")
+        return Response.json({ id: 42, default_branch: "main" });
+      if (path.endsWith("/issues/8"))
+        return Response.json({ state: "open", labels: [] });
+      if (path.endsWith("/git/ref/heads/main"))
+        return Response.json({ object: { sha } });
+      expect(path).toBe("/installation/token");
+      return new Response(null, { status: 204 });
+    },
+  );
+  expect((await github.checkout(target, randomUUID(), "plan")).baseSha).toBe(
+    sha,
+  );
+  await expect(github.checkout(target, randomUUID())).rejects.toThrow(
+    /trigger/,
+  );
+});

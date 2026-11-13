@@ -1,7 +1,11 @@
-import type { RunnerJob } from "@tailos/core/runner";
+import type { PlanResult, RunnerJob } from "@tailos/core/runner";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 
-export type AgentResult = { reply: string; headline?: string };
+export type AgentResult = {
+  reply: string;
+  headline?: string;
+  plan?: PlanResult;
+};
 
 export interface AgentAdapter {
   run(
@@ -24,6 +28,11 @@ export class PublicationFailed extends Error {
 export const fakeAgent: AgentAdapter = {
   async run(job, signal) {
     signal.throwIfAborted();
-    return { reply: `Fake agent completed: ${job.prompt}` };
+    return {
+      reply: `Fake agent completed: ${job.prompt}`,
+      ...(job.mode === "plan" && {
+        plan: { planPresented: true, needsAnswer: false },
+      }),
+    };
   },
 };

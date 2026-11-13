@@ -276,6 +276,7 @@ export class GitHubApp {
   async checkout(
     target: RepositoryTarget,
     runId: string,
+    mode?: "plan" | "implement",
   ): Promise<GitHubCheckout> {
     const { token } = await this.token(target, {
       contents: "read",
@@ -297,25 +298,30 @@ export class GitHubApp {
       if (
         issue.state !== "open" ||
         issue.pull_request ||
-        !issue.labels.some((label) => label.name === target.triggerLabel)
+        (mode !== "plan" &&
+          !issue.labels.some((label) => label.name === target.triggerLabel))
       )
         throw new Error("GitHub issue no longer matches the trigger");
       if (workBranchFor(target, runId) === target.defaultBranch)
         throw new Error("The work branch cannot be the default branch");
       const branch = encodeURIComponent(target.defaultBranch);
-      const rules = v.parse(
-        v.array(v.object({ type: v.string() })),
-        await this.json(`${repo}/rules/branches/${branch}?per_page=100`, token),
-      );
-      if (
-        !["creation", "update", "deletion"].every((required) =>
-          rules.some((rule) => rule.type === required),
-        )
-      )
-        throw new Error(
-          "The default branch must have active creation, update and deletion restrictions",
+      if (mode !== "plan") {
+        const rules = v.parse(
+          v.array(v.object({ type: v.string() })),
+          await this.json(
+            `${repo}/rules/branches/${branch}?per_page=100`,
+            token,
+          ),
         );
-
+        if (
+          !["creation", "update", "deletion"].every((required) =>
+            rules.some((rule) => rule.type === required),
+          )
+        )
+          throw new Error(
+            "The default branch must have active creation, update and deletion restrictions",
+          );
+      }
       const base = v.parse(
         refSchema,
         await this.json(`${repo}/git/ref/heads/${branch}`, token),

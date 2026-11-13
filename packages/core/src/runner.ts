@@ -1,6 +1,19 @@
 import * as v from "valibot";
 import { DiagnosticContext } from "./diagnostics.js";
 
+export const maxPromptLength = 4000;
+export const maxReplyLength = 8000;
+export const promptText = v.pipe(
+  v.string(),
+  v.minLength(1),
+  v.maxLength(maxPromptLength),
+);
+export const replyText = v.pipe(
+  v.string(),
+  v.minLength(1),
+  v.maxLength(maxReplyLength),
+);
+
 const positiveId = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const repositoryName = v.pipe(
   v.string(),
@@ -69,11 +82,23 @@ export const RepositoryTarget = v.strictObject({
   agentNetworkAccess: v.optional(v.boolean()),
 });
 
+export const ExecutionMode = v.picklist(["plan", "implement"]);
+export const PlanResult = v.strictObject({
+  planPresented: v.boolean(),
+  needsAnswer: v.boolean(),
+});
+export type PlanResult = v.InferOutput<typeof PlanResult>;
+
 export const ExecutionContext = v.variant("engine", [
-  v.strictObject({ version: v.literal(1), engine: v.literal("fake") }),
+  v.strictObject({
+    version: v.literal(1),
+    engine: v.literal("fake"),
+    mode: v.optional(ExecutionMode),
+  }),
   v.strictObject({
     version: v.literal(1),
     engine: v.literal("codex"),
+    mode: v.optional(ExecutionMode),
     connectionId: v.pipe(
       v.string(),
       v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
@@ -83,9 +108,10 @@ export const ExecutionContext = v.variant("engine", [
 ]);
 
 const job = {
+  mode: v.optional(ExecutionMode),
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),
-  prompt: v.pipe(v.string(), v.minLength(1), v.maxLength(4000)),
+  prompt: promptText,
   deadlineAt: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
   diagnostics: v.optional(DiagnosticContext),
 };
@@ -145,8 +171,9 @@ export const RunnerStatus = v.variant("status", [
   v.strictObject({ status: v.literal("running") }),
   v.strictObject({
     status: v.literal("succeeded"),
-    reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
+    reply: replyText,
     publication: v.optional(RunnerPublication),
+    plan: v.optional(PlanResult),
     events,
   }),
   v.strictObject({
@@ -174,7 +201,7 @@ export const checkedPublicationFields = {
   baseSha: gitSha,
   tree: gitSha,
   headline: changeHeadline,
-  reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
+  reply: replyText,
   events,
 };
 export const CheckedPublication = v.strictObject({

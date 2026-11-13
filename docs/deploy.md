@@ -80,3 +80,13 @@ Agent のコマンドによるネットワーク利用は既定で無効。依�
 既存の実行可能ファイルは、実行ビットを維持したまま内容を更新できる。新規ファイルは非実行モードで作成する必要がある。
 
 ローカル Wrangler と Docker では固定応答のジョブを実行できる。実 Codex のコマンド実行は Linux の内側のサンドボックスを使う。検証した Docker 環境の標準 seccomp 設定では `pivot_root` が拒否されたため、Cloudflare 上では最初のテスト Issue にコマンド実行を伴う小さな変更を指定して確認する。 [Codex のサンドボックス](https://learn.chatgpt.com/docs/sandboxing)
+
+### Issue 調査用の計画実行
+
+信頼された API が ExecutionContext の `mode: "plan"` を設定すると、RunnerJob までモードを引き継ぐ。本文・Agent 出力・リポジトリの指示からモードは変更できない。省略時は従来の実装動作であり、実装ジョブには互換性のため新しいキーを送らない。
+
+計画 checkout は対象リポジトリ、installation、open な Issue（PR ではないこと）と基準 SHA を確認する。実装ラベルと公開用 ruleset は要求しない。Runner のトークンは対象リポジトリの Contents・Issues・Pull requests の読み取りに限る。Agent は checkout があっても read-only sandbox を使い、ネットワーク許可設定を引き継がない。通常の turn RPC を使い、app-server の対話的 Plan 機能は使わない。質問は最終結果に含め、回答待ちでプロセスを維持しない。
+
+結果本文は計画・前提・変更対象・手順・検証方法・質問を記載できる自由文とし、`planPresented` と `needsAnswer` を別途返す。質問だけでも正常終了する。D1 の Run 結果には `kind: "plan"` と両フラグを保存し、本文は Session の Agent メッセージとして保存する。入力は 4,000 文字、本文は 8,000 文字で API と Runner の共有スキーマを使う。計画では staging を実行せず、API の公開受付と公開復旧経路も拒否する。基準 SHA、資格情報の失効、checkout の削除、終了時のコンテナ停止は既存経路を使う。
+
+更新は共有契約を含む Runner イメージを先に用意し、新 Worker と組み合わせてから計画の受付を有効にする。旧 strictObject は未知の mode / plan を拒否するため、旧 Worker / Runner で計画を受付しない。モード省略の保存済み Context / Job はそのまま利用できる。コメント受付・会話継続・実装ラベルへの連携は後続 Issue の担当。

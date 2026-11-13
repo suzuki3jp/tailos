@@ -1,3 +1,4 @@
+import { maxPromptLength } from "@tailos/core/runner";
 import {
   createSession,
   type SessionStore,
@@ -18,7 +19,14 @@ import { type Bindings } from "@/bindings.ts";
 
 const sessionInput = v.strictObject({
   messages: v.pipe(
-    v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(4000))),
+    v.array(
+      v.pipe(
+        v.string(),
+        v.trim(),
+        v.minLength(1),
+        v.maxLength(maxPromptLength),
+      ),
+    ),
     v.minLength(1),
     v.maxLength(20),
   ),

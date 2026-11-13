@@ -50,6 +50,7 @@ async function stagePublication(
   events: RunnerEvent[],
   signal: AbortSignal,
 ) {
+  if (job.mode === "plan") throw new Error("Planning cannot publish");
   const url = new URL("publication", job.refresh.url);
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("Invalid publication URL");
@@ -121,11 +122,14 @@ async function execute(
             },
             undefined,
             diagnostics,
+            input.mode,
           )
-        : {
-            reply: (await agent.run(input, signal, undefined, diagnostics))
-              .reply,
-          };
+        : await agent
+            .run(input, signal, undefined, diagnostics)
+            .then(({ reply, plan }) => ({
+              reply,
+              ...(input.mode === "plan" && { plan }),
+            }));
     signal.throwIfAborted();
     terminal = v.parse(RunnerStatus, {
       status: "succeeded",

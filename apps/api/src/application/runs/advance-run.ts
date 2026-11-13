@@ -27,6 +27,7 @@ type RunOutcome =
       reply: string;
       events: RunnerEvent[];
       publicationResult?: PublicationResult;
+      plan?: Extract<RunnerStatus, { status: "succeeded" }>["plan"];
     }
   | Extract<RunnerStatus, { status: "failed" }>
   | {
@@ -237,9 +238,11 @@ async function storeOutcome(
 
   const storedResult = JSON.stringify({
     version: 1,
-    ...("publicationResult" in outcome && outcome.publicationResult
-      ? outcome.publicationResult
-      : { kind: "completed" }),
+    ...(outcome.plan
+      ? { kind: "plan", ...outcome.plan }
+      : "publicationResult" in outcome && outcome.publicationResult
+        ? outcome.publicationResult
+        : { kind: "completed" }),
   });
   try {
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))

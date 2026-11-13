@@ -1,6 +1,7 @@
 import {
   checkedPublicationFields,
   gitSha,
+  replyText,
   RunnerEvent,
 } from "@tailos/core/runner";
 import * as v from "valibot";
@@ -9,7 +10,7 @@ export const LegacyPublication = v.strictObject({
   kind: v.picklist(["prepared", "pushed"]),
   branch: v.pipe(v.string(), v.maxLength(255)),
   sha: gitSha,
-  reply: v.pipe(v.string(), v.minLength(1), v.maxLength(8000)),
+  reply: replyText,
   events: v.pipe(v.array(RunnerEvent), v.maxLength(20)),
 });
 export const checkedCheckpointSchema = v.strictObject({

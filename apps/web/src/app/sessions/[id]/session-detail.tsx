@@ -12,6 +12,29 @@ const runLabel = {
   failed: "失敗",
 };
 
+function planningLabel(result: string | null) {
+  try {
+    const data: unknown = JSON.parse(result ?? "null");
+    if (
+      !data ||
+      typeof data !== "object" ||
+      !("kind" in data) ||
+      data.kind !== "plan" ||
+      !("planPresented" in data) ||
+      !("needsAnswer" in data) ||
+      typeof data.planPresented !== "boolean" ||
+      typeof data.needsAnswer !== "boolean"
+    )
+      return null;
+    return [
+      data.planPresented ? "計画あり" : "計画未提示",
+      data.needsAnswer ? "回答待ち" : "質問なし",
+    ].join("・");
+  } catch {
+    return null;
+  }
+}
+
 function pullRequestUrl(result: string | null) {
   if (!result) return null;
   try {
@@ -101,6 +124,7 @@ export function SessionDetail({ id }: { id: string }) {
             <ol className="divide-y divide-rule">
               {detail.runs.map((run) => {
                 const url = pullRequestUrl(run.result);
+                const plan = planningLabel(run.result);
                 return (
                   <li key={run.id} className="space-y-2 py-4">
                     <p
@@ -110,6 +134,7 @@ export function SessionDetail({ id }: { id: string }) {
                     >
                       {runLabel[run.status]}
                     </p>
+                    {plan && <p>{plan}</p>}
                     <p className="break-all font-mono text-xs text-muted">
                       {run.id}
                     </p>

@@ -53,6 +53,7 @@ async function repository(t: TestContext) {
     run(
       work: Parameters<typeof runInGitWorkspace>[2],
       stage: Parameters<typeof runInGitWorkspace>[3],
+      mode?: "plan",
     ) {
       return runInGitWorkspace(
         {
@@ -65,6 +66,8 @@ async function repository(t: TestContext) {
         work,
         stage,
         pathToFileURL(seed).href,
+        undefined,
+        mode,
       );
     },
     refs: () => git(seed, "for-each-ref", "--format=%(refname)"),
@@ -184,4 +187,25 @@ test("rejects an invalid headline and changes to trusted Git config before publi
     }, stage),
   ).rejects.toThrow("Git metadata configuration changed");
   expect(stage).not.toHaveBeenCalled();
+});
+
+test("planning reads the base and skips staging, even if an adapter returns changes", async (t) => {
+  const repo = await repository(t);
+  const stage = vi.fn();
+  const plan = { planPresented: false, needsAnswer: true };
+  let workspace = "";
+  await expect(
+    repo.run(
+      async (cwd) => {
+        workspace = cwd;
+        expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
+        await writeFile(join(cwd, "README.md"), "untrusted adapter");
+        return { reply: "Which behavior is desired?", plan };
+      },
+      stage,
+      "plan",
+    ),
+  ).resolves.toEqual({ reply: "Which behavior is desired?", plan });
+  expect(stage).not.toHaveBeenCalled();
+  await expect(readFile(join(workspace, "README.md"))).rejects.toThrow();
 });

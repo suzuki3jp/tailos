@@ -15,3 +15,9 @@
 | [PDR-20261113-009](records/PDR-20261113-009.md) | accepted | notifications.loading-background | 通知 GIF の背景色を favicon の背景色と揃える |
 | [PDR-20261113-010](records/PDR-20261113-010.md) | unverified | notifications.retry-budget | 通知の通算 20 回での打ち切りはプロダクト上の個別承認が未確認 |
 | [PDR-20261113-011](records/PDR-20261113-011.md) | accepted | pdr.self-contained-records | 判断の説明は PDR 本文で完結させ、チャットを保存しない |
+| [PDR-20261114-001](records/PDR-20261114-001.md) | accepted | agent.claude.runtime | Claude Code は Agent SDK から実行する |
+| [PDR-20261114-002](records/PDR-20261114-002.md) | accepted | agent.claude.authentication | Claude 接続は長期 OAuth トークンの貼り付けだけを対象にする |
+| [PDR-20261114-003](records/PDR-20261114-003.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込まず、指示ファイルは Agent に読ませる |
+| [PDR-20261114-004](records/PDR-20261114-004.md) | accepted | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
+| [PDR-20261114-005](records/PDR-20261114-005.md) | accepted | agent.claude.plan-mode-commands | Claude Code の plan mode ではコマンドを実行させない |
+| [PDR-20261114-006](records/PDR-20261114-006.md) | accepted | agent.claude.authentication-failure | Claude の認証が拒否されても接続は自動で無効にしない |

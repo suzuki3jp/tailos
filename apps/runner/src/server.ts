@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import {
   CheckedPublication,
   maxPublicationBytes,
+  maxRunnerJobBytes,
   RunnerJob,
   RunnerStatus,
   type RunnerEvent,
@@ -25,7 +26,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     size += chunk.length;
-    if (size > 32 * 1024) {
+    if (size > maxRunnerJobBytes) {
       request.resume();
       return null;
     }

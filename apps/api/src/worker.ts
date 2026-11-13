@@ -1,3 +1,4 @@
+import { processPlanningInputs } from "@/bootstrap/planning.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { listDueRunIds } from "@/infrastructure/d1/run-recovery.ts";
 import type {
@@ -20,6 +21,7 @@ export default {
     ctx: ExecutionContext,
   ) {
     ctx.waitUntil(deliverIssueNotifications(env));
+    ctx.waitUntil(processPlanningInputs(env));
     const runner = env.RUNNER;
     if (!runner) throw new Error("Missing runner binding");
     ctx.waitUntil(

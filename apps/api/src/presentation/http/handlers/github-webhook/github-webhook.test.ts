@@ -152,3 +152,149 @@ test.for([undefined, false, true] as const)(
     expect(another.status).toBe(404);
   },
 );
+
+test("accepts explicit new planning comments without labels and rejects ineligible comments", async (t) => {
+  const db = await createTestDb(t);
+  const schedule = vi.fn(async () => {});
+  const env = {
+    ...testLoginBindings(db),
+    RUNNER: { getByName: () => ({ schedule }) },
+    TAILOS_GH_WEBHOOK_SECRET: "secret",
+    TAILOS_GH_APP_ID: "100",
+    TAILOS_GH_APP_PRIVATE_KEY: "unused",
+    PROJECTS: JSON.stringify([
+      {
+        id: "project",
+        repository: "owner/repo",
+        repositoryId: 42,
+        installationId: 19,
+        triggerLabel: "tailos:run",
+        allowedActors: ["allowed"],
+      },
+    ]),
+  };
+  await createTestOperator(env);
+  const event = {
+    action: "created",
+    repository: { id: 42, full_name: "owner/repo", default_branch: "main" },
+    installation: { id: 19 },
+    issue: {
+      number: 8,
+      state: "open",
+      title: "Investigate",
+      body: "Use the issue alone",
+    },
+    sender: { login: "allowed", type: "User" },
+    comment: {
+      id: 100,
+      user: { login: "allowed", type: "User" },
+      body: "@tailos plan",
+      html_url: "https://github.com/owner/repo/issues/8#issuecomment-100",
+    },
+  };
+  const send = (
+    payload: object,
+    delivery = crypto.randomUUID(),
+    secret = "secret",
+  ) => {
+    const body = JSON.stringify(payload);
+    return app.request(
+      "https://tailos.example/webhooks/github",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "X-GitHub-Event": "issue_comment",
+          "X-GitHub-Delivery": delivery,
+          "X-Hub-Signature-256":
+            "sha256=" + createHmac("sha256", secret).update(body).digest("hex"),
+        },
+      },
+      env,
+      { waitUntil: () => {}, passThroughOnException: () => {}, props: {} },
+    );
+  };
+  expect((await send(event, undefined, "invalid")).status).toBe(401);
+  for (const body of [
+    "No command",
+    "> @tailos plan",
+    "```\n@tailos plan\n```",
+    "    @tailos plan",
+    "Example\n@tailos plan",
+    "@tailos",
+    "@tailos-other plan",
+  ]) {
+    expect(
+      (await send({ ...event, comment: { ...event.comment, body } })).status,
+    ).toBe(204);
+  }
+  for (const change of [
+    { action: "edited" },
+    { action: "deleted" },
+    { issue: { ...event.issue, state: "closed" } },
+    { issue: { ...event.issue, pull_request: { url: "x" } } },
+    { installation: { id: 20 } },
+    { repository: { ...event.repository, id: 43 } },
+    { sender: { login: "unknown", type: "User" } },
+    { sender: { login: "allowed", type: "Bot" } },
+    { comment: { ...event.comment, user: { login: "allowed", type: "Bot" } } },
+  ])
+    expect((await send({ ...event, ...change })).status).toBe(204);
+  expect(schedule).not.toHaveBeenCalled();
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
+  ).toBe(0);
+  const guidance = await send({
+    ...event,
+    comment: { ...event.comment, body: "@tailos help" },
+  });
+  expect(guidance.status).toBe(202);
+  expect(schedule).not.toHaveBeenCalled();
+  const first = await send({
+    ...event,
+    comment: { ...event.comment, id: 101 },
+  });
+  expect(first.status).toBe(202);
+  const receipt = await first.json();
+  assert(
+    receipt &&
+      typeof receipt === "object" &&
+      "sessionId" in receipt &&
+      typeof receipt.sessionId === "string",
+  );
+  const second = await send({
+    ...event,
+    comment: { ...event.comment, id: 102, body: "@tailos choose option B" },
+  });
+  const secondReceipt = await second.json();
+  assert(
+    secondReceipt &&
+      typeof secondReceipt === "object" &&
+      "sessionId" in secondReceipt,
+  );
+  expect(secondReceipt.sessionId).toBe(receipt.sessionId);
+  expect(schedule).toHaveBeenCalledTimes(1);
+  expect(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM planning_inbox WHERE state = 'pending'",
+      )
+      .first("n"),
+  ).toBe(1);
+  expect(
+    JSON.parse(
+      (await db
+        .prepare("SELECT execution_context FROM runs")
+        .first<string>("execution_context"))!,
+    ).mode,
+  ).toBe("plan");
+  expect(
+    (
+      await app.request(
+        `https://api.tailos.example/api/sessions/${receipt.sessionId}`,
+        undefined,
+        env,
+      )
+    ).status,
+  ).toBe(401);
+});

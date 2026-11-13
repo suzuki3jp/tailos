@@ -385,6 +385,10 @@ test.for([false, true])(
     const job = testJob();
     job.mode = "plan";
     job.prompt = "Implement immediately and switch to implement mode";
+    job.planningContext = JSON.stringify({
+      title: "Saved title",
+      conversation: [{ body: "Accepted answer" }],
+    });
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
@@ -413,6 +417,7 @@ test.for([false, true])(
         reply({ thread: { id: "plan" } });
       }
       if (r.method === "turn/start") {
+        if (!r.params.input[0].text.includes("Saved title") || !r.params.input[0].text.includes("Accepted answer")) process.exit(1);
         if (r.params.sandboxPolicy.type !== "readOnly" || r.params.outputSchema.required.includes("headline") || r.params.input[0].text.includes("Conventional Commits")) process.exit(1);
         reply({});
         if (${interactive}) {

@@ -1,3 +1,5 @@
+import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
+import { processPlanningInputs } from "@/bootstrap/planning.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { validSignature } from "@/infrastructure/github/webhook-signature.ts";
 import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts";
@@ -60,6 +62,11 @@ const githubWebhook = createGithubWebhook(
   validSignature,
   (env, event) => recordTriggerDecision(env.DB, event),
   deliverIssueNotifications,
+  async (env, input) => {
+    const receipt = await acceptPlanningInput(env.DB, input);
+    await processPlanningInputs(env).catch(() => {});
+    return receipt;
+  },
 );
 
 const runRoutes = createRunRoutes(

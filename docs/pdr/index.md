@@ -15,3 +15,4 @@
 | [PDR-20261113-009](records/PDR-20261113-009.md) | accepted | notifications.loading-background | 通知 GIF の背景色を favicon の背景色と揃える |
 | [PDR-20261113-010](records/PDR-20261113-010.md) | unverified | notifications.retry-budget | 通知の通算 20 回での打ち切りはプロダクト上の個別承認が未確認 |
 | [PDR-20261113-011](records/PDR-20261113-011.md) | accepted | pdr.self-contained-records | 判断の説明は PDR 本文で完結させ、チャットを保存しない |
+| [PDR-20261113-012](records/PDR-20261113-012.md) | accepted | planning.issue-conversation | Issue の明示コマンドで計画会話を永続化する |

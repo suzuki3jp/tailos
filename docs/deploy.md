@@ -58,7 +58,7 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 ## GitHub App
 
-対象リポジトリに App をインストールし、Repository permissions を **Issues: Read and write**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://api.tailos.app/webhooks/github` とし、`Issues` イベントを購読する。
+対象リポジトリに App をインストールし、Repository permissions を **Issues: Read and write**、**Contents: Read and write**、**Pull requests: Read and write** に設定する。Webhook URL は `https://api.tailos.app/webhooks/github` とし、`Issues` と `Issue comment` イベントを購読する。
 
 既存インストールでは App 設定の権限変更後、GitHub のインストール設定で追加権限のリクエストを確認して承認する。未承認の間は通知が permission 状態で停止するため、承認後に該当する `issue_notifications` の `error_category` を NULL、`next_attempt_at` を 0 に戻して再送する。通知用の書き込みトークンは API Worker 内だけで使用し、使用後に失効させる。
 
@@ -91,4 +91,15 @@ Agent のコマンドによるネットワーク利用は既定で無効。依�
 
 Codex に渡す出力スキーマには文字列の長さ制約を付けず、秘密情報を除去した返答を Runner で検証する。長さは共有スキーマに合わせて UTF-16 コード単位で数える。本文が 8,000 を超えた場合は切り詰めず、同じ会話で要点と質問を保持して 7,000 以下に要約するよう最大 2 回再要求する。再要求は読み取り専用で行い、追加の調査・検証・ファイル変更は指示しない。Run の残り時間が 5 秒未満、または 2 回の再要求後も上限を超える場合、計画モードと checkout なしの実行は失敗として終了する。実装 checkout がある場合は、再要求開始に残り 60 秒以上を必要とし、各ターンの待機は最大 30 秒とする。公開処理のため少なくとも 30 秒を残す。要約の回数超過・時間不足・タイムアウト・応答不備では、完成した変更を維持し、要約を取得できなかったことを明示する案内文と、最初の回答の headline を使って公開処理を続ける。再要求のタイムアウト時は使い捨ての app-server を終了し、実行中のターンも停止する。
 
-更新は共有契約を含む Runner イメージを先に用意し、新 Worker と組み合わせてから計画の受付を有効にする。旧 strictObject は未知の mode / plan を拒否するため、旧 Worker / Runner で計画を受付しない。モード省略の保存済み Context / Job はそのまま利用できる。コメント受付・会話継続・実装ラベルへの連携は後続 Issue の担当。
+更新は共有契約を含む Runner イメージを先に用意し、新 Worker と組み合わせてから計画の受付を有効にする。旧 strictObject は未知の mode / plan を拒否するため、旧 Worker / Runner で計画を受付しない。モード省略の保存済み Context / Job はそのまま利用できる。コメントの計画受付・会話継続には新しい migration と `planningContext` に対応した Runner / Worker を組み合わせる。実装ラベルへの計画引継ぎは後続 Issue の担当。
+
+
+### Issue 内で計画を相談する
+
+GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、PROJECTS の repository ID・installation ID・allowedActors の設定も必要。
+
+許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。タイトル・本文を使った計画または質問が返るので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で再調査する。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は引き続き `tailos:run` ラベルから開始し、コメントでは起動しない。
+
+新 migration は planning_issues / planning_inbox / planning_deliveries / planning_snapshots / planning_replies と終了時の SQL trigger を追加する。Run の状態画像と計画本文は別コメントに投稿する。Session の閲覧は従来どおり運用者だけに許可するが、返信本文は Issue の閲覧者に公開される。
+
+受付後に停止しても、pending inbox の次 Run 作成、queued Run の起動、期限切れ通知リースの再取得を Cron が回収する。実行中の追記は捨てずに順次実行する。返信に失敗しても Agent を再実行しない。送信できない場合は planning_replies の state / attempts / error_category / next_attempt_at / lease_until と対応 Run を確認する。permission / permanent は自動再試行を停止して後続の返信を解放する。入力超過や取得失敗は Run の error_code と返信に残る。planning_snapshots から各 Run の Issue・SHA・対象入力を追える。会話全体が既存 Runner ジョブの 32 KiB 上限に収まらない場合は全文を保存したまま明示的に失敗する。

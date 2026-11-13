@@ -323,3 +323,84 @@ export const issueNotifications = sqliteTable(
   },
   (t) => [index("issue_notification_due").on(t.nextAttemptAt)],
 );
+
+export const planningIssues = sqliteTable("planning_issues", {
+  scope: text().primaryKey().notNull(),
+  sessionId: text("session_id")
+    .notNull()
+    .unique()
+    .references(() => sessions.id),
+  started: integer().notNull().default(0),
+  latestRunId: text("latest_run_id").references(() => runs.id),
+  latestPlanRunId: text("latest_plan_run_id").references(() => runs.id),
+});
+
+export const planningInbox = sqliteTable(
+  "planning_inbox",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    scope: text()
+      .notNull()
+      .references(() => planningIssues.scope),
+    commentId: integer("comment_id").notNull(),
+    actor: text().notNull(),
+    url: text().notNull(),
+    body: text().notNull(),
+    executionContext: text("execution_context").notNull(),
+    timeoutMs: integer("timeout_ms").notNull(),
+    receivedAt: integer("received_at").notNull(),
+    state: text({
+      enum: ["pending", "assigned", "completed", "guidance"],
+    }).notNull(),
+    runId: text("run_id")
+      .unique()
+      .references(() => runs.id),
+  },
+  (t) => [
+    unique("planning_comment").on(t.scope, t.commentId),
+    index("planning_pending").on(t.state, t.id),
+  ],
+);
+
+export const planningDeliveries = sqliteTable("planning_deliveries", {
+  deliveryId: text("delivery_id").primaryKey().notNull(),
+  inputId: integer("input_id")
+    .notNull()
+    .references(() => planningInbox.id),
+});
+
+export const planningSnapshots = sqliteTable("planning_snapshots", {
+  runId: text("run_id")
+    .primaryKey()
+    .notNull()
+    .references(() => runs.id),
+  inputId: integer("input_id")
+    .notNull()
+    .references(() => planningInbox.id),
+  title: text().notNull(),
+  body: text().notNull(),
+  baseSha: text("base_sha").notNull(),
+  conversation: text().notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const planningReplies = sqliteTable(
+  "planning_replies",
+  {
+    inputId: integer("input_id")
+      .primaryKey()
+      .notNull()
+      .references(() => planningInbox.id),
+    body: text().notNull(),
+    commentId: integer("comment_id"),
+    state: text({ enum: ["pending", "sent", "failed"] })
+      .notNull()
+      .default("pending"),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    lease: text(),
+    leaseUntil: integer("lease_until"),
+    errorCategory: text("error_category"),
+  },
+  (t) => [index("planning_reply_due").on(t.nextAttemptAt)],
+);

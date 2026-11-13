@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/app/api";
-import { RequestState } from "@/app/request-state";
+import { RequestState } from "@/shared/ui/request-state";
+import { sessionQueryOptions } from "../api/queries";
 
 const authorLabel = { agent: "Codex", automation: "GitHub", user: "ユーザー" };
 const runLabel = {
@@ -59,26 +59,7 @@ function pullRequestUrl(result: string | null) {
 }
 
 export function SessionDetail({ id }: { id: string }) {
-  const session = useQuery({
-    queryKey: ["sessions", id],
-    queryFn: async ({ signal }) => {
-      const response = await api.sessions[":id"].$get(
-        { param: { id } },
-        { init: { signal } },
-      );
-      return response.ok ? await response.json() : { error: response.status };
-    },
-    refetchInterval: (query) => {
-      const detail = query.state.data;
-      return detail &&
-        "runs" in detail &&
-        detail.runs.some(
-          (run) => run.status === "queued" || run.status === "running",
-        )
-        ? 5000
-        : false;
-    },
-  });
+  const session = useQuery(sessionQueryOptions(id));
   const detail = session.data;
   return (
     <section className="space-y-7">
@@ -92,6 +73,11 @@ export function SessionDetail({ id }: { id: string }) {
         </p>
       ) : !detail || "error" in detail ? (
         <RequestState
+          unauthorized={
+            <a href="/login" className="action action-primary">
+              GitHub でログイン
+            </a>
+          }
           status={detail?.error}
           missing="Session が見つかりません。"
           retry={() => void session.refetch()}

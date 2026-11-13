@@ -1,5 +1,5 @@
 import handler from "vinext/server/fetch-handler";
-import { apiOrigin } from "@/api-origin.ts";
+import { apiOrigin } from "@/shared/config";
 
 export default {
   async fetch(request: Request, env, ctx) {

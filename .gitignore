@@ -24,3 +24,6 @@ apps/api/wrangler.deploy.*.jsonc
 
 .next/
 apps/web/next-env.d.ts
+
+# PDR indexes are derived from Markdown in each checkout.
+.cache/pdr/

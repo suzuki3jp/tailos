@@ -107,7 +107,12 @@ export const ExecutionContext = v.variant("engine", [
   }),
 ]);
 
+export const maxRunnerJobBytes = 32 * 1024;
+
 const job = {
+  planningContext: v.optional(
+    v.pipe(v.string(), v.maxLength(maxRunnerJobBytes)),
+  ),
   mode: v.optional(ExecutionMode),
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),

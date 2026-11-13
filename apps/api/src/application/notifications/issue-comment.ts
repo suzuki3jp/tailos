@@ -3,6 +3,8 @@ import type { RepositoryTarget } from "@tailos/core/runner";
 export type NotificationState = "processing" | "succeeded" | "failed";
 export type IssueNotification = {
   run_id: string;
+  input_id?: number;
+  reply_body?: string;
   session_id: string;
   target: string;
   comment_id: number | null;
@@ -19,10 +21,28 @@ export class NotificationError extends Error {
     super(category);
   }
 }
+export function notificationMarker(
+  n: Pick<IssueNotification, "run_id" | "input_id">,
+) {
+  return n.input_id === undefined
+    ? `<!-- tailos:run:${n.run_id}:v1 -->`
+    : `<!-- tailos:plan:${n.run_id}:input:${n.input_id}:reply:v1 -->`;
+}
+
 export function commentBody(
   origin: string,
-  n: Pick<IssueNotification, "run_id" | "session_id" | "desired_state">,
+  n: Pick<
+    IssueNotification,
+    "run_id" | "session_id" | "desired_state" | "input_id" | "reply_body"
+  >,
 ) {
+  if (n.reply_body !== undefined) {
+    // Escape all mentions, including team mentions and copied command examples.
+    const text = n.reply_body
+      .replaceAll("@", "@\u200b")
+      .replaceAll("<!-- tailos:", "&lt;!-- tailos:");
+    return `${text}\n\n[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n${notificationMarker(n)}`;
+  }
   const state = n.desired_state;
   const alt =
     state === "processing" ? "処理中" : state === "succeeded" ? "完了" : "失敗";
@@ -57,7 +77,7 @@ export async function sendIssueNotifications(
     try {
       const id = await publish(
         JSON.parse(n.target),
-        `<!-- tailos:run:${n.run_id}:v1 -->`,
+        notificationMarker(n),
         commentBody(origin, n),
         n.comment_id,
       );

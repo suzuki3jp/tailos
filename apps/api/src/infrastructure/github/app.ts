@@ -10,6 +10,8 @@ import * as v from "valibot";
 
 const repoSchema = v.object({ id: v.number(), default_branch: v.string() });
 const issueSchema = v.object({
+  title: v.optional(v.string()),
+  body: v.optional(v.nullable(v.string())),
   state: v.string(),
   pull_request: v.optional(v.unknown()),
   labels: v.array(v.object({ name: v.string() })),
@@ -92,6 +94,7 @@ export type GitHubCheckout = {
   expiresAt: number;
   baseSha: string;
   branch: string;
+  issueSnapshot?: { title: string; body: string };
 };
 
 export const workBranchFor = (target: RepositoryTarget, runId: string) =>
@@ -322,6 +325,13 @@ export class GitHubApp {
             "The default branch must have active creation, update and deletion restrictions",
           );
       }
+      const issueSnapshot =
+        mode === "plan"
+          ? v.parse(
+              v.object({ title: v.string(), body: v.nullable(v.string()) }),
+              issue,
+            )
+          : undefined;
       const base = v.parse(
         refSchema,
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
@@ -332,6 +342,12 @@ export class GitHubApp {
           issues: "read",
           pull_requests: "read",
         })),
+        ...(issueSnapshot && {
+          issueSnapshot: {
+            title: issueSnapshot.title,
+            body: issueSnapshot.body ?? "",
+          },
+        }),
         baseSha: base.object.sha,
         branch: workBranchFor(target, runId),
       };

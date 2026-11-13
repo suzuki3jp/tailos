@@ -1,4 +1,8 @@
 import {
+  dispatchPlanningInputs,
+  savePlanningSnapshot,
+} from "@/infrastructure/d1/planning.ts";
+import {
   beginPublicationReconciliation,
   stageRunPublication,
 } from "@/infrastructure/d1/run-publication.ts";
@@ -22,6 +26,7 @@ import {
 import { DurableObject } from "cloudflare:workers";
 import {
   FileChanges,
+  maxRunnerJobBytes,
   RunnerStatus,
   type CheckedPublication,
   type ExecutionContext,
@@ -196,6 +201,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
         );
     } finally {
       await this.revokeRepositoryGrant(runId);
+      const next = await dispatchPlanningInputs(this.env.DB);
+      await Promise.all(
+        next.map((id) => this.env.RUNNER?.getByName(id).schedule(id)),
+      );
     }
   }
 
@@ -509,6 +518,27 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       try {
+        if (request.context.mode === "plan" && checkout.issueSnapshot) {
+          const snapshot = await savePlanningSnapshot(
+            this.env.DB,
+            request.runId,
+            checkout.issueSnapshot,
+            checkout.baseSha,
+          );
+          if (snapshot) {
+            checkout.baseSha = snapshot.baseSha;
+            job.prompt = snapshot.prompt;
+            job.planningContext = snapshot.context;
+          }
+        }
+      } catch {
+        await github.revoke(checkout.token).catch(() => {});
+        return {
+          status: "failed",
+          errorCode: "planning_snapshot_failed",
+        } as const;
+      }
+      try {
         await this.ctx.storage.put("repositoryGrant", {
           value: await seal(
             checkout.token,
@@ -545,6 +575,15 @@ export class RunnerContainer extends DurableObject<Bindings> {
         agentNetworkAccess: target.agentNetworkAccess ?? false,
       };
     }
+    if (
+      job.mode === "plan" &&
+      new TextEncoder().encode(JSON.stringify(job)).byteLength >
+        maxRunnerJobBytes
+    )
+      return {
+        status: "failed",
+        errorCode: "planning_input_too_large",
+      } as const;
     const port = await observeRun(this.env.DB, request.runId, "container", () =>
       this.startRunner(job.deadlineAt, job.engine === "codex"),
     );

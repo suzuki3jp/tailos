@@ -16,3 +16,5 @@
 | [PDR-20261113-010](records/PDR-20261113-010.md) | unverified | notifications.retry-budget | 通知の通算 20 回での打ち切りはプロダクト上の個別承認が未確認 |
 | [PDR-20261113-011](records/PDR-20261113-011.md) | accepted | pdr.self-contained-records | 判断の説明は PDR 本文で完結させ、チャットを保存しない |
 | [PDR-20261113-012](records/PDR-20261113-012.md) | accepted | planning.issue-conversation | Issue の明示コマンドで計画会話を永続化する |
+| [PDR-20261114-001](records/PDR-20261114-001.md) | rejected | planning.issue-conversation | 計画会話は必須入力を保持し古い履歴をバイト予算内で渡す |
+| [PDR-20261114-002](records/PDR-20261114-002.md) | accepted | runner.github-context-acquisition | Issue 本文の送信を当面維持し将来は Agent が GitHub から取得する |

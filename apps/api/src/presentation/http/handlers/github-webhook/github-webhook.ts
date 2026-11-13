@@ -7,7 +7,7 @@ import type {
   PlanningAdmission,
   PlanningReceipt,
 } from "@/application/triggers/planning.ts";
-import type { ExecutionContext } from "@tailos/core/runner";
+import { githubIssueDigest, type ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import { projectsSchema } from "@/application/triggers/projects.ts";
@@ -149,6 +149,9 @@ export function createGithubWebhook(
         repositoryId: target.repositoryId,
         installationId: target.installationId,
         issueNumber: data.issue.number,
+        ...(normalized.kind === "label" && {
+          issueContentHash: await githubIssueDigest(data.issue),
+        }),
         defaultBranch: data.repository.default_branch,
         triggerLabel: target.triggerLabel,
         agentNetworkAccess: target.agentNetworkAccess,

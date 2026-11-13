@@ -6,6 +6,7 @@ import {
 } from "@/infrastructure/auth/testing.ts";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import app from "@/bootstrap/http.ts";
+import { githubIssueDigest } from "@tailos/core/runner";
 import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
 import {
   acceptPlanningInput,
@@ -126,6 +127,9 @@ test.for([undefined, false, true] as const)(
       .bind(data.runId)
       .first<string>("execution_context");
     expect(JSON.parse(run ?? "null").connectionId).toBe(`codex/${operator.id}`);
+    expect(JSON.parse(run ?? "null").repository.issueContentHash).toBe(
+      await githubIssueDigest(event.issue),
+    );
     expect(JSON.parse(run ?? "null").repository.agentNetworkAccess).toBe(
       agentNetworkAccess ?? false,
     );

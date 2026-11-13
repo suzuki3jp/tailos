@@ -15,6 +15,19 @@ export const replyText = v.pipe(
 );
 
 const positiveId = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
+const sha256 = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
+export async function githubIssueDigest(issue: {
+  title: string;
+  body: string | null;
+}) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify([issue.title, issue.body ?? ""]),
+  );
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 const repositoryName = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
@@ -77,6 +90,7 @@ export const RepositoryTarget = v.strictObject({
   repositoryId: positiveId,
   installationId: positiveId,
   issueNumber: positiveId,
+  issueContentHash: v.optional(sha256),
   defaultBranch: branch,
   triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
   agentNetworkAccess: v.optional(v.boolean()),
@@ -136,7 +150,11 @@ export const RunnerJob = v.variant("engine", [
     ...job,
     engine: v.literal("codex"),
     githubContext: v.optional(
-      v.strictObject({ kind: v.literal("issue"), number: positiveId }),
+      v.strictObject({
+        kind: v.literal("issue"),
+        number: positiveId,
+        contentHash: v.optional(sha256),
+      }),
     ),
     access: CodexAccess,
     checkout: v.optional(

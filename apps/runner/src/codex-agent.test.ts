@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { expect, test, vi, type TestContext } from "vitest";
-import type { RunnerJob } from "@tailos/core/runner";
+import { githubIssueDigest, type RunnerJob } from "@tailos/core/runner";
 import { ValiError } from "valibot";
 import { AgentSandboxUnavailable } from "@/agent.ts";
 import { createCodexAgent } from "@/codex-agent.ts";
@@ -453,9 +453,17 @@ test.for(["plan", "implement"] as const)(
       "skipped",
       "failed",
       "partial",
+      "edited",
     ] as const) {
       const job = replyJob(mode);
-      job.githubContext = { kind: "issue", number: 17 };
+      job.githubContext = {
+        kind: "issue",
+        number: 17,
+        contentHash: await githubIssueDigest({
+          title: "Fetched private title",
+          body: "Fetched private body" + "長".repeat(32_000),
+        }),
+      };
       job.prompt = "Work on the assigned issue";
       let fetches = 0;
       const agent = createCodexAgent(
@@ -488,7 +496,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   }
   if (r.method === "turn/start") {
     const text = r.params.input[0].text;
-    assert.ok(text.includes(JSON.stringify({ github: { kind: "issue", number: 17 } })));
+    assert.ok(text.includes(JSON.stringify(${JSON.stringify({ github: job.githubContext })})));
     assert.ok(!text.includes("Fetched private title") && !text.includes("Fetched private body"));
     respond({});
     if (${outcome === "skipped"}) complete();
@@ -525,7 +533,10 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
           return Response.json({
             number: 17,
             title: "Fetched private title",
-            body: "Fetched private body" + "長".repeat(32_000),
+            body:
+              outcome === "edited"
+                ? "Unapproved edit"
+                : "Fetched private body" + "長".repeat(32_000),
             state: "open",
             html_url: "https://github.com/owner/repo/issues/17",
           });

@@ -1,4 +1,4 @@
-import type { RunnerJob } from "@tailos/core/runner";
+import { githubIssueDigest, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 
 type Checkout = NonNullable<
@@ -54,6 +54,8 @@ const toolResult = (success: boolean, text: string) => ({
   contentItems: [{ type: "inputText", text }],
 });
 
+class GitHubLookupFailed extends Error {}
+
 // Only the assigned source is retained: pagination sees one immutable item,
 // while arbitrary lookups cannot grow a per-turn cache without bound.
 export function createGitHubReader(
@@ -61,8 +63,10 @@ export function createGitHubReader(
   signal: AbortSignal,
   http: typeof fetch,
   sourceNumber?: number,
+  sourceContentHash?: string,
 ) {
   let source: v.InferOutput<typeof itemSchema> | undefined;
+  let pendingSource: Promise<v.InferOutput<typeof itemSchema>> | undefined;
   const ranges: Array<{ start: number; end: number }> = [];
   let sourceLength = 0;
   return {
@@ -90,7 +94,7 @@ export function createGitHubReader(
         signal.throwIfAborted();
         const isSource = kind === "issue" && number === sourceNumber;
         let item = isSource ? source : undefined;
-        if (!item) {
+        const load = async () => {
           const response = await http(url, {
             method: "GET",
             redirect: "error",
@@ -104,17 +108,37 @@ export function createGitHubReader(
           });
           if (!response.ok) {
             await response.body?.cancel();
-            return toolResult(
-              false,
+            throw new GitHubLookupFailed(
               `GitHub item unavailable (HTTP ${response.status})`,
             );
           }
-          item = v.parse(itemSchema, await response.json());
-          if (item.number !== number)
-            return toolResult(false, "GitHub returned a different item");
-          if (kind === "issue" && item.pull_request !== undefined)
-            return toolResult(false, "This number refers to a pull request");
-          if (isSource) source = item;
+          const loaded = v.parse(itemSchema, await response.json());
+          if (loaded.number !== number)
+            throw new GitHubLookupFailed("GitHub returned a different item");
+          if (kind === "issue" && loaded.pull_request !== undefined)
+            throw new GitHubLookupFailed(
+              "This number refers to a pull request",
+            );
+          if (
+            isSource &&
+            sourceContentHash &&
+            (await githubIssueDigest(loaded)) !== sourceContentHash
+          )
+            throw new GitHubLookupFailed(
+              "The assigned issue changed after authorization; its content cannot be used for this run",
+            );
+          return loaded;
+        };
+        if (!item) {
+          if (isSource) {
+            pendingSource ??= load();
+            try {
+              item = await pendingSource;
+              source = item;
+            } finally {
+              pendingSource = undefined;
+            }
+          } else item = await load();
         }
 
         const bodyLimit = 16_000;
@@ -124,13 +148,27 @@ export function createGitHubReader(
           offset > 0 &&
           /[\uD800-\uDBFF]/.test(text[offset - 1] ?? "") &&
           /[\uDC00-\uDFFF]/.test(text[offset] ?? "");
-        if (bodyOffset > text.length || splitsPair(bodyOffset))
+        if (bodyOffset > text.length)
           return toolResult(false, "Body offset is beyond the end of the item");
+        if (splitsPair(bodyOffset))
+          return toolResult(
+            false,
+            "Body offset splits a surrogate pair; use nextBodyOffset",
+          );
         let end = Math.min(bodyOffset + bodyLimit, text.length);
         if (splitsPair(end)) end--;
         if (isSource) {
           sourceLength = text.length;
           ranges.push({ start: bodyOffset, end });
+          ranges.sort((a, b) => a.start - b.start);
+          for (let i = 1; i < ranges.length;) {
+            const previous = ranges[i - 1]!;
+            const current = ranges[i]!;
+            if (current.start <= previous.end) {
+              previous.end = Math.max(previous.end, current.end);
+              ranges.splice(i, 1);
+            } else i++;
+          }
         }
         return toolResult(
           true,
@@ -143,8 +181,13 @@ export function createGitHubReader(
             nextBodyOffset: end < text.length ? end : null,
           }),
         );
-      } catch {
-        return toolResult(false, "GitHub item lookup failed");
+      } catch (error) {
+        return toolResult(
+          false,
+          error instanceof GitHubLookupFailed
+            ? error.message
+            : "GitHub item lookup failed",
+        );
       }
     },
   };

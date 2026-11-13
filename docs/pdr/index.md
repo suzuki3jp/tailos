@@ -18,4 +18,5 @@
 | [PDR-20261113-012](records/PDR-20261113-012.md) | accepted | planning.issue-conversation | Issue の明示コマンドで計画会話を永続化する |
 | [PDR-20261114-001](records/PDR-20261114-001.md) | rejected | planning.issue-conversation | 計画会話は必須入力を保持し古い履歴をバイト予算内で渡す |
 | [PDR-20261114-002](records/PDR-20261114-002.md) | superseded | runner.github-context-acquisition | Issue 本文の送信を当面維持し将来は Agent が GitHub から取得する |
-| [PDR-20261114-003](records/PDR-20261114-003.md) | accepted | runner.github-context-acquisition | Issue の参照情報を JSON で渡し Agent が GitHub から本文を取得する |
+| [PDR-20261114-003](records/PDR-20261114-003.md) | superseded | runner.github-context-acquisition | Issue の参照情報を JSON で渡し Agent が GitHub から本文を取得する |
+| [PDR-20261114-004](records/PDR-20261114-004.md) | accepted | runner.github-context-acquisition | Issue の参照情報と内容ハッシュを渡し Agent が GitHub から取得する |

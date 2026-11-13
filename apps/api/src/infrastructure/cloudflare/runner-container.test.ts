@@ -709,7 +709,11 @@ test.for([
         });
       const job = JSON.parse(String(init.body));
       expect(job.mode).toBe("plan");
-      expect(job.githubContext).toEqual({ kind: "issue", number: 3 });
+      expect(job.githubContext).toMatchObject({
+        kind: "issue",
+        number: 3,
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
       expect(JSON.parse(job.planningContext)).not.toHaveProperty("title");
       expect(JSON.parse(job.planningContext)).not.toHaveProperty("body");
       expect(String(init.body)).not.toContain("Current title");

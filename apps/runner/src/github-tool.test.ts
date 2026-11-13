@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { createGitHubReader } from "@/github-tool.ts";
+import { githubIssueDigest } from "@tailos/core/runner";
 
 const checkout = {
   repository: "owner/repo",
@@ -33,6 +34,15 @@ test("reads every Unicode-safe body page from one immutable assigned issue", asy
     17,
   );
   expect(reader.isSourceRead()).toBe(false);
+  const invalidOffset = await reader.read({
+    kind: "issue",
+    number: 17,
+    bodyOffset: 16_000,
+  });
+  expect(invalidOffset.success).toBe(false);
+  expect(invalidOffset.contentItems[0]!.text).toContain(
+    "splits a surrogate pair",
+  );
   let offset: number | null = 0;
   let reconstructed = "";
   while (offset !== null) {
@@ -81,6 +91,28 @@ test("cannot satisfy assigned-issue coverage with unrelated reads, gaps or inval
   expect(reader.isSourceRead()).toBe(true);
 });
 
+test("concurrent source reads share one lookup and immutable body", async () => {
+  let release: (response: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  const http = vi.fn<typeof fetch>(() => pending);
+  const reader = createGitHubReader(
+    checkout,
+    AbortSignal.timeout(5000),
+    http,
+    17,
+  );
+  const first = reader.read({ kind: "issue", number: 17 });
+  const second = reader.read({ kind: "issue", number: 17, bodyOffset: 16_000 });
+  expect(http).toHaveBeenCalledOnce();
+  const body = "a".repeat(32_000);
+  release(Response.json({ ...item, body }));
+  const pages = (await Promise.all([first, second])).map(contents);
+  expect(pages.map((page) => page.body).join("")).toBe(body);
+  expect(reader.isSourceRead()).toBe(true);
+});
+
 test.for([null, ""])(
   "an empty issue body is still a completed lookup (%s)",
   async (body) => {
@@ -126,3 +158,34 @@ test("failed and malformed lookups do not satisfy source reading and can be retr
   expect((await reader.read({ kind: "issue", number: 17 })).success).toBe(true);
   expect(reader.isSourceRead()).toBe(true);
 });
+
+test.for(["title", "body"] as const)(
+  "rejects a changed authorized issue %s without caching it",
+  async (field) => {
+    let changed = true;
+    const http = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        changed ? { ...item, [field]: "Unapproved replacement" } : item,
+      ),
+    );
+    const reader = createGitHubReader(
+      checkout,
+      AbortSignal.timeout(5000),
+      http,
+      17,
+      await githubIssueDigest(item),
+    );
+    const rejected = await reader.read({ kind: "issue", number: 17 });
+    expect(rejected.success).toBe(false);
+    expect(rejected.contentItems[0]!.text).toContain(
+      "changed after authorization",
+    );
+    expect(reader.isSourceRead()).toBe(false);
+    changed = false;
+    expect((await reader.read({ kind: "issue", number: 17 })).success).toBe(
+      true,
+    );
+    expect(reader.isSourceRead()).toBe(true);
+    expect(http).toHaveBeenCalledTimes(2);
+  },
+);

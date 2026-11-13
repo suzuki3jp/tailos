@@ -169,7 +169,13 @@ async function runTurn(
     throw new Error("GitHub issue context requires a repository checkout");
   }
   const githubReader = job.checkout
-    ? createGitHubReader(job.checkout, signal, http, job.githubContext?.number)
+    ? createGitHubReader(
+        job.checkout,
+        signal,
+        http,
+        job.githubContext?.number,
+        job.githubContext?.contentHash,
+      )
     : undefined;
   const abort = () => rpc.close();
   signal.addEventListener("abort", abort, { once: true });

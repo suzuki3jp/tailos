@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { githubIssueDigest } from "@tailos/core/runner";
 import {
   planningPrompt,
   type PlanningAdmission,
@@ -197,6 +198,7 @@ export async function savePlanningSnapshot(
   return (
     snapshot && {
       baseSha: snapshot.baseSha,
+      contentHash: await githubIssueDigest(snapshot),
       prompt: planningPrompt,
       context: JSON.stringify({
         baseSha: snapshot.baseSha,

@@ -1,3 +1,4 @@
+import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { listDueRunIds } from "@/infrastructure/d1/run-recovery.ts";
 import type {
   ExecutionContext,
@@ -18,6 +19,7 @@ export default {
     env: Bindings,
     ctx: ExecutionContext,
   ) {
+    ctx.waitUntil(deliverIssueNotifications(env));
     const runner = env.RUNNER;
     if (!runner) throw new Error("Missing runner binding");
     ctx.waitUntil(

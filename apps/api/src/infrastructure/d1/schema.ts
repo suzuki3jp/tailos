@@ -301,3 +301,25 @@ export const authVerifications = sqliteTable(
   },
   (t) => [index("auth_verification_identifier").on(t.identifier)],
 );
+
+// Migrations maintain issue_notification_terminal: every terminal runs.status
+// transition advances desired_state/version atomically with the run update.
+export const issueNotifications = sqliteTable(
+  "issue_notifications",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .notNull()
+      .references(() => runs.id),
+    commentId: integer("comment_id"),
+    desiredState: text("desired_state").notNull().default("processing"),
+    version: integer().notNull().default(1),
+    appliedVersion: integer("applied_version").notNull().default(0),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    lease: text(),
+    leaseUntil: integer("lease_until"),
+    errorCategory: text("error_category"),
+  },
+  (t) => [index("issue_notification_due").on(t.nextAttemptAt)],
+);

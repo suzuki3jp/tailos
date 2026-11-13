@@ -52,6 +52,7 @@ export function createGithubWebhook(
     env: Bindings,
     event: TriggerDiagnostic,
   ) => Promise<void> = async () => {},
+  notify: (env: Bindings) => Promise<void> = async () => {},
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -201,6 +202,7 @@ export function createGithubWebhook(
       timeoutMs: target.maxRunMinutes * 60_000,
       diagnostics: c.get("diagnosticRequest"),
     });
+    c.executionCtx.waitUntil(notify(c.env));
     await scheduleRun(c.env)?.(result.runId).catch(async () => {
       // The recovery sweep can schedule the committed run.
       await decision("schedule", "unknown");

@@ -43,6 +43,13 @@
       "when": 1794467602355,
       "tag": "0005_mcp_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794487836686,
+      "tag": "0006_crazy_solo",
+      "breakpoints": true
     }
   ]
 }

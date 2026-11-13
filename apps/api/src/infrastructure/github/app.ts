@@ -1,3 +1,4 @@
+import { NotificationError } from "@/application/notifications/issue-comment.ts";
 import { createPrivateKey } from "node:crypto";
 import { importPKCS8, SignJWT } from "jose";
 import {
@@ -44,6 +45,48 @@ const pullSchema = v.object({
 });
 
 type GitHubConfig = { appId: string; privateKey: string };
+export class GitHubRequestError extends Error {
+  constructor(
+    public status: number,
+    public rateLimited: boolean,
+    public retryAt?: number,
+  ) {
+    super(`GitHub request failed (${status})`);
+  }
+}
+
+async function requestError(response: Response) {
+  const details = v.safeParse(
+    v.object({ message: v.optional(v.string()) }),
+    await response.json().catch(() => null),
+  );
+  const secondary =
+    details.success &&
+    /secondary rate limit|abuse detection/i.test(details.output.message ?? "");
+  const exhausted = response.headers.get("x-ratelimit-remaining") === "0";
+  const retryAfter = response.headers.get("retry-after");
+  const rateLimited =
+    response.status === 429 ||
+    (response.status === 403 &&
+      (retryAfter !== null || exhausted || secondary));
+  const now = Date.now();
+  const deadline =
+    retryAfter !== null
+      ? now + Number(retryAfter) * 1000
+      : exhausted
+        ? Number(response.headers.get("x-ratelimit-reset")) * 1000
+        : NaN;
+  return new GitHubRequestError(
+    response.status,
+    rateLimited,
+    rateLimited
+      ? Number.isFinite(deadline) && deadline > now
+        ? deadline
+        : undefined
+      : undefined,
+  );
+}
+
 export type GitHubCheckout = {
   token: string;
   expiresAt: number;
@@ -95,8 +138,7 @@ export class GitHubApp {
     body?: unknown,
   ): Promise<unknown> {
     const response = await this.request(path, token, method, body);
-    if (!response.ok)
-      throw new Error(`GitHub request failed (${response.status})`);
+    if (!response.ok) throw await requestError(response);
     return response.json();
   }
 
@@ -127,6 +169,108 @@ export class GitHubApp {
     if (!(expiresAt > Date.now()))
       throw new Error("Expired GitHub installation grant");
     return { token: grant.token, expiresAt };
+  }
+
+  async issueComment(
+    target: RepositoryTarget,
+    marker: string,
+    body: string,
+    commentId: number | null,
+  ) {
+    try {
+      return await this.writeIssueComment(target, marker, body, commentId);
+    } catch (error) {
+      if (error instanceof GitHubRequestError)
+        throw new NotificationError(
+          error.rateLimited
+            ? "rate_limit"
+            : [401, 403, 404].includes(error.status)
+              ? "permission"
+              : error.status >= 400 &&
+                  error.status < 500 &&
+                  ![408, 409, 422].includes(error.status)
+                ? "permanent"
+                : "transient",
+          error.retryAt,
+        );
+      throw error;
+    }
+  }
+
+  private async writeIssueComment(
+    target: RepositoryTarget,
+    marker: string,
+    body: string,
+    commentId: number | null,
+  ): Promise<number> {
+    const { token } = await this.token(target, { issues: "write" });
+    const repo = "/repos/" + target.repository;
+    const schema = v.object({
+      id: v.number(),
+      body: v.string(),
+      user: v.object({ type: v.string() }),
+      performed_via_github_app: v.nullable(v.object({ id: v.number() })),
+    });
+    try {
+      if (commentId !== null) {
+        try {
+          const result = v.parse(
+            v.object({ id: v.number() }),
+            await this.json(
+              `${repo}/issues/comments/${commentId}`,
+              token,
+              "PATCH",
+              {
+                body,
+              },
+            ),
+          );
+          return result.id;
+        } catch (error) {
+          if (!(error instanceof GitHubRequestError) || error.status !== 404)
+            throw error;
+          // A deleted comment can be recreated. Still reconcile first in case
+          // an earlier attempt already replaced it and lost its response.
+          commentId = null;
+        }
+      }
+      if (commentId === null) {
+        for (let page = 1; ; page++) {
+          const comments = v.parse(
+            v.array(schema),
+            await this.json(
+              `${repo}/issues/${target.issueNumber}/comments?per_page=100&page=${page}`,
+              token,
+            ),
+          );
+          const existing = comments.find(
+            (c) =>
+              c.user.type === "Bot" &&
+              String(c.performed_via_github_app?.id) === this.config.appId &&
+              c.body.includes(marker),
+          );
+          if (existing) {
+            commentId = existing.id;
+            break;
+          }
+          if (comments.length < 100) break;
+        }
+      }
+      const result = v.parse(
+        v.object({ id: v.number() }),
+        await this.json(
+          commentId === null
+            ? `${repo}/issues/${target.issueNumber}/comments`
+            : `${repo}/issues/comments/${commentId}`,
+          token,
+          commentId === null ? "POST" : "PATCH",
+          { body },
+        ),
+      );
+      return result.id;
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
   }
 
   async checkout(

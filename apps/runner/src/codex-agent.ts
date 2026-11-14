@@ -243,13 +243,23 @@ async function runTurn(
         agentSpan,
       );
       try {
-        const result = await githubReader.read(call.arguments);
-        if (span)
-          diagnostics?.end(
-            span,
-            { outcome: result.success ? "succeeded" : "failed" },
-            JSON.stringify(result),
-          );
+        const { diagnosticReason, ...result } = await githubReader.read(
+          call.arguments,
+        );
+        if (span) {
+          try {
+            diagnostics?.end(
+              span,
+              {
+                outcome: result.success ? "succeeded" : "failed",
+                ...(diagnosticReason ? { reason: diagnosticReason } : {}),
+              },
+              JSON.stringify(result),
+            );
+          } catch {
+            // Recording diagnostics must not change the tool result or turn.
+          }
+        }
         return result;
       } catch (error) {
         if (span) diagnostics?.end(span, { outcome: "failed" });

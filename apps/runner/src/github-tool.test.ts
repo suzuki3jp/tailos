@@ -177,14 +177,16 @@ test.for(["title", "body"] as const)(
     );
     const rejected = await reader.read({ kind: "issue", number: 17 });
     expect(rejected.success).toBe(false);
+    expect(rejected.diagnosticReason).toBe("issue_changed");
+    expect(JSON.stringify(rejected)).not.toContain("Unapproved replacement");
     expect(rejected.contentItems[0]!.text).toContain(
       "changed after authorization",
     );
     expect(reader.isSourceRead()).toBe(false);
     changed = false;
-    expect((await reader.read({ kind: "issue", number: 17 })).success).toBe(
-      true,
-    );
+    const retried = await reader.read({ kind: "issue", number: 17 });
+    expect(retried.success).toBe(true);
+    expect(retried.diagnosticReason).toBeUndefined();
     expect(reader.isSourceRead()).toBe(true);
     expect(http).toHaveBeenCalledTimes(2);
   },

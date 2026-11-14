@@ -20,3 +20,9 @@
 | [PDR-20261114-002](records/PDR-20261114-002.md) | superseded | runner.github-context-acquisition | Issue 本文の送信を当面維持し将来は Agent が GitHub から取得する |
 | [PDR-20261114-003](records/PDR-20261114-003.md) | superseded | runner.github-context-acquisition | Issue の参照情報を JSON で渡し Agent が GitHub から本文を取得する |
 | [PDR-20261114-004](records/PDR-20261114-004.md) | accepted | runner.github-context-acquisition | Issue の参照情報と内容ハッシュを渡し Agent が GitHub から取得する |
+| [PDR-20261114-005](records/PDR-20261114-005.md) | accepted | agent.claude.plan-mode-commands | Claude Code の plan mode ではコマンドを実行させない |
+| [PDR-20261114-006](records/PDR-20261114-006.md) | accepted | agent.claude.authentication-failure | Claude の認証が拒否されても接続は自動で無効にしない |
+| [PDR-20261114-007](records/PDR-20261114-007.md) | accepted | agent.claude.runtime | Claude Code は Agent SDK から実行する |
+| [PDR-20261114-008](records/PDR-20261114-008.md) | accepted | agent.claude.authentication | Claude 接続は長期 OAuth トークンの貼り付けだけを対象にする |
+| [PDR-20261114-009](records/PDR-20261114-009.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
+| [PDR-20261114-010](records/PDR-20261114-010.md) | accepted | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |

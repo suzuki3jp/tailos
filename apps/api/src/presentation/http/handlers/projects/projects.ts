@@ -44,6 +44,25 @@ export function createProjectRoutes(
       if (error instanceof ProjectConflict)
         return c.json({ error: "project_conflict" as const }, 409);
       // No GitHub response bodies, input settings or credentials in errors.
+      const errorName = [
+        "Error",
+        "TypeError",
+        "SyntaxError",
+        "ValiError",
+        "GitHubRequestError",
+      ].includes(error.name)
+        ? error.name
+        : "OtherError";
+      // oxlint-disable-next-line no-console -- Static route and allowlisted error names only; never log exception messages or request bodies.
+      console.warn("Project request failed", {
+        method: c.req.method,
+        route: c.req.routePath,
+        errorName,
+        githubConfigured: Boolean(
+          c.env.TAILOS_GH_APP_ID && c.env.TAILOS_GH_APP_PRIVATE_KEY,
+        ),
+        ...c.get("diagnosticRequest"),
+      });
       return c.json({ error: "project_unavailable" as const }, 503);
     })
     .get("/", async (c) => c.json({ projects: await store(c.env).list() }))

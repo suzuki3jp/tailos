@@ -29,7 +29,7 @@ API ジョブは Wrangler 設定の名前で既存の D1 と R2 を探し、D1 �
 | Secret | `TAILOS_GH_APP_PRIVATE_KEY` | GitHub App の PEM 秘密鍵 |
 | Secret | `TAILOS_GH_WEBHOOK_SECRET` | App と Tailos で共有する Webhook シークレット |
 
-Project の設定は D1 に保存し、`/projects` から管理する。`TAILOS_PROJECTS` と Worker の `PROJECTS` はデプロイ時・実行時ともに使用しない。D1 に Project がなければ GitHub 起動は行わない。GitHub ログインと暗号化キーを設定すると `/connect` が使える。資格情報を保存した後に暗号化キーを交換する場合は、ChatGPT を接続し直す。
+Project の設定は D1 に保存し、`/projects` から管理する。`TAILOS_PROJECTS` と Worker の `PROJECTS` はデプロイ時・実行時ともに使用しない。D1 に Project がなければ GitHub 起動は行わない。デプロイ前に D1 を読み取り、稼働中の Project があれば GitHub ログイン・App 設定・Webhook secret・暗号化キーの前提を検証する。読み取り不能や前提不足の場合はマイグレーション・デプロイの前に停止する。GitHub ログインと暗号化キーを設定すると `/connect` が使える。資格情報を保存した後に暗号化キーを交換する場合は、ChatGPT を接続し直す。
 
 ### 初回セットアップ
 

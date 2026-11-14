@@ -26,7 +26,7 @@ export async function acceptPlanningInput(
     input.projectId,
     input.projectRevision ?? null,
   ];
-  const result = await db.batch<PlanningReceipt>([
+  const result = await db.batch<PlanningReceipt | { projectCurrent: number }>([
     db
       .prepare(`INSERT INTO sessions (id, owner_id, project_id, target, created_at)
       SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM planning_issues WHERE scope = ?)
@@ -94,10 +94,15 @@ export async function acceptPlanningInput(
       JOIN planning_inbox i ON i.id = d.input_id JOIN planning_issues p ON p.scope = i.scope
       WHERE d.delivery_id = ? AND p.scope = ? AND i.comment_id = ?`)
       .bind(input.deliveryId, scope, input.commentId),
+    db
+      .prepare(`SELECT ${projectGuard} AS projectCurrent`)
+      .bind(...projectBindings),
   ]);
-  const receipt = result.at(-1)?.results[0];
+  const row = result.at(-2)?.results[0];
+  const receipt = row && "inputId" in row ? row : undefined;
+  const state = result.at(-1)?.results[0];
   if (!receipt) {
-    if (input.projectRevision !== undefined)
+    if (state && "projectCurrent" in state && state.projectCurrent === 0)
       throw new ProjectChanged("Project changed before planning admission");
     throw new Error("Planning delivery does not match its original scope");
   }

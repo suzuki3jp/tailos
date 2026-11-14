@@ -58,6 +58,7 @@ export class GitHubRequestError extends Error {
     public retryAt?: number,
   ) {
     super(`GitHub request failed (${status})`);
+    this.name = "GitHubRequestError";
   }
 }
 

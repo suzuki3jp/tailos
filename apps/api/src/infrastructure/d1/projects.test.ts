@@ -388,3 +388,50 @@ test("planning admission rejects a stale or deleted project without accepting an
     await db.prepare("SELECT count(*) AS n FROM planning_inbox").first("n"),
   ).toBe(1);
 });
+
+test("owner and planning scope mismatches remain distinct from project revision conflicts", async (t) => {
+  const { acceptPlanningInput } = await import("./planning.ts");
+  const db = await createTestDb(t);
+  const store = d1Projects(db);
+  const configured = await store.create(settings, "operator");
+  const trigger = {
+    source: "test",
+    ownerId: "operator",
+    projectId: configured.project.id,
+    projectRevision: 1,
+    idempotencyKey: "delivery",
+    concurrencyKey: "target",
+    prompt: "request",
+    executionContext: "{}",
+    timeoutMs: 60_000,
+  };
+  await admitTrigger(db, trigger);
+  await expect(
+    admitTrigger(db, { ...trigger, ownerId: "other" }),
+  ).rejects.toThrow("original owner");
+  await expect(
+    admitTrigger(db, { ...trigger, ownerId: "other" }),
+  ).rejects.not.toBeInstanceOf(ProjectChanged);
+  const planning = {
+    ownerId: "operator",
+    projectId: configured.project.id,
+    projectRevision: 1,
+    repositoryId: 42,
+    issueNumber: 3,
+    commentId: 100,
+    actor: "operator",
+    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
+    body: "@tailos plan",
+    deliveryId: "planning",
+    start: true,
+    executionContext: "{}",
+    timeoutMs: 60_000,
+  };
+  await acceptPlanningInput(db, planning);
+  await expect(
+    acceptPlanningInput(db, { ...planning, ownerId: "other" }),
+  ).rejects.toThrow("original scope");
+  await expect(
+    acceptPlanningInput(db, { ...planning, ownerId: "other" }),
+  ).rejects.not.toBeInstanceOf(ProjectChanged);
+});

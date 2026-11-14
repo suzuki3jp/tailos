@@ -88,6 +88,58 @@ if (!(await hasR2Bucket(bucket, env))) {
     `R2 bucket "${bucket.bucket_name}" is missing. Verify the account and name, then run Provision Cloudflare resources if it needs to be created.`,
   );
 }
+// Keep the existing deployment prerequisites after moving their source of
+// truth to D1. These are read-only queries, before build or migration writes.
+async function projectRows(sql) {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${id}/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sql }),
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  const body = await response.json().catch(() => null);
+  if (
+    !response.ok ||
+    body?.success !== true ||
+    body.result?.length !== 1 ||
+    body.result[0]?.success !== true ||
+    !Array.isArray(body.result[0].results)
+  )
+    throw new Error(
+      "Could not inspect D1 Project configuration before deployment.",
+    );
+  return body.result[0].results;
+}
+const tables = await projectRows(
+  "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
+);
+if (tables.length) {
+  const rows = await projectRows(
+    "SELECT count(*) AS count FROM projects WHERE deleted_at IS NULL",
+  );
+  if (
+    rows.length !== 1 ||
+    !Number.isSafeInteger(rows[0].count) ||
+    rows[0].count < 0
+  )
+    throw new Error("D1 returned an invalid Project count.");
+  if (
+    rows[0].count &&
+    (!/^\d+$/.test(appId) ||
+      !runtimeSecrets.every((name) => Boolean(secrets[name])) ||
+      !login.vars.TAILOS_OPERATOR_GITHUB_ID)
+  )
+    throw new Error(
+      "GitHub projects require GitHub login, TAILOS_GH_APP_ID, GitHub App secrets, and CREDENTIAL_ENCRYPTION_KEY.",
+    );
+}
 database.database_id = id;
 delete config.vars?.PROJECTS;
 config.workers_dev = false;

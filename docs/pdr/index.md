@@ -32,6 +32,8 @@
 | [PDR-20261114-project-deletion](records/PDR-20261114-project-deletion.md) | accepted | project.configuration.deletion | Project 削除後は新規起動を止め履歴と既存 Run を保持する |
 | [PDR-20261114-project-editable-fields](records/PDR-20261114-project-editable-fields.md) | accepted | project.configuration.editable-fields | 安定した Project ID を維持し運用設定を画面から変更する |
 | [PDR-20261114-project-ownership](records/PDR-20261114-project-ownership.md) | accepted | project.configuration.ownership | Project の設定をデプロイ全体で共有する |
+| [PDR-20261114-project-pending-actors](records/PDR-20261114-project-pending-actors.md) | proposed | project.configuration.pending-actors | 許可ユーザーから外れた人の受理済み計画入力の扱いを決める |
 | [PDR-20261114-project-repository-input](records/PDR-20261114-project-repository-input.md) | accepted | project.configuration.repository-input | GitHub App がアクセスできるリポジトリを select で選ぶ |
 | [PDR-20261114-project-trigger-direction](records/PDR-20261114-project-trigger-direction.md) | proposed | project.future.project-session-trigger-model | 複数 Project と Session の紐付け、trigger ごとの Agent 選択を検討する |
 | [PDR-20261114-project-uuid](records/PDR-20261114-project-uuid.md) | accepted | project.identity.uuid | D1 移行時に Project ID を UUID に変える |
+| [PDR-20261114-project-webhook-conflict](records/PDR-20261114-project-webhook-conflict.md) | proposed | project.configuration.webhook-conflict | Project 編集と重なった Webhook の扱いを決める |

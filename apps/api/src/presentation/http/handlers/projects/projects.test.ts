@@ -24,6 +24,8 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
   const db = await createTestDb(t);
   const env = testLoginBindings(db);
   const operator = await createTestOperator(env);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  t.onTestFinished(() => warn.mockRestore());
   const verify = vi.fn(async (_target: unknown) => {});
   const list = vi.fn(async () => [
     { repository: "owner/repo", repositoryId: 42, installationId: 19 },
@@ -92,6 +94,17 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
   const failed = await send("", settings);
   expect(failed.status).toBe(503);
   expect(await failed.text()).not.toContain("private upstream details");
+  expect(warn).toHaveBeenCalledWith(
+    "Project request failed",
+    expect.objectContaining({
+      method: "POST",
+      route: expect.any(String),
+      errorName: "Error",
+    }),
+  );
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(
+    "private upstream details",
+  );
   expect(await d1Projects(db).list()).toEqual([]);
   const created = await send("", settings);
   expect(created.status).toBe(201);

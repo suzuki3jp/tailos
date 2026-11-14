@@ -367,6 +367,7 @@ async function runTurns(
       engine: "claude",
       version: process.env.TAILOS_CLAUDE_AGENT_SDK_VERSION ?? "unknown",
       sandbox: implementation ? "workspace-write" : "read-only",
+      ...(implementation && { commandNetwork: "blocked" }),
     }),
   );
   const toolSpans = new Map<string, string>();
@@ -497,9 +498,11 @@ async function runTurns(
                       allowUnsandboxedCommands: false,
                       autoAllowBashIfSandboxed: true,
                       filesystem: { allowWrite: [cwd, environment] },
-                      ...(job.checkout?.agentNetworkAccess !== true && {
-                        network: { allowedDomains: [], strictAllowlist: true },
-                      }),
+                      // What agentNetworkAccess allows Claude Code is undecided,
+                      // so commands get no network whatever its value. The
+                      // strict list also ignores the repository's own
+                      // allowed domains.
+                      network: { allowedDomains: [], strictAllowlist: true },
                     },
                   }),
                 }

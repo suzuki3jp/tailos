@@ -172,20 +172,27 @@ test("runs an implementation turn inside the workspace with only the Run's crede
   await expect(stat(env.CLAUDE_CONFIG_DIR!)).rejects.toThrow();
 });
 
-test("leaves command network access to the repository when the project allows it", async (t) => {
+test("blocks command network access even when the project allows it", async (t) => {
   const cwd = await workspace(t);
   const { calls, agent } = runtime([
     [success({ reply: "Done", headline: null })],
   ]);
+  const { diagnostics, spans } = recorder();
 
   await agent().run(
     job({ checkout: { ...checkout, agentNetworkAccess: true } }),
     new AbortController().signal,
     cwd,
+    diagnostics,
   );
 
-  expect(calls[0]!.options.sandbox?.enabled).toBe(true);
-  expect(calls[0]!.options.sandbox?.network).toBeUndefined();
+  expect(calls[0]!.options.sandbox?.network).toEqual({
+    allowedDomains: [],
+    strictAllowlist: true,
+  });
+  expect(JSON.parse(spans[0]!.body!)).toMatchObject({
+    commandNetwork: "blocked",
+  });
 });
 
 test("gives a planning turn no tool that can change the workspace", async (t) => {

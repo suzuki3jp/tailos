@@ -3,7 +3,6 @@ import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import type { ProjectRecord } from "@/application/projects/store.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import * as v from "valibot";
 import { parseGithubEvent } from "@/application/triggers/github-event.ts";
 import type {
   PlanningAdmission,
@@ -159,20 +158,31 @@ export function createGithubWebhook(
     } satisfies ExecutionContext;
     if ("comment" in data && normalized.kind === "comment") {
       if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
-      const receipt = await acceptPlan(c.env, {
-        ownerId,
-        projectId: target.id,
-        repositoryId: target.repositoryId,
-        issueNumber: data.issue.number,
-        commentId: data.comment.id,
-        actor: data.comment.user.login,
-        url: data.comment.html_url,
-        body: data.comment.body,
-        deliveryId: delivery,
-        start: normalized.command.start,
-        executionContext: JSON.stringify({ ...executionContext, mode: "plan" }),
-        timeoutMs: target.maxRunMinutes * 60_000,
-      });
+      let receipt;
+      try {
+        receipt = await acceptPlan(c.env, {
+          ownerId,
+          projectId: target.id,
+          projectRevision: projectRecord?.revision,
+          repositoryId: target.repositoryId,
+          issueNumber: data.issue.number,
+          commentId: data.comment.id,
+          actor: data.comment.user.login,
+          url: data.comment.html_url,
+          body: data.comment.body,
+          deliveryId: delivery,
+          start: normalized.command.start,
+          executionContext: JSON.stringify({
+            ...executionContext,
+            mode: "plan",
+          }),
+          timeoutMs: target.maxRunMinutes * 60_000,
+        });
+      } catch (error) {
+        if (!(error instanceof ProjectChanged)) throw error;
+        await decision("project_config", "failed");
+        return c.json({ error: "project_changed" }, 503);
+      }
       c.executionCtx.waitUntil(
         processPlans(c.env)
           .catch(async () => {

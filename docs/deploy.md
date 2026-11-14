@@ -46,7 +46,7 @@ Project の設定は D1 に保存し、`/projects` から管理する。`TAILOS_
 1. GitHub App の Webhook 配信を一時停止し、旧 `TAILOS_PROJECTS` の JSON 配列を運用者の手元へ退避する。切り替えに備えて D1 のバックアップを取る。進行中の Run の ID を控える。
 2. 通常の Deploy で `0008_project_settings.sql` を含む D1 マイグレーションと API・Runner・Web を反映する。既存の Run は保存済みの実行設定で続行する。旧設定へのフォールバックは行わない。
 3. 運用者でログインし、`/projects` の「既存設定を初回インポート」を開く。退避した JSON 配列を貼り付けてインポートする。入力形式の例は [projects.example.json](../config/projects.example.json)。新規追加を行う前に移行を実施する。
-4. API は全件の制約と GitHub App からのリポジトリアクセスを確認する。旧 ID ごとに UUID を一つ発行し、Project、旧 ID と UUID の対応、既存 Session の `project_id`、移行履歴を同じ D1 トランザクションで確定する。失敗時はすべてロールバックする。登録履歴のある環境や完了済みのインポートへの再実行は拒否する。空配列のインポートも完了として記録する。
+4. API は全件の制約と GitHub App からのリポジトリアクセスを確認する。旧 ID ごとに UUID を一つ発行し、Project、旧 ID と UUID の対応、既存 Session の `project_id`、計画会話と inbox の識別キー、移行履歴を同じ D1 トランザクションで確定する。失敗時はすべてロールバックする。登録履歴のある環境や完了済みのインポートへの再実行は拒否する。空配列のインポートも完了として記録する。
 5. 一覧の全 Project、起動ラベル、許可ユーザー、通信許可、上限時間と変更履歴を確認する。既存 Session が参照する UUID を次の読み取り専用 SQL でも照合できる。移行設定に存在しなかった旧 ID は推測で変換せず、そのまま残す。
 
    ```sql

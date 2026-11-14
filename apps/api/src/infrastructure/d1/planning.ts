@@ -1,3 +1,4 @@
+import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import type { D1Database } from "@cloudflare/workers-types";
 import { githubIssueDigest } from "@tailos/core/runner";
 import {
@@ -18,11 +19,18 @@ export async function acceptPlanningInput(
   ]);
   const sessionId = crypto.randomUUID();
   const now = Date.now();
+  const projectGuard =
+    "(? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL))";
+  const projectBindings = [
+    input.projectRevision ?? null,
+    input.projectId,
+    input.projectRevision ?? null,
+  ];
   const result = await db.batch<PlanningReceipt>([
     db
       .prepare(`INSERT INTO sessions (id, owner_id, project_id, target, created_at)
       SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM planning_issues WHERE scope = ?)
-      AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?)`)
+      AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?) AND ${projectGuard}`)
       .bind(
         sessionId,
         input.ownerId,
@@ -36,6 +44,7 @@ export async function acceptPlanningInput(
         now,
         scope,
         input.deliveryId,
+        ...projectBindings,
       ),
     db
       .prepare(
@@ -45,18 +54,19 @@ export async function acceptPlanningInput(
     db
       .prepare(`UPDATE planning_issues SET started = 1 WHERE scope = ? AND ? = 1
       AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?)
-      AND NOT EXISTS (SELECT 1 FROM planning_inbox WHERE scope = ? AND comment_id = ?)`)
+      AND NOT EXISTS (SELECT 1 FROM planning_inbox WHERE scope = ? AND comment_id = ?) AND ${projectGuard}`)
       .bind(
         scope,
         input.start ? 1 : 0,
         input.deliveryId,
         scope,
         input.commentId,
+        ...projectBindings,
       ),
     db
       .prepare(`INSERT INTO planning_inbox (scope, comment_id, actor, url, body, execution_context, timeout_ms, received_at, state)
       SELECT scope, ?, ?, ?, ?, ?, ?, ?, CASE WHEN started = 1 THEN 'pending' ELSE 'guidance' END FROM planning_issues
-      WHERE scope = ? AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?)
+      WHERE scope = ? AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?) AND ${projectGuard}
       ON CONFLICT (scope, comment_id) DO NOTHING`)
       .bind(
         input.commentId,
@@ -68,16 +78,17 @@ export async function acceptPlanningInput(
         now,
         scope,
         input.deliveryId,
+        ...projectBindings,
       ),
     db
       .prepare(`INSERT INTO planning_deliveries (delivery_id, input_id)
-      SELECT ?, id FROM planning_inbox WHERE scope = ? AND comment_id = ? ON CONFLICT DO NOTHING`)
-      .bind(input.deliveryId, scope, input.commentId),
+      SELECT ?, id FROM planning_inbox WHERE scope = ? AND comment_id = ? AND ${projectGuard} ON CONFLICT DO NOTHING`)
+      .bind(input.deliveryId, scope, input.commentId, ...projectBindings),
     db
       .prepare(`INSERT INTO planning_replies (input_id, body, next_attempt_at)
       SELECT id, '計画を開始するには、Issue の新しいコメントで @tailos plan を送ってください。', 0 FROM planning_inbox
-      WHERE scope = ? AND comment_id = ? AND state = 'guidance' ON CONFLICT DO NOTHING`)
-      .bind(scope, input.commentId),
+      WHERE scope = ? AND comment_id = ? AND state = 'guidance' AND ${projectGuard} ON CONFLICT DO NOTHING`)
+      .bind(scope, input.commentId, ...projectBindings),
     db
       .prepare(`SELECT p.session_id AS sessionId, i.id AS inputId FROM planning_deliveries d
       JOIN planning_inbox i ON i.id = d.input_id JOIN planning_issues p ON p.scope = i.scope
@@ -85,8 +96,11 @@ export async function acceptPlanningInput(
       .bind(input.deliveryId, scope, input.commentId),
   ]);
   const receipt = result.at(-1)?.results[0];
-  if (!receipt)
+  if (!receipt) {
+    if (input.projectRevision !== undefined)
+      throw new ProjectChanged("Project changed before planning admission");
     throw new Error("Planning delivery does not match its original scope");
+  }
   return receipt;
 }
 
@@ -96,7 +110,9 @@ export async function dispatchPlanningInputs(
   db: D1Database,
 ): Promise<string[]> {
   const due = await db
-    .prepare(`SELECT p.scope FROM planning_issues p WHERE
+    .prepare(`SELECT p.scope FROM planning_issues p
+    JOIN sessions s ON s.id = p.session_id JOIN projects project ON project.id = s.project_id
+    WHERE project.deleted_at IS NULL AND project.repository_id = json_extract(p.scope, '$[2]') AND
     EXISTS (SELECT 1 FROM planning_inbox i WHERE i.scope = p.scope AND i.state = 'pending')
     AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.session_id = p.session_id AND r.status IN ('queued', 'running'))
     ORDER BY (SELECT min(id) FROM planning_inbox WHERE scope = p.scope AND state = 'pending') LIMIT 25`)
@@ -110,14 +126,23 @@ export async function dispatchPlanningInputs(
       db
         .prepare(`INSERT INTO session_messages (id, session_id, seq, author_kind, body, created_at)
         SELECT ?, p.session_id, (SELECT coalesce(max(seq), 0) + 1 FROM session_messages WHERE session_id = p.session_id), 'automation', i.body, ?
-        FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope WHERE p.scope = ? AND i.id =
+        FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope
+        JOIN sessions s ON s.id = p.session_id JOIN projects project ON project.id = s.project_id
+        WHERE project.deleted_at IS NULL AND project.repository_id = json_extract(p.scope, '$[2]') AND p.scope = ? AND i.id =
         (SELECT min(id) FROM planning_inbox WHERE scope = p.scope AND state = 'pending')
         AND NOT EXISTS (SELECT 1 FROM runs WHERE session_id = p.session_id AND status IN ('queued', 'running'))`)
         .bind(messageId, now, scope),
       db
         .prepare(`INSERT INTO runs (id, session_id, start_message_id, status, concurrency_key, execution_context, deadline_at, next_action_at, created_at)
-        SELECT ?, p.session_id, ?, 'queued', ?, i.execution_context, ? + i.timeout_ms, ?, ?
-        FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope WHERE p.scope = ?
+        SELECT ?, p.session_id, ?, 'queued', ?, json_set(i.execution_context,
+          '$.repository.repository', json_extract(project.config, '$.repository'),
+          '$.repository.repositoryId', project.repository_id,
+          '$.repository.installationId', json_extract(project.config, '$.installationId'),
+          '$.repository.triggerLabel', json_extract(project.config, '$.triggerLabel'),
+          '$.repository.agentNetworkAccess', json(CASE WHEN json_extract(project.config, '$.agentNetworkAccess') THEN 'true' ELSE 'false' END)),
+          ? + json_extract(project.config, '$.maxRunMinutes') * 60000, ?, ?
+        FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope
+        JOIN sessions s ON s.id = p.session_id JOIN projects project ON project.id = s.project_id WHERE p.scope = ?
         AND i.id = (SELECT min(id) FROM planning_inbox WHERE scope = p.scope AND state = 'pending')
         AND EXISTS (SELECT 1 FROM session_messages WHERE id = ?)`)
         .bind(

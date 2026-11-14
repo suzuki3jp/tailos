@@ -104,11 +104,11 @@ JSON の列はバージョン付きの Valibot スキーマで検証する。Iss
 
 Project はデプロイ全体で共有する複数件の設定であり、運用者認証と Web の Origin 検査で管理する。`projects` は UUID、設定 JSON、リポジトリ ID、版、更新者・時刻、削除時刻、移行元の旧 ID を保持する。UUID はサーバーで発行し変更しない。稼働中の Project は最大 100 件で、同じリポジトリ ID を重複登録できない。リポジトリは GitHub App の installation とアクセス可能な全ページの候補から選び、保存時にも metadata の読み取りトークンで名前・ID・installation の組み合わせを照合する。秘密鍵とトークンは API 内だけで扱う。 [GitHub App の installation API](https://docs.github.com/en/rest/apps/installations)
 
-`project_changes` は DB トリガーで追加・変更・削除・インポートの変更前後と運用者の内部 ID・時刻を保存する。設定の変更と履歴は同じトランザクションであり、履歴を保存できなければ設定も変更されない。履歴は画面から全ページを閲覧でき、自動削除や履歴の編集・復元は提供しない。旧 JSON の明示的な初回移行では `project_imports` に完了を記録し、Project の `legacy_id` と UUID の対応に従って既存 Session の参照も一括更新する。
+`project_changes` は DB トリガーで追加・変更・削除・インポートの変更前後と運用者の内部 ID・時刻を保存する。設定の変更と履歴は同じトランザクションであり、履歴を保存できなければ設定も変更されない。履歴は画面から全ページを閲覧でき、自動削除や履歴の編集・復元は提供しない。旧 JSON の明示的な初回移行では `project_imports` に完了を記録し、Project の `legacy_id` と UUID の対応に従って既存 Session の参照と計画会話・inbox の scope 内の Project ID も一括更新する。
 
 Webhook は D1 から設定を読み、リポジトリ、installation、ラベル、許可ユーザーを照合する。Run 受付のトランザクションでも Project の版と未削除状態を確認し、読み取り後の設定変更で古い権限の新規 Run が作られるのを防ぐ。通信許可と時間上限は Run 作成時に保存し、その後 Project を変更・削除しても既存 Run の設定と期限を変更しない。D1 の障害時は環境変数へフォールバックしない。
 
-削除は論理削除とし、新規起動を停止する。削除前に作成された queued・running の Run は続行する。過去の Session・会話・Run は元の所有者のまま保持する。今回の受付経路は Issue からの新規起動であり、計画の会話から新規 Run を作る経路は追加しない。将来その経路を追加する際にも、削除済み Project からの新規 Run は拒否する。
+削除は論理削除とし、新規起動を停止する。削除前に作成された queued・running の Run は続行する。過去の Session・会話・Run は元の所有者のまま保持する。計画会話の保留入力も、削除済み Project から新規 Run へ割り当てない。保留入力から Run を作る時点で現行の通信許可・時間上限などを保存し、Project の対象リポジトリが会話の対象と異なる間も割り当てを停止する。
 
 単発チャットは引き続き Project やリポジトリを指定せずに作成できる。将来の Project・リポジトリ・Session の構成拡張と trigger ごとの Agent 選択は [構想段階の PDR](pdr/records/PDR-20261114-project-trigger-direction.md) に記録する。今回 `agent` 項目・モデル・effort の指定は追加せず、既存の Codex 起動を維持する。
 

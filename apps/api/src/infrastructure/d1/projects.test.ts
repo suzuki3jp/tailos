@@ -1,4 +1,6 @@
 import { expect, test } from "vitest";
+import * as v from "valibot";
+import { ExecutionContext } from "@tailos/core/runner";
 import { createTestDb } from "./testing.ts";
 import { d1Projects } from "./projects.ts";
 import { ProjectConflict } from "@/application/projects/store.ts";
@@ -227,4 +229,162 @@ test("new trigger admission checks the project revision and deletion in its tran
     }),
   ).rejects.toBeInstanceOf(ProjectChanged);
   expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(1);
+});
+
+test("UUID import moves planning scopes atomically and preserves the existing conversation", async (t) => {
+  const { acceptPlanningInput, dispatchPlanningInputs } =
+    await import("./planning.ts");
+  const db = await createTestDb(t);
+  const store = d1Projects(db);
+  const input = {
+    ownerId: "operator",
+    projectId: "meguri",
+    repositoryId: 42,
+    issueNumber: 3,
+    commentId: 100,
+    actor: "operator",
+    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
+    body: "@tailos plan",
+    deliveryId: "legacy-plan",
+    start: true,
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "codex",
+      mode: "plan",
+      connectionId: `codex/${crypto.randomUUID()}`,
+      repository: {
+        repository: settings.repository,
+        repositoryId: 42,
+        installationId: 19,
+        triggerLabel: settings.triggerLabel,
+        agentNetworkAccess: false,
+        issueNumber: 3,
+        defaultBranch: "main",
+      },
+    }),
+    timeoutMs: 60_000,
+  };
+  const receipt = await acceptPlanningInput(db, input);
+  expect(await dispatchPlanningInputs(db)).toEqual([]);
+  const project = { ...settings, id: crypto.randomUUID() };
+  await db
+    .prepare(
+      "CREATE TRIGGER reject_scope BEFORE UPDATE ON planning_inbox BEGIN SELECT RAISE(ABORT, 'scope failure'); END",
+    )
+    .run();
+  await expect(store.import([project], ["meguri"], "operator")).rejects.toThrow(
+    /scope failure/,
+  );
+  expect(await store.list()).toEqual([]);
+  expect(
+    await db
+      .prepare("SELECT project_id FROM sessions WHERE id = ?")
+      .bind(receipt.sessionId)
+      .first("project_id"),
+  ).toBe("meguri");
+  await db.prepare("DROP TRIGGER reject_scope").run();
+  await store.import([project], ["meguri"], "operator");
+  const scope = JSON.stringify(["operator", project.id, 42, 3]);
+  expect(
+    await db.prepare("SELECT scope FROM planning_issues").first("scope"),
+  ).toBe(scope);
+  expect(
+    await db.prepare("SELECT scope FROM planning_inbox").first("scope"),
+  ).toBe(scope);
+  expect((await db.prepare("PRAGMA foreign_key_check").all()).results).toEqual(
+    [],
+  );
+  expect(
+    await acceptPlanningInput(db, {
+      ...input,
+      projectId: project.id,
+      projectRevision: 1,
+    }),
+  ).toEqual(receipt);
+  await store.update(
+    project.id,
+    1,
+    { ...settings, maxRunMinutes: 2, agentNetworkAccess: true },
+    "operator",
+  );
+  const [runId] = await dispatchPlanningInputs(db);
+  expect(runId).toBeTruthy();
+  const run = await db
+    .prepare(
+      "SELECT execution_context, deadline_at, created_at FROM runs WHERE id = ?",
+    )
+    .bind(runId)
+    .first<{
+      execution_context: string;
+      deadline_at: number;
+      created_at: number;
+    }>();
+  const context = v.parse(ExecutionContext, JSON.parse(run!.execution_context));
+  expect(
+    context.engine === "codex" && context.repository?.agentNetworkAccess,
+  ).toBe(true);
+  expect(run!.deadline_at - run!.created_at).toBe(120_000);
+  await acceptPlanningInput(db, {
+    ...input,
+    projectId: project.id,
+    projectRevision: 2,
+    deliveryId: "follow-up",
+    commentId: 101,
+  });
+  await store.remove(project.id, 2, "operator");
+  await db
+    .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
+    .bind(runId)
+    .run();
+  expect(await dispatchPlanningInputs(db)).toEqual([]);
+  expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(1);
+  expect(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM planning_inbox WHERE state = 'pending'",
+      )
+      .first("n"),
+  ).toBe(1);
+});
+
+test("planning admission rejects a stale or deleted project without accepting another comment", async (t) => {
+  const { acceptPlanningInput } = await import("./planning.ts");
+  const db = await createTestDb(t);
+  const store = d1Projects(db);
+  const configured = await store.create(settings, "operator");
+  const input = {
+    ownerId: "operator",
+    projectId: configured.project.id,
+    projectRevision: 1,
+    repositoryId: 42,
+    issueNumber: 3,
+    commentId: 100,
+    actor: "operator",
+    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
+    body: "@tailos plan",
+    deliveryId: "plan",
+    start: true,
+    executionContext: "{}",
+    timeoutMs: 60_000,
+  };
+  await store.update(configured.project.id, 1, settings, "operator");
+  await expect(acceptPlanningInput(db, input)).rejects.toBeInstanceOf(
+    ProjectChanged,
+  );
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
+  ).toBe(0);
+  await acceptPlanningInput(db, { ...input, projectRevision: 2 });
+  await store.remove(configured.project.id, 2, "operator");
+  await expect(
+    acceptPlanningInput(db, {
+      ...input,
+      projectRevision: 2,
+      commentId: 101,
+      deliveryId: "new",
+    }),
+  ).rejects.toBeInstanceOf(ProjectChanged);
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM planning_inbox").first("n"),
+  ).toBe(1);
 });

@@ -96,71 +96,72 @@ export function createGithubWebhook(
       return c.json({ error: "invalid_event" }, 400);
     }
 
-    let projects: ProjectRecord[];
-    try {
-      projects = await readProjects(c.env);
-    } catch {
-      await decision("project_config", "failed");
-      return c.json({ error: "invalid_project_config" }, 503);
-    }
-    const data = normalized.data;
-    const projectRecord = projects.find(
-      (item) => item.project.repositoryId === data.repository.id,
-    );
-    const target = projectRecord?.project;
-    if (
-      !target ||
-      target.repository.toLowerCase() !==
-        data.repository.full_name.toLowerCase()
-    )
-      return ignore("repository");
-    if (target.installationId !== data.installation.id)
-      return ignore("installation");
-    if ("label" in data && target.triggerLabel !== data.label.name)
-      return ignore("label");
-    if (
-      !target.allowedActors.some(
-        (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
-      )
-    )
-      return ignore("actor");
-    if (data.issue.state !== "open") return ignore("issue_state");
-    if (data.issue.pull_request) return ignore("pull_request");
-
-    const delivery = c.req.header("X-GitHub-Delivery");
-    if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
-      await decision("delivery", "failed");
-      return c.json({ error: "missing_delivery_id" }, 400);
-    }
-
-    const ownerId = await findOperatorUserId(c.env);
-    if (!ownerId) {
-      await decision("operator", "failed");
-      return c.json({ error: "operator_not_initialized" }, 503);
-    }
-
-    const executionContext = {
-      version: 1,
-      engine: "codex",
-      connectionId: codexConnectionId(ownerId),
-      repository: {
-        repository: target.repository,
-        repositoryId: target.repositoryId,
-        installationId: target.installationId,
-        issueNumber: data.issue.number,
-        ...(normalized.kind === "label" && {
-          issueContentHash: await githubIssueDigest(data.issue),
-        }),
-        defaultBranch: data.repository.default_branch,
-        triggerLabel: target.triggerLabel,
-        agentNetworkAccess: target.agentNetworkAccess,
-      },
-    } satisfies ExecutionContext;
-    if ("comment" in data && normalized.kind === "comment") {
-      if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
-      let receipt;
+    // Repeat only admission-time Project conflicts. Every retry rereads and
+    // reauthorizes the entire trigger; signatures and event parsing stay fixed.
+    const accept = async () => {
+      let projects: ProjectRecord[];
       try {
-        receipt = await acceptPlan(c.env, {
+        projects = await readProjects(c.env);
+      } catch {
+        await decision("project_config", "failed");
+        return c.json({ error: "invalid_project_config" }, 503);
+      }
+      const data = normalized.data;
+      const projectRecord = projects.find(
+        (item) => item.project.repositoryId === data.repository.id,
+      );
+      const target = projectRecord?.project;
+      if (
+        !target ||
+        target.repository.toLowerCase() !==
+          data.repository.full_name.toLowerCase()
+      )
+        return ignore("repository");
+      if (target.installationId !== data.installation.id)
+        return ignore("installation");
+      if ("label" in data && target.triggerLabel !== data.label.name)
+        return ignore("label");
+      if (
+        !target.allowedActors.some(
+          (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
+        )
+      )
+        return ignore("actor");
+      if (data.issue.state !== "open") return ignore("issue_state");
+      if (data.issue.pull_request) return ignore("pull_request");
+
+      const delivery = c.req.header("X-GitHub-Delivery");
+      if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
+        await decision("delivery", "failed");
+        return c.json({ error: "missing_delivery_id" }, 400);
+      }
+
+      const ownerId = await findOperatorUserId(c.env);
+      if (!ownerId) {
+        await decision("operator", "failed");
+        return c.json({ error: "operator_not_initialized" }, 503);
+      }
+
+      const executionContext = {
+        version: 1,
+        engine: "codex",
+        connectionId: codexConnectionId(ownerId),
+        repository: {
+          repository: target.repository,
+          repositoryId: target.repositoryId,
+          installationId: target.installationId,
+          issueNumber: data.issue.number,
+          ...(normalized.kind === "label" && {
+            issueContentHash: await githubIssueDigest(data.issue),
+          }),
+          defaultBranch: data.repository.default_branch,
+          triggerLabel: target.triggerLabel,
+          agentNetworkAccess: target.agentNetworkAccess,
+        },
+      } satisfies ExecutionContext;
+      if ("comment" in data && normalized.kind === "comment") {
+        if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
+        const receipt = await acceptPlan(c.env, {
           ownerId,
           projectId: target.id,
           projectRevision: projectRecord?.revision,
@@ -178,27 +179,20 @@ export function createGithubWebhook(
           }),
           timeoutMs: target.maxRunMinutes * 60_000,
         });
-      } catch (error) {
-        if (!(error instanceof ProjectChanged)) throw error;
-        await decision("project_config", "failed");
-        return c.json({ error: "project_changed" }, 503);
+        c.executionCtx.waitUntil(
+          processPlans(c.env)
+            .catch(async () => {
+              // The recovery sweep can dispatch and schedule the persisted input.
+              await decision("schedule", "unknown");
+            })
+            .then(() => notify(c.env)),
+        );
+        return c.json(receipt, 202);
       }
-      c.executionCtx.waitUntil(
-        processPlans(c.env)
-          .catch(async () => {
-            // The recovery sweep can dispatch and schedule the persisted input.
-            await decision("schedule", "unknown");
-          })
-          .then(() => notify(c.env)),
-      );
-      return c.json(receipt, 202);
-    }
-    const prompt =
-      "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
+      const prompt =
+        "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
-    let result;
-    try {
-      result = await admit(c.env)({
+      const result = await admit(c.env)({
         source: "github.issue-label",
         idempotencyKey: delivery,
         ownerId,
@@ -220,17 +214,25 @@ export function createGithubWebhook(
         timeoutMs: target.maxRunMinutes * 60_000,
         diagnostics: c.get("diagnosticRequest"),
       });
+      c.executionCtx.waitUntil(notify(c.env));
+      await scheduleRun(c.env)?.(result.runId).catch(async () => {
+        // The recovery sweep can schedule the committed run.
+        await decision("schedule", "unknown");
+      });
+      return c.json(result, 202);
+    };
+    try {
+      return await accept();
+    } catch (error) {
+      if (!(error instanceof ProjectChanged)) throw error;
+    }
+    try {
+      return await accept();
     } catch (error) {
       if (!(error instanceof ProjectChanged)) throw error;
       await decision("project_config", "failed");
       return c.json({ error: "project_changed" }, 503);
     }
-    c.executionCtx.waitUntil(notify(c.env));
-    await scheduleRun(c.env)?.(result.runId).catch(async () => {
-      // The recovery sweep can schedule the committed run.
-      await decision("schedule", "unknown");
-    });
-    return c.json(result, 202);
   });
 
   return githubWebhook;

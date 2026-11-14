@@ -2,20 +2,21 @@
 schema: 1
 id: PDR-20261114-project-pending-actors
 key: project.configuration.pending-actors
-status: proposed
+status: accepted
 date: "2026-11-14"
 areas: [projects, planning, auth]
 keywords: [allowedActors, 許可ユーザー, 取消, 保留入力, pending, 計画会話]
 paths: ["apps/api/src/infrastructure/d1/planning.ts", "docs/design.md"]
 symbols: [acceptPlanningInput, dispatchPlanningInputs]
 supersedes: []
+decided_by: suzuki3jp
 ---
 
-# 許可ユーザーから外れた人の受理済み計画入力の扱いを決める
+# 許可ユーザーの変更は新規受付に適用し受理済み入力は実行する
 
 ## 決定
 
-提案: 許可されている時点で受理した計画入力は、投稿者が後で `allowedActors` から外れても実行する。許可ユーザーの変更は、その後のコメント受付に適用する。
+許可されている時点で受理した計画入力は、投稿者が後で `allowedActors` から外れても実行する。許可ユーザーの変更は、その後のコメント受付に適用する。
 
 ## 理由
 

@@ -290,3 +290,53 @@ test("rolls back message and input assignment if run creation fails", async (t) 
   await db.prepare("DROP TRIGGER reject_plan").run();
   expect(await dispatchPlanningInputs(db)).toHaveLength(1);
 });
+
+test("actor removal applies to future acceptance while already accepted pending inputs still run", async (t) => {
+  const { d1Projects } = await import("./projects.ts");
+  const db = await planningDb(t);
+  const store = d1Projects(db);
+  await acceptPlanningInput(db, input);
+  const [first] = await dispatchPlanningInputs(db);
+  await acceptPlanningInput(db, {
+    ...input,
+    commentId: 101,
+    deliveryId: "accepted-follow-up",
+    start: false,
+  });
+  const current = (await store.list()).find(
+    (p) => p.project.id === input.projectId,
+  )!;
+  const { id: _id, ...settings } = current.project;
+  await store.update(
+    input.projectId,
+    1,
+    {
+      ...settings,
+      allowedActors: ["replacement"],
+      agentNetworkAccess: true,
+      maxRunMinutes: 3,
+    },
+    "operator",
+  );
+  await db
+    .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
+    .bind(first)
+    .run();
+  const [second] = await dispatchPlanningInputs(db);
+  expect(second).toBeTruthy();
+  expect(
+    await db
+      .prepare("SELECT state FROM planning_inbox WHERE comment_id = 101")
+      .first("state"),
+  ).toBe("assigned");
+  const row = await db
+    .prepare(
+      "SELECT execution_context, deadline_at - created_at AS timeout FROM runs WHERE id = ?",
+    )
+    .bind(second)
+    .first<{ execution_context: string; timeout: number }>();
+  expect(JSON.parse(row!.execution_context).repository.agentNetworkAccess).toBe(
+    true,
+  );
+  expect(row!.timeout).toBe(180_000);
+});

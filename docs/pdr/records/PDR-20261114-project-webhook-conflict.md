@@ -2,20 +2,21 @@
 schema: 1
 id: PDR-20261114-project-webhook-conflict
 key: project.configuration.webhook-conflict
-status: proposed
+status: accepted
 date: "2026-11-14"
 areas: [projects, triggers]
 keywords: [ProjectChanged, Webhook, 再試行, 再送, "503", 設定編集]
 paths: ["apps/api/src/presentation/http/handlers/github-webhook/**", "docs/deploy.md"]
 symbols: [ProjectChanged, createGithubWebhook]
 supersedes: []
+decided_by: suzuki3jp
 ---
 
-# Project 編集と重なった Webhook の扱いを決める
+# Project 編集と重なった Webhook は最新条件で一度だけ再試行する
 
 ## 決定
 
-提案: Project の版が受付直前に変わった場合は、設定を読み直し、リポジトリ・installation・ラベル・許可ユーザーの確認から一度だけやり直す。再び競合した場合は 503 と診断を返し、運用者の手動再送で回復する。
+Project の版が受付直前に変わった場合は、設定を読み直し、リポジトリ・installation・ラベル・許可ユーザーの確認から一度だけやり直す。再び競合した場合は 503 と診断を返し、運用者の手動再送で回復する。
 
 ## 理由
 

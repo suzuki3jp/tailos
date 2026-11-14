@@ -87,3 +87,36 @@ test("drops a permanently rejected packet and sends a partial completion marker"
   expect(sent).toHaveLength(2);
   expect(parse(sent[1]!).completed).toEqual({ lastSeq: 2, dropped: 2 });
 });
+
+test("redacts the credentials of a Claude job", async () => {
+  const sent: string[] = [];
+  const token = "claude-oauth-token";
+  const leaseBearer = "c".repeat(64);
+  const diagnostics = new RunnerDiagnostics(
+    {
+      ...job(),
+      engine: "claude",
+      access: { token, connectionVersion: crypto.randomUUID() },
+      lease: { url: "https://api.example/credentials", bearer: leaseBearer },
+      checkout: {
+        repository: "acme/widgets",
+        baseSha: "a".repeat(40),
+        branch: `tailos/issue-1/${crypto.randomUUID()}`,
+        token: "checkout-token",
+      },
+    },
+    async (_url, init) => {
+      sent.push(String(init?.body));
+      return new Response(null, { status: 204 });
+    },
+  );
+  const span = diagnostics.start(
+    "command",
+    `echo ${token} ${leaseBearer} checkout-token`,
+  );
+  diagnostics.end(span);
+  await diagnostics.finish();
+  expect(sent.join("")).not.toContain(token);
+  expect(sent.join("")).not.toContain(leaseBearer);
+  expect(sent.join("")).not.toContain("checkout-token");
+});

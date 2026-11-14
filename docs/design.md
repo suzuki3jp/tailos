@@ -34,7 +34,7 @@ flowchart LR
 ```
 
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
-- **実行の境界。** Runner 内に `AgentAdapter` を置き、Codex 固有の起動・入力・イベント・結果の変換をその実装に閉じる。API と Runner は共通のジョブと結果の形式で通信する。
+- **実行の境界。** Runner 内に `AgentAdapter` を置き、Codex と Claude Code それぞれに固有の起動・入力・イベント・結果の変換をその実装に閉じる。API と Runner は共通のジョブと結果の形式で通信する。
 - **認証の境界。** プロバイダ固有の接続とトークン更新は API 側が担当する。共有契約は Cloudflare や Agent 固有の SDK に依存させない。実装は各 app の中に置き、共有する契約を `packages/core` に置く。
 - **Web の境界。** ブラウザは `api.tailos.app` の JSON API を Hono Client で呼ぶ。Web は公開ルートの型だけを `@tailos/api/browser` から取り込む。Cookie は API ホストに限定し、資格情報付きの CORS と更新リクエストは Web のオリジンを許可する。
 

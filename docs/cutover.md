@@ -42,7 +42,7 @@
 
 ## 公開と検証
 
-1. GitHub リポジトリを `suzuki3jp/tailos` に改名し、対象リポジトリの起動ラベルと `TAILOS_PROJECTS` が一致することを確認する。既存の GitHub App と OAuth App の登録名を Tailos に更新する。ローカルでは `git remote set-url origin https://github.com/suzuki3jp/tailos.git` で追従できる。 [GitHub のリポジトリ改名](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository) · [GitHub App の設定](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration)
+1. GitHub リポジトリを `suzuki3jp/tailos` に改名し、対象リポジトリの起動ラベルと `/projects` の設定が一致することを確認する。旧 `TAILOS_PROJECTS` が残っている場合は [D1 移行](deploy.md#既存-project-設定の-d1-移行)を行う。既存の GitHub App と OAuth App の登録名を Tailos に更新する。ローカルでは `git remote set-url origin https://github.com/suzuki3jp/tailos.git` で追従できる。 [GitHub のリポジトリ改名](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository) · [GitHub App の設定](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration)
 2. 照合済みの `tailos` の UUID をリポジトリ変数 `TAILOS_D1_DATABASE_ID` に設定し、最新 `main` の push で起動した CI を再実行する。Deploy が照合した DB をバインドし、`CredentialBroker` を旧 API から移管して新しい Runner 名前空間を作成する。新 API が正常になってから Web をデプロイする。
 3. 両ホストの `/health` が `tailos-api` と `tailos-web` を返すことを確認する。OAuth App の Homepage を `https://tailos.app`、コールバックを `https://api.tailos.app/api/auth/callback/github` に変更する。新しいドメインで GitHub に再ログインし、以前の会話と Run 結果、ChatGPT 接続を確認する。旧 Run の ID で新 R2 バケットのコピー済みログを照合する。
 4. GitHub App の Webhook を `https://api.tailos.app/webhooks/github` に更新して再開し、テスト Issue に `tailos:run` を付ける。Webhook の成功、Session、Run、PR と新しい R2 ログを確認する。停止中の依頼は処理済みかを照合してから再開する。旧 Web の URL は必要に応じてパスを維持して新 Web に転送する。

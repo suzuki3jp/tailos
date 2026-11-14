@@ -3,6 +3,7 @@ export type TriggerAdmission = {
   idempotencyKey: string;
   ownerId: string;
   projectId?: string;
+  projectRevision?: number;
   target?: string;
   concurrencyKey: string;
   prompt: string;
@@ -18,3 +19,4 @@ export type Admission = {
 };
 
 export type AdmitTrigger = (input: TriggerAdmission) => Promise<Admission>;
+export class ProjectChanged extends Error {}

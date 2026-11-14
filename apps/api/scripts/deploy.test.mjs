@@ -222,10 +222,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(missingLoginSecret.status).not.toBe(0);
   expect(missingLoginSecret.stderr).toMatch(/GitHub login requires/);
 
-  const misconfigured = runDeploy({ TAILOS_PROJECTS: "[{}]" });
-  expect(misconfigured.status).not.toBe(0);
-  expect(misconfigured.stderr).toMatch(/GitHub projects require/);
-  expect(readCalls().length).toBe(calls.length);
+  expect(published.config.vars.PROJECTS).toBe(undefined);
 });
 
 test("deploy never migrates when the Runner cannot build", (t) => {

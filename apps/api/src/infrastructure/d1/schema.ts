@@ -11,6 +11,45 @@ import {
   type SQLiteTableExtraConfigValue,
 } from "drizzle-orm/sqlite-core";
 
+export const projects = sqliteTable(
+  "projects",
+  {
+    id: text().primaryKey().notNull(),
+    repositoryId: integer("repository_id").notNull(),
+    config: text().notNull(),
+    legacyId: text("legacy_id").unique(),
+    revision: integer().notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [
+    uniqueIndex("project_active_repository")
+      .on(t.repositoryId)
+      .where(sql`${t.deletedAt} is null`),
+  ],
+);
+
+export const projectChanges = sqliteTable("project_changes", {
+  id: integer().primaryKey({ autoIncrement: true }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id),
+  operation: text({ enum: ["create", "update", "delete", "import"] }).notNull(),
+  actorId: text("actor_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  before: text("before_config"),
+  after: text("after_config"),
+});
+
+export const projectImports = sqliteTable("project_imports", {
+  id: text().primaryKey().notNull(),
+  changeId: text("change_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
 export const sessions = sqliteTable(
   "sessions",
   {

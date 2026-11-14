@@ -12,7 +12,6 @@ export type Bindings = {
   RUN_ARTIFACTS?: RunArtifactsBucket;
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
   TAILOS_TEST_TOKEN?: string;
-  PROJECTS?: string;
   TAILOS_GH_APP_ID?: string;
   TAILOS_GH_APP_PRIVATE_KEY?: string;
   TAILOS_GH_WEBHOOK_SECRET?: string;

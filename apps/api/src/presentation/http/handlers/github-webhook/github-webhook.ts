@@ -1,4 +1,6 @@
 import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
+import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
+import type { ProjectRecord } from "@/application/projects/store.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
@@ -10,7 +12,6 @@ import type {
 import { githubIssueDigest, type ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
-import { projectsSchema } from "@/application/triggers/projects.ts";
 import type { TriggerDiagnostic } from "@/application/diagnostics/store.ts";
 
 function parseJson(body: string): unknown {
@@ -30,6 +31,7 @@ export function createGithubWebhook(
     header: string | undefined,
     body: ArrayBuffer,
   ) => Promise<boolean>,
+  readProjects: (env: Bindings) => Promise<ProjectRecord[]>,
   recordDecision: (
     env: Bindings,
     event: TriggerDiagnostic,
@@ -44,12 +46,7 @@ export function createGithubWebhook(
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
     const secret = c.env?.TAILOS_GH_WEBHOOK_SECRET;
-    if (
-      !secret ||
-      !c.env.PROJECTS ||
-      !c.env.TAILOS_GH_APP_ID ||
-      !c.env.TAILOS_GH_APP_PRIVATE_KEY
-    )
+    if (!secret || !c.env.TAILOS_GH_APP_ID || !c.env.TAILOS_GH_APP_PRIVATE_KEY)
       return c.notFound();
 
     const bytes = await c.req.arrayBuffer();
@@ -100,15 +97,18 @@ export function createGithubWebhook(
       return c.json({ error: "invalid_event" }, 400);
     }
 
-    const config = v.safeParse(projectsSchema, parseJson(c.env.PROJECTS));
-    if (!config.success) {
+    let projects: ProjectRecord[];
+    try {
+      projects = await readProjects(c.env);
+    } catch {
       await decision("project_config", "failed");
       return c.json({ error: "invalid_project_config" }, 503);
     }
     const data = normalized.data;
-    const target = config.output.find(
-      (item) => item.repositoryId === data.repository.id,
+    const projectRecord = projects.find(
+      (item) => item.project.repositoryId === data.repository.id,
     );
+    const target = projectRecord?.project;
     if (
       !target ||
       target.repository.toLowerCase() !==
@@ -186,27 +186,35 @@ export function createGithubWebhook(
     const prompt =
       "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
-    const result = await admit(c.env)({
-      source: "github.issue-label",
-      idempotencyKey: delivery,
-      ownerId,
-      projectId: target.id,
-      target: JSON.stringify({
-        version: 1,
-        kind: "github.issue",
-        repositoryId: target.repositoryId,
-        issueNumber: data.issue.number,
-      }),
-      concurrencyKey: JSON.stringify([
-        "github.issue-label",
-        target.repositoryId,
-        data.issue.number,
-      ]),
-      prompt,
-      executionContext: JSON.stringify(executionContext),
-      timeoutMs: target.maxRunMinutes * 60_000,
-      diagnostics: c.get("diagnosticRequest"),
-    });
+    let result;
+    try {
+      result = await admit(c.env)({
+        source: "github.issue-label",
+        idempotencyKey: delivery,
+        ownerId,
+        projectId: target.id,
+        projectRevision: projectRecord?.revision,
+        target: JSON.stringify({
+          version: 1,
+          kind: "github.issue",
+          repositoryId: target.repositoryId,
+          issueNumber: data.issue.number,
+        }),
+        concurrencyKey: JSON.stringify([
+          "github.issue-label",
+          target.repositoryId,
+          data.issue.number,
+        ]),
+        prompt,
+        executionContext: JSON.stringify(executionContext),
+        timeoutMs: target.maxRunMinutes * 60_000,
+        diagnostics: c.get("diagnosticRequest"),
+      });
+    } catch (error) {
+      if (!(error instanceof ProjectChanged)) throw error;
+      await decision("project_config", "failed");
+      return c.json({ error: "project_changed" }, 503);
+    }
     c.executionCtx.waitUntil(notify(c.env));
     await scheduleRun(c.env)?.(result.runId).catch(async () => {
       // The recovery sweep can schedule the committed run.

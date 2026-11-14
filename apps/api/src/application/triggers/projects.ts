@@ -5,8 +5,7 @@ const repository = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
 );
-const project = v.strictObject({
-  id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
+export const projectSettings = v.strictObject({
   repository,
   repositoryId: id,
   installationId: id,
@@ -18,12 +17,26 @@ const project = v.strictObject({
     30,
   ),
 });
+export const projectSchema = v.strictObject({
+  id: v.pipe(v.string(), v.uuid()),
+  ...projectSettings.entries,
+});
+const legacyProject = v.strictObject({
+  id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
+  ...projectSettings.entries,
+});
+const uniqueProjects = (items: { id: string; repositoryId: number }[]) =>
+  new Set(items.map((item) => item.repositoryId)).size === items.length &&
+  new Set(items.map((item) => item.id)).size === items.length;
 export const projectsSchema = v.pipe(
-  v.array(project),
+  v.array(projectSchema),
   v.maxLength(100),
-  v.check(
-    (items) =>
-      new Set(items.map((item) => item.repositoryId)).size === items.length &&
-      new Set(items.map((item) => item.id)).size === items.length,
-  ),
+  v.check((items) => uniqueProjects(items)),
 );
+export const legacyProjectsSchema = v.pipe(
+  v.array(legacyProject),
+  v.maxLength(100),
+  v.check((items) => uniqueProjects(items)),
+);
+export type Project = v.InferOutput<typeof projectSchema>;
+export type ProjectSettings = v.InferOutput<typeof projectSettings>;

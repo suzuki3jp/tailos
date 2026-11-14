@@ -7,6 +7,10 @@ import {
   type RepositoryTarget,
 } from "@tailos/core/runner";
 import * as v from "valibot";
+import type {
+  ProjectRepositories,
+  RepositoryChoice,
+} from "@/application/projects/store.ts";
 
 const repoSchema = v.object({ id: v.number(), default_branch: v.string() });
 const issueSchema = v.object({
@@ -149,29 +153,125 @@ export class GitHubApp {
     target: RepositoryTarget,
     permissions: Record<string, "read" | "write">,
   ) {
+    const jwt = await this.appToken();
+    return this.installationToken(target.installationId, jwt, {
+      repository_ids: [target.repositoryId],
+      permissions,
+    });
+  }
+
+  private async appToken() {
     const pem = createPrivateKey(this.config.privateKey)
       .export({ format: "pem", type: "pkcs8" })
       .toString();
     const key = await importPKCS8(pem, "RS256");
-    const jwt = await new SignJWT({})
+    return new SignJWT({})
       .setProtectedHeader({ alg: "RS256" })
       .setIssuer(this.config.appId)
       .setIssuedAt(Math.floor(Date.now() / 1000) - 30)
       .setExpirationTime("5m")
       .sign(key);
+  }
+
+  private async installationToken(
+    installationId: number,
+    jwt: string,
+    options: unknown,
+  ) {
     const grant = v.parse(
       grantSchema,
       await this.json(
-        `/app/installations/${target.installationId}/access_tokens`,
+        `/app/installations/${installationId}/access_tokens`,
         jwt,
         "POST",
-        { repository_ids: [target.repositoryId], permissions },
+        options,
       ),
     );
     const expiresAt = Date.parse(grant.expires_at);
     if (!(expiresAt > Date.now()))
       throw new Error("Expired GitHub installation grant");
     return { token: grant.token, expiresAt };
+  }
+
+  projectRepositories(): ProjectRepositories {
+    return {
+      list: async () => {
+        const jwt = await this.appToken();
+        const choices: RepositoryChoice[] = [];
+        const repository = v.object({
+          id: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+          full_name: v.string(),
+        });
+        for (let page = 1; ; page++) {
+          const installations = v.parse(
+            v.array(
+              v.object({
+                id: v.number(),
+                suspended_at: v.nullable(v.string()),
+              }),
+            ),
+            await this.json(
+              `/app/installations?per_page=100&page=${page}`,
+              jwt,
+            ),
+          );
+          for (const installation of installations) {
+            if (installation.suspended_at !== null) continue;
+            const { token } = await this.installationToken(
+              installation.id,
+              jwt,
+              { permissions: { metadata: "read" } },
+            );
+            try {
+              for (let repoPage = 1; ; repoPage++) {
+                const { repositories } = v.parse(
+                  v.object({ repositories: v.array(repository) }),
+                  await this.json(
+                    `/installation/repositories?per_page=100&page=${repoPage}`,
+                    token,
+                  ),
+                );
+                choices.push(
+                  ...repositories.map((repo) => ({
+                    repository: repo.full_name,
+                    repositoryId: repo.id,
+                    installationId: installation.id,
+                  })),
+                );
+                if (repositories.length < 100) break;
+              }
+            } finally {
+              await this.revoke(token).catch(() => {});
+            }
+          }
+          if (installations.length < 100) break;
+        }
+        return choices.sort((a, b) => a.repository.localeCompare(b.repository));
+      },
+      verify: async (target) => {
+        const { token } = await this.installationToken(
+          target.installationId,
+          await this.appToken(),
+          {
+            repository_ids: [target.repositoryId],
+            permissions: { metadata: "read" },
+          },
+        );
+        try {
+          const repo = v.parse(
+            v.object({ id: v.number(), full_name: v.string() }),
+            await this.json(`/repos/${target.repository}`, token),
+          );
+          if (
+            repo.id !== target.repositoryId ||
+            repo.full_name.toLowerCase() !== target.repository.toLowerCase()
+          )
+            throw new Error("GitHub repository target changed");
+        } finally {
+          await this.revoke(token).catch(() => {});
+        }
+      },
+    };
   }
 
   async issueComment(

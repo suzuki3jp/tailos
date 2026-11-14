@@ -57,6 +57,13 @@
       "when": 1794580644120,
       "tag": "0007_clear_captain_universe",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794662912351,
+      "tag": "0008_project_settings",
+      "breakpoints": true
     }
   ]
 }

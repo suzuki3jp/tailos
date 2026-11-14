@@ -41,6 +41,9 @@ import { inspectionStore } from "@/infrastructure/inspection.ts";
 import { createMcpRoutes } from "@/presentation/http/handlers/mcp/mcp.ts";
 import { createMcpKeyRoutes } from "@/presentation/http/handlers/mcp-keys/mcp-keys.ts";
 import { d1McpKeys } from "@/infrastructure/d1/mcp-keys.ts";
+import { d1Projects } from "@/infrastructure/d1/projects.ts";
+import { GitHubApp } from "@/infrastructure/github/app.ts";
+import { createProjectRoutes } from "@/presentation/http/handlers/projects/projects.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -60,6 +63,7 @@ const githubWebhook = createGithubWebhook(
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
   validSignature,
+  (env) => d1Projects(env.DB).list(),
   (env, event) => recordTriggerDecision(env.DB, event),
   deliverIssueNotifications,
   (env, input) => acceptPlanningInput(env.DB, input),
@@ -109,6 +113,21 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     }),
   )
   .route("/connect", connectRoutes)
+  .route(
+    "/projects",
+    createProjectRoutes(
+      (env) => d1Projects(env.DB),
+      (env) => {
+        if (!env.TAILOS_GH_APP_ID || !env.TAILOS_GH_APP_PRIVATE_KEY)
+          throw new Error("GitHub App is not configured");
+        return new GitHubApp({
+          appId: env.TAILOS_GH_APP_ID,
+          privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
+        }).projectRepositories();
+      },
+      operatorAuth,
+    ),
+  )
   .route("/sessions", userSessionRoutes)
   .route(
     "/mcp-keys",

@@ -37,6 +37,9 @@ export function Account() {
     <div className="space-y-4">
       <p className="text-signal">GitHub でログイン済みです。</p>
       <div className="flex flex-wrap gap-3">
+        <a href="/projects" className="action">
+          Project 設定を管理
+        </a>
         <a href="/mcp" className="action">
           MCP キーを管理
         </a>

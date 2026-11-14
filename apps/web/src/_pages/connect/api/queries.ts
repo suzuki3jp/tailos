@@ -20,3 +20,17 @@ export function connectionQueryOptions() {
     },
   });
 }
+
+export const claudeConnectionKey = ["claude-connection"];
+
+export function claudeConnectionQueryOptions() {
+  return queryOptions({
+    queryKey: claudeConnectionKey,
+    queryFn: async ({ signal }) => {
+      const response = await api.connect.claude.$get(undefined, {
+        init: { signal },
+      });
+      return response.ok ? await response.json() : { error: response.status };
+    },
+  });
+}

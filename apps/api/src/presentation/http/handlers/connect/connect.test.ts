@@ -104,3 +104,105 @@ test("protects the device code and requires a POST from the Web origin to change
   ).toBe(200);
   expect(status).toStrictEqual({ state: "disconnected" });
 });
+
+test("saves a pasted Claude token without ever returning it", async (t) => {
+  const login = testLoginBindings(await createTestDb(t));
+  const { id, cookie } = await createTestOperator(login);
+  const origin = login.TAILOS_WEB_ORIGIN;
+  const path = login.TAILOS_PUBLIC_ORIGIN + "/api/connect/claude";
+  const token = "sk-ant-oat01-" + "a".repeat(64);
+  const saved: string[] = [];
+  const connected = {
+    state: "connected",
+    savedAt: 1,
+    expiresAt: 2,
+    expiry: "valid",
+  };
+  const env = {
+    ...login,
+    CREDENTIAL_ENCRYPTION_KEY: "test-key",
+    CREDENTIALS: {
+      getByName: (name: string) => ({
+        async claudeStatus() {
+          expect(name).toBe(`claude/${id}`);
+          return saved.length ? connected : { state: "disconnected" };
+        },
+        async saveClaudeToken(value: string) {
+          expect(name).toBe(`claude/${id}`);
+          if (saved.length) return false;
+          saved.push(value);
+          return true;
+        },
+        async disconnect() {
+          expect(name).toBe(`claude/${id}`);
+          saved.length = 0;
+        },
+      }),
+    },
+  };
+  const headers = {
+    Cookie: cookie,
+    Origin: origin,
+    "Content-Type": "application/json",
+  };
+  const save = (body: string, init = headers) =>
+    app.request(path, { method: "POST", headers: init, body }, env);
+
+  expect((await app.request(path, undefined, env)).status).toBe(401);
+  expect(
+    (await save(JSON.stringify({ token }), { ...headers, Cookie: "" })).status,
+  ).toBe(401);
+  expect(
+    (
+      await save(JSON.stringify({ token }), {
+        ...headers,
+        Origin: "https://another.example",
+      })
+    ).status,
+  ).toBe(403);
+  for (const body of [
+    "",
+    "{}",
+    JSON.stringify({ token: "sk-ant-api03-" + "a".repeat(64) }),
+    JSON.stringify({ token: token + " " }),
+    JSON.stringify({ token, extra: true }),
+    JSON.stringify({ token: token + "a".repeat(5000) }),
+  ]) {
+    const rejected = await save(body);
+    expect([400, 413]).toContain(rejected.status);
+    expect(await rejected.text()).not.toContain("sk-ant-");
+  }
+  expect(saved).toStrictEqual([]);
+  expect(await (await app.request(path, { headers }, env)).json()).toEqual({
+    state: "disconnected",
+  });
+
+  const response = await save(JSON.stringify({ token }));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await response.json()).toStrictEqual({ ok: true });
+  expect(saved).toStrictEqual([token]);
+  const status = await app.request(path, { headers }, env);
+  expect(status.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await status.json()).toStrictEqual(connected);
+
+  const again = await save(JSON.stringify({ token }));
+  expect(again.status).toBe(409);
+  expect(await again.json()).toStrictEqual({ error: "already_connected" });
+
+  expect(
+    (
+      await app.request(
+        path + "/disconnect",
+        { method: "POST", headers: { Origin: origin } },
+        env,
+      )
+    ).status,
+  ).toBe(401);
+  expect(saved).toStrictEqual([token]);
+  expect(
+    (await app.request(path + "/disconnect", { method: "POST", headers }, env))
+      .status,
+  ).toBe(200);
+  expect(saved).toStrictEqual([]);
+});

@@ -46,7 +46,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 href="/connect"
                 className="inline-flex min-h-11 items-center hover:text-ink"
               >
-                ChatGPT 接続
+                Agent 接続
               </Link>
               <Link
                 href="/mcp"

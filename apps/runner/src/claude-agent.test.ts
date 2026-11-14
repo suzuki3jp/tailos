@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Options } from "@anthropic-ai/claude-agent-sdk";
+import {
+  createSdkMcpServer,
+  type Options,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { maxReplyLength, type RunnerJob } from "@tailos/core/runner";
 import { expect, test, vi, type TestContext } from "vitest";
@@ -70,9 +73,7 @@ function runtime(
     sandboxAvailable: async () => sandboxAvailable,
     githubServer(handler) {
       read = handler;
-      return { type: "sdk", name: "tailos" } as ReturnType<
-        ClaudeRuntime["githubServer"]
-      >;
+      return createSdkMcpServer({ name: "tailos" });
     },
   };
   return {

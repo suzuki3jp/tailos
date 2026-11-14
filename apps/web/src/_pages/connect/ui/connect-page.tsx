@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
 import { connectionQueryOptions, connectionKey } from "../api/queries";
 import { updateConnection } from "../api/update-connection";
+import { ClaudeConnection } from "./claude-connection";
 
 const messages = {
   disconnected: "ChatGPT アカウントを接続できます。",
@@ -22,8 +23,9 @@ export function ConnectPage() {
   const status = connection.data;
   return (
     <section className="max-w-xl space-y-5">
-      <h1 className="text-3xl font-medium">ChatGPT 接続</h1>
+      <h1 className="text-3xl font-medium">Agent 接続</h1>
       <div className="surface space-y-4">
+        <h2 className="text-lg font-medium">ChatGPT</h2>
         {connection.isPending ? (
           <p role="status" className="text-muted">
             接続状態を確認しています。
@@ -81,6 +83,7 @@ export function ConnectPage() {
           </>
         )}
       </div>
+      <ClaudeConnection />
     </section>
   );
 }

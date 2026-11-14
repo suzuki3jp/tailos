@@ -30,7 +30,7 @@ API ジョブは Wrangler 設定の名前で既存の D1 と R2 を探し、D1 �
 | Secret | `TAILOS_GH_WEBHOOK_SECRET` | App と Tailos で共有する Webhook シークレット |
 | Variable | `TAILOS_PROJECTS` | 対象リポジトリと起動条件の JSON 配列。例は [projects.example.json](../config/projects.example.json) |
 
-`TAILOS_PROJECTS` が空の場合は GitHub 起動を無効にして Worker をデプロイできる。GitHub ログインと暗号化キーを設定すると `/connect` が使える。資格情報を保存した後に暗号化キーを交換する場合は、ChatGPT を接続し直す。
+`TAILOS_PROJECTS` が空の場合は GitHub 起動を無効にして Worker をデプロイできる。GitHub ログインと暗号化キーを設定すると `/connect` が使える。資格情報を保存した後に暗号化キーを交換する場合は、ChatGPT と Claude を接続し直す。
 
 ### 初回セットアップ
 

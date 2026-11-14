@@ -26,3 +26,4 @@
 | [PDR-20261114-008](records/PDR-20261114-008.md) | accepted | agent.claude.authentication | Claude 接続は長期 OAuth トークンの貼り付けだけを対象にする |
 | [PDR-20261114-009](records/PDR-20261114-009.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
 | [PDR-20261114-010](records/PDR-20261114-010.md) | accepted | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
+| [PDR-20261114-011](records/PDR-20261114-011.md) | accepted | agent.claude.token-expiry-notice | Claude トークンの期限切れは 30 日前から接続画面で知らせる |

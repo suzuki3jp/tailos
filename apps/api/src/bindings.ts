@@ -3,6 +3,7 @@ import type {
   DurableObjectNamespace,
 } from "@cloudflare/workers-types";
 
+import type { ClaudeConnectionControl } from "@/application/auth/claude.ts";
 import type { ConnectionControl } from "@/application/auth/device.ts";
 import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
 import type { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
@@ -17,7 +18,9 @@ export type Bindings = {
   TAILOS_GH_APP_PRIVATE_KEY?: string;
   TAILOS_GH_WEBHOOK_SECRET?: string;
   CREDENTIAL_ENCRYPTION_KEY?: string;
-  CREDENTIALS?: { getByName(name: string): ConnectionControl };
+  CREDENTIALS?: {
+    getByName(name: string): ConnectionControl & ClaudeConnectionControl;
+  };
   TAILOS_PUBLIC_ORIGIN?: string;
   TAILOS_WEB_ORIGIN?: string;
   BETTER_AUTH_SECRET?: string;

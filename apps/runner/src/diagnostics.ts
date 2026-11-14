@@ -43,9 +43,14 @@ export class RunnerDiagnostics implements Diagnostics {
   ) {
     this.context = job.diagnostics;
     this.parentSpanId = job.diagnostics?.parentSpanId;
-    if (job.engine === "codex") {
-      this.addSecret(job.access.accessToken);
-      this.addSecret(job.refresh.bearer);
+    if (job.engine !== "fake") {
+      if (job.engine === "codex") {
+        this.addSecret(job.access.accessToken);
+        this.addSecret(job.refresh.bearer);
+      } else {
+        this.addSecret(job.access.token);
+        this.addSecret(job.lease.bearer);
+      }
       if (job.checkout) {
         this.addSecret(job.checkout.token);
         this.addSecret(

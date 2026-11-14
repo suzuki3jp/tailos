@@ -15,6 +15,7 @@ import {
   PublicationFailed,
   type AgentAdapter,
 } from "@/agent.ts";
+import { claudeAgent } from "@/claude-agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
 import { runInGitWorkspace } from "@/git-workspace.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
@@ -46,13 +47,14 @@ function json(response: ServerResponse, code: number, body: object) {
 }
 
 async function stagePublication(
-  job: Extract<RunnerJob, { engine: "codex" }>,
+  mode: RunnerJob["mode"],
+  lease: { url: string; bearer: string },
   work: Omit<CheckedPublication, "kind" | "events">,
   events: RunnerEvent[],
   signal: AbortSignal,
 ) {
-  if (job.mode === "plan") throw new Error("Planning cannot publish");
-  const url = new URL("publication", job.refresh.url);
+  if (mode === "plan") throw new Error("Planning cannot publish");
+  const url = new URL("publication", lease.url);
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("Invalid publication URL");
   const body = JSON.stringify(
@@ -68,7 +70,7 @@ async function stagePublication(
     method: "POST",
     redirect: "error",
     headers: {
-      Authorization: `Bearer ${job.refresh.bearer}`,
+      Authorization: `Bearer ${lease.bearer}`,
       "Content-Type": "application/json",
     },
     body,
@@ -111,7 +113,7 @@ async function execute(
   try {
     const input = job.input;
     const result =
-      input.engine === "codex" && input.checkout
+      input.engine !== "fake" && input.checkout
         ? await runInGitWorkspace(
             input.checkout,
             signal,
@@ -119,7 +121,13 @@ async function execute(
             async (work) => {
               if (input.deadlineAt - Date.now() > 2_000)
                 await diagnostics.flush(1_000);
-              return stagePublication(input, work, events, signal);
+              return stagePublication(
+                input.mode,
+                input.engine === "codex" ? input.refresh : input.lease,
+                work,
+                events,
+                signal,
+              );
             },
             undefined,
             diagnostics,
@@ -169,6 +177,7 @@ export function createRunnerServer(
   agents: Record<RunnerJob["engine"], AgentAdapter> = {
     fake: fakeAgent,
     codex: codexAgent,
+    claude: claudeAgent,
   },
 ) {
   let current: CurrentJob | undefined;

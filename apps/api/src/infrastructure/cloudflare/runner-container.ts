@@ -423,6 +423,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
       ...(diagnostics && { diagnostics }),
     };
     if (context.engine === "fake") return { ...base, engine: "fake" };
+    // Claude connections cannot start a Run yet: there is nothing to issue.
+    if (context.engine !== "codex") return null;
 
     const origin = this.env.TAILOS_PUBLIC_ORIGIN;
     if (!origin || !this.env.CREDENTIALS) return null;

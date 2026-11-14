@@ -13,6 +13,7 @@ import {
   fakeAgent,
   type AgentAdapter,
 } from "@/agent.ts";
+import { claudeAgent } from "@/claude-agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
 import { createRunnerServer } from "@/server.ts";
 
@@ -20,6 +21,7 @@ async function listen(t: TestContext, agent?: AgentAdapter) {
   const server = createRunnerServer({
     fake: agent ?? fakeAgent,
     codex: codexAgent,
+    claude: claudeAgent,
   });
   t.onTestFinished(
     () => new Promise<void>((resolve) => server.close(() => resolve())),
@@ -286,4 +288,66 @@ test("execution modes preserve legacy jobs and validate planning contracts", () 
   expect(
     v.safeParse(RunnerStatus, { ...result, reply: "x".repeat(8001) }).success,
   ).toBe(false);
+});
+
+test("runs a Claude job with the Claude agent and accepts only its own credentials", async (t) => {
+  const run = vi.fn<AgentAdapter["run"]>(async () => ({
+    reply: "from Claude",
+  }));
+  const server = createRunnerServer({
+    fake: fakeAgent,
+    codex: fakeAgent,
+    claude: { run },
+  });
+  t.onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const job = {
+    version: 1,
+    engine: "claude",
+    runId: randomUUID(),
+    prompt: "test",
+    deadlineAt: Date.now() + 10_000,
+    access: { token: "claude-oauth-token", connectionVersion: randomUUID() },
+    lease: {
+      url: "https://tailos.example/_runner/runs/1/credentials",
+      bearer: "b".repeat(64),
+    },
+  } satisfies RunnerJob;
+
+  // A job cannot mix the Codex and Claude credential shapes.
+  const { lease, ...withoutLease } = job;
+  expect(
+    v.safeParse(RunnerJobSchema, { ...withoutLease, refresh: lease }).success,
+  ).toBe(false);
+  expect(
+    v.safeParse(RunnerJobSchema, { ...job, engine: "codex" }).success,
+  ).toBe(false);
+  const connectionId = `claude/${randomUUID()}`;
+  expect(
+    v.safeParse(ExecutionContext, {
+      version: 1,
+      engine: "claude",
+      connectionId,
+    }).success,
+  ).toBe(true);
+  expect(
+    v.safeParse(ExecutionContext, { version: 1, engine: "codex", connectionId })
+      .success,
+  ).toBe(false);
+
+  expect((await sendJob(origin, job)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const status = await fetch(`${origin}/job/${job.runId}`);
+    expect(await status.json()).toMatchObject({
+      status: "succeeded",
+      reply: "from Claude",
+    });
+  });
+  expect(run.mock.calls[0]![0]).toEqual(job);
 });

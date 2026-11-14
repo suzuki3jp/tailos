@@ -119,6 +119,16 @@ export const ExecutionContext = v.variant("engine", [
     ),
     repository: v.optional(RepositoryTarget),
   }),
+  v.strictObject({
+    version: v.literal(1),
+    engine: v.literal("claude"),
+    mode: v.optional(ExecutionMode),
+    connectionId: v.pipe(
+      v.string(),
+      v.regex(/^claude\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+    ),
+    repository: v.optional(RepositoryTarget),
+  }),
 ]);
 
 export const maxRunnerJobBytes = 32 * 1024;
@@ -144,36 +154,56 @@ export const CodexAccess = v.strictObject({
   accessVersion: v.pipe(v.string(), v.uuid()),
 });
 
+const repositoryJob = {
+  githubContext: v.optional(
+    v.strictObject({
+      kind: v.literal("issue"),
+      number: positiveId,
+      contentHash: v.optional(sha256),
+    }),
+  ),
+  checkout: v.optional(
+    v.strictObject({
+      repository: repositoryName,
+      baseSha: gitSha,
+      branch: workBranch,
+      token: secret,
+      agentNetworkAccess: v.optional(v.boolean()),
+    }),
+  ),
+};
+// Authorizes the Runner to call back into its Run's controller.
+const lease = v.strictObject({
+  url: v.pipe(v.string(), v.url()),
+  bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+});
+// A pasted long-lived token: it cannot be refreshed, so it has no version.
+export const ClaudeAccess = v.strictObject({
+  token: secret,
+  connectionVersion: v.pipe(v.string(), v.uuid()),
+});
+
 export const RunnerJob = v.variant("engine", [
   v.strictObject({ ...job, engine: v.literal("fake") }),
   v.strictObject({
     ...job,
+    ...repositoryJob,
     engine: v.literal("codex"),
-    githubContext: v.optional(
-      v.strictObject({
-        kind: v.literal("issue"),
-        number: positiveId,
-        contentHash: v.optional(sha256),
-      }),
-    ),
     access: CodexAccess,
-    checkout: v.optional(
-      v.strictObject({
-        repository: repositoryName,
-        baseSha: gitSha,
-        branch: workBranch,
-        token: secret,
-        agentNetworkAccess: v.optional(v.boolean()),
-      }),
-    ),
-    refresh: v.strictObject({
-      url: v.pipe(v.string(), v.url()),
-      bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
-    }),
+    // Also the base URL of the publication checkpoint.
+    refresh: lease,
+  }),
+  v.strictObject({
+    ...job,
+    ...repositoryJob,
+    engine: v.literal("claude"),
+    access: ClaudeAccess,
+    lease,
   }),
 ]);
 
 export type CodexAccess = v.InferOutput<typeof CodexAccess>;
+export type ClaudeAccess = v.InferOutput<typeof ClaudeAccess>;
 export type ExecutionContext = v.InferOutput<typeof ExecutionContext>;
 
 export const RunnerEvent = v.strictObject({

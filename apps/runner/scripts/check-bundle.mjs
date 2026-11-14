@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -87,3 +87,17 @@ test(
     }
   },
 );
+
+test("the image installs the Agent SDK versions the Runner is built against", async () => {
+  const runnerRoot = new URL("../", import.meta.url);
+  const { devDependencies } = JSON.parse(
+    await readFile(new URL("package.json", runnerRoot), "utf8"),
+  );
+  const dockerfile = await readFile(new URL("Dockerfile", runnerRoot), "utf8");
+  assert.ok(
+    dockerfile.includes(
+      `TAILOS_CLAUDE_AGENT_SDK_VERSION=${devDependencies["@anthropic-ai/claude-agent-sdk"]}\n`,
+    ),
+  );
+  assert.ok(dockerfile.includes(` zod@${devDependencies.zod}\n`));
+});

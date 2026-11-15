@@ -79,9 +79,9 @@ function setup(t) {
       if (url === "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/${id}/query") {
         if (headers.Authorization !== "Bearer test-token") throw new Error("Unexpected D1 authorization");
         const sql = JSON.parse(body).sql;
-        appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: sql.includes("sqlite_master") ? "inspect Project table" : "count Projects" }) + "\\n");
+        appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: sql.includes("sqlite_master") ? "inspect Project table" : sql.includes("owner_id") ? "check Project owners" : "count Projects" }) + "\\n");
         if (existsSync("fail-project-lookup")) return Response.json({ success: false }, { status: 503 });
-        const results = sql.includes("sqlite_master") ? existsSync("projects") ? [{ name: "projects" }] : [] : [{ count: 1 }];
+        const results = sql.includes("sqlite_master") ? existsSync("projects") ? [{ name: "projects" }] : [] : [{ count: sql.includes("owner_id") ? existsSync("uninitialized-owner") ? 1 : 0 : 1 }];
         return Response.json({ success: true, result: [{ success: true, results }] });
       }
       if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/tailos-run-artifacts") throw new Error("Unexpected R2 lookup URL");
@@ -178,13 +178,24 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
     ["--filter", "@tailos/runner", "run", "build"],
     ["d1", "migrations", "apply", "DB", "--remote"],
     [
+      "d1",
+      "execute",
+      "DB",
+      "--remote",
+      "--command",
+      "UPDATE projects SET owner_id = (SELECT user_id FROM auth_accounts WHERE provider_id = 'github' AND account_id = '123') WHERE owner_id IS NULL",
+    ],
+    "check Project owners",
+    [
       "deploy",
       "--no-experimental-provision",
       "--secrets-file",
       calls.at(-1).runtime.path,
     ],
   ]);
-  const [build, migration, published] = calls.slice(-3);
+  const build = calls.find((call) => call.command[0] === "--filter");
+  const migration = calls.find((call) => call.command[1] === "migrations");
+  const published = calls.at(-1);
   expect(build.secretInEnvironment).toBe(false);
   expect(migration.config.d1_databases[0].database_id).toBe(id);
   expect(published.config.d1_databases[0].database_id).toBe(id);
@@ -313,5 +324,18 @@ test("D1 projects retain deployment prerequisites and inspection failure prevent
     readCalls()
       .slice(previous)
       .some((call) => Array.isArray(call.command)),
+  ).toBe(false);
+});
+
+test("deploy refuses to publish while legacy projects have no initialized owner", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  for (const marker of ["database", "bucket", "uninitialized-owner"])
+    writeFileSync(join(cwd, marker), "");
+  const result = runDeploy();
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("configured operator to log in");
+  expect(readCalls().some((call) => call.command[0] === "deploy")).toBe(false);
+  expect(
+    readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),
   ).toBe(false);
 });

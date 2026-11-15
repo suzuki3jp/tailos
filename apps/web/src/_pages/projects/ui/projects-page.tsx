@@ -16,6 +16,7 @@ import {
 import { saveProject, deleteProject, importProjects } from "../api/mutations";
 
 const empty: ProjectSettings = {
+  name: "",
   repository: "",
   repositoryId: 0,
   installationId: 0,
@@ -30,6 +31,10 @@ function Snapshot({ project }: { project: ProjectChange["before"] }) {
   if (!project) return <p className="text-muted">設定なし</p>;
   return (
     <dl className="space-y-1 break-words text-sm">
+      <div>
+        <dt className="text-muted">名前</dt>
+        <dd>{project.name}</dd>
+      </div>
       <div>
         <dt className="text-muted">リポジトリ</dt>
         <dd>{project.repository}</dd>
@@ -165,7 +170,10 @@ export function ProjectsPage() {
               <li key={item.project.id} className="space-y-3 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <p className="font-medium">{item.project.repository}</p>
+                    <p className="font-medium">{item.project.name}</p>
+                    <p className="text-sm text-muted">
+                      {item.project.repository}
+                    </p>
                     <p className="break-all font-mono text-xs text-muted">
                       {item.project.id}
                     </p>
@@ -178,6 +186,7 @@ export function ProjectsPage() {
                       onClick={() => {
                         setEditing(item);
                         setSettings({
+                          name: item.project.name,
                           repository: item.project.repository,
                           repositoryId: item.project.repositoryId,
                           installationId: item.project.installationId,
@@ -199,7 +208,7 @@ export function ProjectsPage() {
                       onClick={() => {
                         if (
                           window.confirm(
-                            `「${item.project.repository}」を削除しますか？新規起動は停止します。作成済みの Run は続行し、会話と履歴は残ります。`,
+                            `「${item.project.name}」を削除しますか？新規起動は停止します。作成済みの Run は続行し、会話と履歴は残ります。`,
                           )
                         )
                           remove.mutate(item);
@@ -228,6 +237,19 @@ export function ProjectsPage() {
         <h2 className="text-lg font-medium">
           {editing ? "Project を編集" : "Project を追加"}
         </h2>
+        <label className="block space-y-2 text-sm">
+          名前
+          <input
+            required
+            maxLength={100}
+            className={fieldClass}
+            value={settings.name}
+            disabled={busy}
+            onChange={(event) =>
+              setSettings({ ...settings, name: event.target.value })
+            }
+          />
+        </label>
         <label className="block space-y-2 text-sm">
           リポジトリ
           <select

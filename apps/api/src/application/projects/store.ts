@@ -1,10 +1,20 @@
+import * as v from "valibot";
+import { projectSchema } from "@/application/triggers/projects.ts";
 import type {
   Project,
   ProjectSettings,
 } from "@/application/triggers/projects.ts";
 
+export type NamedProject = Project & { name: string };
+export type ProjectPosition = { name: string; id: string };
+export const projectSummary = v.strictObject({
+  id: projectSchema.entries.id,
+  name: v.pipe(v.string(), v.minLength(1)),
+  repository: projectSchema.entries.repository,
+});
+export type ProjectSummary = v.InferOutput<typeof projectSummary>;
 export type ProjectRecord = {
-  project: Project;
+  project: NamedProject;
   revision: number;
   updatedAt: number;
 };
@@ -18,12 +28,19 @@ export type ProjectChange = {
   operation: "create" | "update" | "delete" | "import";
   actorId: string;
   createdAt: number;
-  before: Project | null;
-  after: Project | null;
+  before: NamedProject | null;
+  after: NamedProject | null;
 };
 export class ProjectConflict extends Error {}
 export type ProjectStore = {
+  // Internal Webhook configuration read; HTTP access must use owned methods.
   list(): Promise<ProjectRecord[]>;
+  settings(ownerId: string): Promise<ProjectRecord[]>;
+  page(
+    ownerId: string,
+    limit: number,
+    after?: ProjectPosition,
+  ): Promise<{ items: ProjectSummary[]; nextPosition: ProjectPosition | null }>;
   create(settings: ProjectSettings, actorId: string): Promise<ProjectRecord>;
   update(
     id: string,
@@ -38,6 +55,7 @@ export type ProjectStore = {
     actorId: string,
   ): Promise<void>;
   history(
+    ownerId: string,
     before?: number,
   ): Promise<{ changes: ProjectChange[]; nextCursor: number | null }>;
 };

@@ -182,6 +182,28 @@ try {
     deploy.push("--secrets-file", secretPath);
   }
   wrangler(["d1", "migrations", "apply", "DB", "--remote", "--config", path]);
+  // Assign only legacy rows. Never transfer projects when the configured
+  // operator changes. The numeric GitHub ID is validated by readLoginConfig.
+  const githubId = login.vars.TAILOS_OPERATOR_GITHUB_ID;
+  if (githubId) {
+    wrangler([
+      "d1",
+      "execute",
+      "DB",
+      "--remote",
+      "--command",
+      `UPDATE projects SET owner_id = (SELECT user_id FROM auth_accounts WHERE provider_id = 'github' AND account_id = '${githubId}') WHERE owner_id IS NULL`,
+      "--config",
+      path,
+    ]);
+  }
+  const unowned = await projectRows(
+    "SELECT count(*) AS count FROM projects WHERE owner_id IS NULL",
+  );
+  if (unowned.length !== 1 || unowned[0].count !== 0)
+    throw new Error(
+      "Legacy Projects require the configured operator to log in before ownership can be assigned. Log in using the existing deployment and retry.",
+    );
   wrangler([...deploy, "--config", path]);
 } finally {
   try {

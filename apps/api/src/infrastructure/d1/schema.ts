@@ -15,6 +15,8 @@ export const projects = sqliteTable(
   "projects",
   {
     id: text().primaryKey().notNull(),
+    name: text().notNull().default(""),
+    ownerId: text("owner_id"),
     repositoryId: integer("repository_id").notNull(),
     config: text().notNull(),
     legacyId: text("legacy_id").unique(),
@@ -25,6 +27,9 @@ export const projects = sqliteTable(
     deletedAt: integer("deleted_at"),
   },
   (t) => [
+    index("project_owner_name")
+      .on(t.ownerId, t.name, t.id)
+      .where(sql`${t.deletedAt} is null`),
     uniqueIndex("project_active_repository")
       .on(t.repositoryId)
       .where(sql`${t.deletedAt} is null`),

@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261114-project-editable-fields
 key: project.configuration.editable-fields
-status: accepted
+status: superseded
 date: "2026-11-14"
 areas: [projects, web]
 keywords: [設定画面, agentNetworkAccess, allowedActors, triggerLabel, maxRunMinutes]

@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261114-project-ownership
 key: project.configuration.ownership
-status: accepted
+status: superseded
 date: "2026-11-14"
 areas: [projects, auth]
 keywords: [Project, 設定の所有者, 運用者, 共有]

@@ -2,25 +2,38 @@ import type { D1Database } from "@cloudflare/workers-types";
 import * as v from "valibot";
 import {
   projectSchema,
+  projectSettings,
   projectsSchema,
   type Project,
 } from "@/application/triggers/projects.ts";
 import {
   ProjectConflict,
+  projectSummary,
   type ProjectRecord,
   type ProjectStore,
   type ProjectChange,
+  type NamedProject,
+  type ProjectSummary,
 } from "@/application/projects/store.ts";
 
 type Row = {
   id: string;
   repository_id: number;
   config: string;
+  name: string;
   revision: number;
   updated_at: number;
 };
+function namedProject(value: string, name?: string): NamedProject {
+  const { name: storedName, ...config } = v.parse(
+    v.looseObject({ name: v.optional(v.string()) }),
+    JSON.parse(value),
+  );
+  const project = v.parse(projectSchema, config);
+  return { ...project, name: name || storedName || project.repository };
+}
 function record(row: Row): ProjectRecord {
-  const project = v.parse(projectSchema, JSON.parse(row.config));
+  const project = namedProject(row.config, row.name);
   if (project.id !== row.id || project.repositoryId !== row.repository_id)
     throw new Error("Invalid stored project");
   return { project, revision: row.revision, updatedAt: row.updated_at };
@@ -40,24 +53,62 @@ function mutationError(error: unknown): never {
 
 export function d1Projects(db: D1Database): ProjectStore {
   const insert = (
-    project: Project,
+    project: NamedProject,
     actorId: string,
     now: number,
     legacyId: string | null = null,
   ) =>
     db
-      .prepare(`INSERT INTO projects (id, repository_id, config, legacy_id, created_at, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .prepare(`INSERT INTO projects (id, name, owner_id, repository_id, config, legacy_id, created_at, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(
         project.id,
+        project.name,
+        actorId,
         project.repositoryId,
-        JSON.stringify(project),
+        JSON.stringify(configuration(project)),
         legacyId,
         now,
         now,
         actorId,
       );
+  function configuration(project: NamedProject): Project {
+    const { name: _name, ...config } = project;
+    return v.parse(projectSchema, config);
+  }
   return {
+    async settings(ownerId) {
+      const { results } = await db
+        .prepare(
+          "SELECT * FROM projects WHERE owner_id = ? AND deleted_at IS NULL ORDER BY name COLLATE BINARY, id",
+        )
+        .bind(ownerId)
+        .all<Row>();
+      return results.map(record);
+    },
+    async page(ownerId, limit, after) {
+      const { results } = await db
+        .prepare(`SELECT id, name, json_extract(config, '$.repository') AS repository FROM projects
+        WHERE owner_id = ? AND deleted_at IS NULL AND (? IS NULL OR (name COLLATE BINARY, id) > (?, ?))
+        ORDER BY name COLLATE BINARY, id LIMIT ?`)
+        .bind(
+          ownerId,
+          after?.name ?? null,
+          after?.name ?? null,
+          after?.id ?? null,
+          limit + 1,
+        )
+        .all<ProjectSummary>();
+      const items = v.parse(v.array(projectSummary), results.slice(0, limit));
+      const last = items.at(-1);
+      return {
+        items,
+        nextPosition:
+          results.length > limit && last
+            ? { name: last.name, id: last.id }
+            : null,
+      };
+    },
     async list() {
       const { results } = await db
         .prepare(
@@ -67,15 +118,15 @@ export function d1Projects(db: D1Database): ProjectStore {
       const records = results.map(record);
       v.parse(
         projectsSchema,
-        records.map((r) => r.project),
+        records.map((r) => configuration(r.project)),
       );
       return records;
     },
     async create(settings, actorId) {
-      const project = v.parse(projectSchema, {
-        ...settings,
+      const project = {
+        ...v.parse(projectSettings, settings),
         id: crypto.randomUUID(),
-      });
+      };
       const now = Date.now();
       try {
         await insert(project, actorId, now).run();
@@ -85,19 +136,21 @@ export function d1Projects(db: D1Database): ProjectStore {
       return { project, revision: 1, updatedAt: now };
     },
     async update(id, revision, settings, actorId) {
-      const project = v.parse(projectSchema, { ...settings, id });
+      const project = { ...v.parse(projectSettings, settings), id };
       const now = Date.now();
       try {
         const result = await db
-          .prepare(`UPDATE projects SET repository_id = ?, config = ?, revision = revision + 1, updated_at = ?, updated_by = ?
-          WHERE id = ? AND revision = ? AND deleted_at IS NULL RETURNING id`)
+          .prepare(`UPDATE projects SET name = ?, repository_id = ?, config = ?, revision = revision + 1, updated_at = ?, updated_by = ?
+          WHERE id = ? AND revision = ? AND owner_id = ? AND deleted_at IS NULL RETURNING id`)
           .bind(
+            project.name,
             project.repositoryId,
-            JSON.stringify(project),
+            JSON.stringify(configuration(project)),
             now,
             actorId,
             id,
             revision,
+            actorId,
           )
           .first<string>("id");
         return result !== null
@@ -110,8 +163,8 @@ export function d1Projects(db: D1Database): ProjectStore {
     async remove(id, revision, actorId) {
       const result = await db
         .prepare(`UPDATE projects SET deleted_at = ?, updated_at = ?, updated_by = ?, revision = revision + 1
-        WHERE id = ? AND revision = ? AND deleted_at IS NULL RETURNING id`)
-        .bind(Date.now(), Date.now(), actorId, id, revision)
+        WHERE id = ? AND revision = ? AND owner_id = ? AND deleted_at IS NULL RETURNING id`)
+        .bind(Date.now(), Date.now(), actorId, id, revision, actorId)
         .first<string>("id");
       return result !== null;
     },
@@ -133,10 +186,12 @@ export function d1Projects(db: D1Database): ProjectStore {
       for (const [index, project] of projects.entries()) {
         statements.push(
           db
-            .prepare(`INSERT INTO projects (id, repository_id, config, legacy_id, created_at, updated_at, updated_by)
-          SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
+            .prepare(`INSERT INTO projects (id, name, owner_id, repository_id, config, legacy_id, created_at, updated_at, updated_by)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
             .bind(
               project.id,
+              project.repository,
+              actorId,
               project.repositoryId,
               JSON.stringify(project),
               legacyIds[index],
@@ -172,12 +227,12 @@ export function d1Projects(db: D1Database): ProjectStore {
         mutationError(error);
       }
     },
-    async history(before) {
+    async history(ownerId, before) {
       const { results } = await db
         .prepare(
-          `SELECT * FROM project_changes WHERE id < ? ORDER BY id DESC LIMIT 51`,
+          `SELECT c.* FROM project_changes c JOIN projects p ON p.id = c.project_id WHERE p.owner_id = ? AND c.id < ? ORDER BY c.id DESC LIMIT 51`,
         )
-        .bind(before ?? Number.MAX_SAFE_INTEGER)
+        .bind(ownerId, before ?? Number.MAX_SAFE_INTEGER)
         .all<{
           id: number;
           project_id: string;
@@ -193,14 +248,8 @@ export function d1Projects(db: D1Database): ProjectStore {
         operation: r.operation,
         actorId: r.actor_id,
         createdAt: r.created_at,
-        before:
-          r.before_config === null
-            ? null
-            : v.parse(projectSchema, JSON.parse(r.before_config)),
-        after:
-          r.after_config === null
-            ? null
-            : v.parse(projectSchema, JSON.parse(r.after_config)),
+        before: r.before_config === null ? null : namedProject(r.before_config),
+        after: r.after_config === null ? null : namedProject(r.after_config),
       }));
       return {
         changes,

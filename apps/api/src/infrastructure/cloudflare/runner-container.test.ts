@@ -678,6 +678,7 @@ test.for([
     const { d1Projects } = await import("@/infrastructure/d1/projects.ts");
     const configured = await d1Projects(DB).create(
       {
+        name: "Tailos",
         repository: "owner/repo",
         repositoryId: 1,
         installationId: 2,

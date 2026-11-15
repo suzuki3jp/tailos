@@ -102,7 +102,9 @@ JSON の列はバージョン付きの Valibot スキーマで検証する。Iss
 3. 進行中の Run だけ `concurrency_key` を一意にする。Issue → PR のキーは依頼の種類、GitHub リポジトリ ID、Issue 番号から作る。同じ Issue に対する別の配送が実行中に届いたら、`coalesced` として既存 Run に紐づける。完了後にラベルを付け直したら、新しい Session を作る。
 4. 新規 Webhook の受付では Session、最初のメッセージ、Run、`started` イベントを一つの D1 バッチトランザクションで作る。外部イベントで始まる Run の `started` は一件に制限する。将来、Web から始まる Run はユーザーのメッセージを起点にする。
 
-Project はデプロイ全体で共有する複数件の設定であり、運用者認証と Web の Origin 検査で管理する。`projects` は UUID、設定 JSON、リポジトリ ID、版、更新者・時刻、削除時刻、移行元の旧 ID を保持する。UUID はサーバーで発行し変更しない。稼働中の Project は最大 100 件で、同じリポジトリ ID を重複登録できない。リポジトリは GitHub App の installation とアクセス可能な全ページの候補から選び、保存時にも metadata の読み取りトークンで名前・ID・installation の組み合わせを照合する。秘密鍵とトークンは API 内だけで扱う。 [GitHub App の installation API](https://docs.github.com/en/rest/apps/installations)
+Project はアカウントが所有する設定であり、運用者認証と Web の Origin 検査で管理する。`projects` は UUID、自由な名前 `name`、内部ユーザー ID の `owner_id`、設定 JSON、リポジトリ ID、版、更新者・時刻、削除時刻、移行元の旧 ID を保持する。名前は前後の空白除去後に 1〜100 文字で必須、同名を許可する。UUID はサーバーで発行し変更しない。稼働中の Project は最大 100 件で、今回の実装では同じリポジトリ ID を重複登録できない。重複登録と Webhook の複数配信は後続で一緒に有効にする。リポジトリは GitHub App の installation とアクセス可能な全ページの候補から選び、保存時にも metadata の読み取りトークンで名前・ID・installation の組み合わせを照合する。秘密鍵とトークンは API 内だけで扱う。 [GitHub App の installation API](https://docs.github.com/en/rest/apps/installations)
+
+`GET /api/projects` は所有する未削除 Project の `id`・`name`・`repository` を `{ items, nextCursor }` 形式で返す。名前の BINARY 昇順と ID 昇順にカーソルでページングし、`limit` は既定 50、1〜100 件。設定画面は所有者に限定した `GET /api/projects/settings` で設定と revision を取得する。編集・削除・変更履歴の取得も所有者に限定する。ホーム画面への接続、whitelist、メンバー参加は今回含めない。
 
 `project_changes` は DB トリガーで追加・変更・削除・インポートの変更前後と運用者の内部 ID・時刻を保存する。設定の変更と履歴は同じトランザクションであり、履歴を保存できなければ設定も変更されない。履歴は画面から全ページを閲覧でき、自動削除や履歴の編集・復元は提供しない。旧 JSON の明示的な初回移行では `project_imports` に完了を記録し、Project の `legacy_id` と UUID の対応に従って既存 Session の参照と計画会話・inbox の scope 内の Project ID も一括更新する。
 

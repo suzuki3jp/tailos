@@ -49,6 +49,7 @@ test.for([undefined, false, true] as const)(
     };
     await d1Projects(db).create(
       {
+        name: "Tailos",
         repository: "owner/private",
         repositoryId: 42,
         installationId: 19,
@@ -101,6 +102,11 @@ test.for([undefined, false, true] as const)(
     ).toBe(0);
 
     const operator = await createTestOperator(env);
+    // The existing test project now belongs to the initialized operator.
+    await db
+      .prepare("UPDATE projects SET owner_id = ? WHERE owner_id = 'setup'")
+      .bind(operator.id)
+      .run();
     await db
       .prepare(`CREATE TRIGGER reject_detail_decisions BEFORE INSERT ON diagnostic_events
       WHEN NEW.name = 'trigger.decided' AND json_extract(NEW.attributes, '$.reason') IS NOT NULL
@@ -178,6 +184,7 @@ test.for([undefined, false, true] as const)(
       configured.project.id,
       1,
       {
+        name: configured.project.name,
         repository: configured.project.repository,
         repositoryId: configured.project.repositoryId,
         installationId: configured.project.installationId,
@@ -256,6 +263,7 @@ test("accepts explicit new planning comments without labels and rejects ineligib
   };
   await d1Projects(db).create(
     {
+      name: "Tailos",
       repository: "owner/repo",
       repositoryId: 42,
       installationId: 19,
@@ -458,6 +466,7 @@ test.for([false, true])(
     });
     await d1Projects(DB).create(
       {
+        name: "Tailos",
         repository: "owner/repo",
         repositoryId: 42,
         installationId: 19,

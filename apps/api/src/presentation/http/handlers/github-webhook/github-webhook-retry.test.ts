@@ -10,6 +10,7 @@ import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
 import type { Bindings } from "@/bindings.ts";
 
 const settings = {
+  name: "Tailos",
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,

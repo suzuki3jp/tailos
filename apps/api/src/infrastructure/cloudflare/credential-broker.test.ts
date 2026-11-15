@@ -1,6 +1,6 @@
-import { expect, test, type TestContext } from "vitest";
+import { assert, expect, test, type TestContext } from "vitest";
 import { fileURLToPath } from "node:url";
-import { CodexAccess } from "@tailos/core/runner";
+import { ClaudeAccess, CodexAccess } from "@tailos/core/runner";
 import * as v from "valibot";
 import { build } from "esbuild";
 import {
@@ -81,6 +81,7 @@ async function createBroker(t: TestContext, openAIStatus = 530) {
             return {
               alarm: await this.ctx.storage.getAlarm(),
               connection: await this.ctx.storage.get("connection"),
+              claude: await this.ctx.storage.get("claude"),
             };
           }
         }
@@ -226,4 +227,38 @@ test("serializes access rotation and invalidates a revoked connection", async (t
   ).toBe(null);
   expect(await rpc("status")).toStrictEqual({ state: "failed" });
   expect(await rpc("issueAccess")).toBe(null);
+});
+
+test("stores a pasted Claude token encrypted and hands it out until disconnected", async (t) => {
+  const rpc = await createBroker(t);
+  const token = "sk-ant-oat01-" + "a".repeat(64);
+  expect(await rpc("claudeStatus")).toStrictEqual({ state: "disconnected" });
+  expect(await rpc("issueClaudeAccess")).toBe(null);
+
+  const before = Date.now();
+  expect(await rpc("saveClaudeToken", token)).toBe(true);
+  // Replacing a saved token requires disconnecting first.
+  expect(await rpc("saveClaudeToken", "sk-ant-oat01-" + "b".repeat(64))).toBe(
+    false,
+  );
+  const stored = JSON.stringify(await rpc("stored"));
+  expect(stored).toMatch(/ciphertext/);
+  expect(stored).not.toContain(token);
+
+  const status = await rpc("claudeStatus");
+  expect(status).toMatchObject({ state: "connected", expiry: "valid" });
+  expect(JSON.stringify(status)).not.toContain(token);
+  assert(status && typeof status === "object" && "savedAt" in status);
+  expect(status.savedAt).toBeGreaterThanOrEqual(before);
+  // The ChatGPT connection of the same object is unaffected.
+  expect(await rpc("status")).toStrictEqual({ state: "disconnected" });
+
+  const access = v.parse(ClaudeAccess, await rpc("issueClaudeAccess"));
+  expect(access.token).toBe(token);
+  expect(await rpc("issueClaudeAccess")).toStrictEqual(access);
+
+  await rpc("disconnect");
+  expect(await rpc("claudeStatus")).toStrictEqual({ state: "disconnected" });
+  expect(await rpc("issueClaudeAccess")).toBe(null);
+  expect(await rpc("stored")).toStrictEqual({ alarm: null });
 });

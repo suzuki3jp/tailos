@@ -1,0 +1,119 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RequestState } from "@/widgets/request-state";
+import {
+  claudeConnectionKey,
+  claudeConnectionQueryOptions,
+} from "../api/queries";
+import { disconnectClaude, saveClaudeToken } from "../api/update-connection";
+
+const date = new Intl.DateTimeFormat("ja-JP", { dateStyle: "long" });
+
+export function ClaudeConnection() {
+  const client = useQueryClient();
+  // The pasted token stays in this field until it is saved, never in a query
+  // or mutation cache or browser storage.
+  const [token, setToken] = useState("");
+  const connection = useQuery(claudeConnectionQueryOptions());
+  const refresh = () =>
+    client.invalidateQueries({ queryKey: claudeConnectionKey });
+  const save = useMutation({
+    mutationFn: async () => {
+      await saveClaudeToken(token.trim());
+      setToken("");
+    },
+    onSettled: refresh,
+  });
+  const disconnect = useMutation({
+    mutationFn: disconnectClaude,
+    onSuccess: refresh,
+  });
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!save.isPending && token.trim()) save.mutate();
+  }
+  const status = connection.data;
+  return (
+    <div className="surface space-y-4">
+      <h2 className="text-lg font-medium">Claude</h2>
+      {connection.isPending ? (
+        <p role="status" className="text-muted">
+          接続状態を確認しています。
+        </p>
+      ) : !status || "error" in status ? (
+        <RequestState
+          status={status?.error}
+          missing="Claude 接続は現在利用できません。"
+          retry={() => void connection.refetch()}
+        />
+      ) : status.state === "connected" ? (
+        <>
+          <p>Claude のトークンを保存済みです。</p>
+          <p className="text-sm text-muted">
+            {date.format(status.savedAt)} に保存しました。有効期限の目安は{" "}
+            {date.format(status.expiresAt)} です。
+          </p>
+          {status.expiry !== "valid" && (
+            <p role="status" className="text-sm text-danger">
+              {status.expiry === "soon"
+                ? "まもなくトークンの有効期限が切れます。"
+                : "トークンの有効期限が切れている可能性があります。"}
+              接続を解除し、<code>claude setup-token</code>{" "}
+              で発行し直したトークンを保存してください。
+            </p>
+          )}
+          <button
+            className="action"
+            type="button"
+            disabled={disconnect.isPending}
+            onClick={() => {
+              if (window.confirm("Claude 接続を解除しますか？"))
+                disconnect.mutate();
+            }}
+          >
+            接続を解除
+          </button>
+          {disconnect.isError && (
+            <p role="alert" className="text-danger">
+              {disconnect.error.message}
+            </p>
+          )}
+        </>
+      ) : (
+        <form className="space-y-4" onSubmit={submit}>
+          <p className="text-sm text-muted">
+            手元で <code>claude setup-token</code>{" "}
+            を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
+          </p>
+          <label className="block space-y-2 text-sm">
+            トークン
+            <input
+              required
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="sk-ant-oat01-…"
+              className="block w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono"
+            />
+          </label>
+          <button
+            type="submit"
+            className="action action-primary"
+            disabled={save.isPending || !token.trim()}
+          >
+            {save.isPending ? "保存しています…" : "トークンを保存"}
+          </button>
+          {save.isError && (
+            <p role="alert" className="text-danger">
+              {save.error.message}
+            </p>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}

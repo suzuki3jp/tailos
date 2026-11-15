@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "@/bindings.ts";
-import type { CodexAccess } from "@tailos/core/runner";
+import type { ClaudeAccess, CodexAccess } from "@tailos/core/runner";
 import {
   CodexDeviceAuth,
   CodexDeviceError,
@@ -14,6 +14,12 @@ import {
   type DeviceChallenge,
 } from "@/application/auth/device.ts";
 import {
+  ClaudeToken,
+  claudeConnectionStatus,
+  type ClaudeConnectionControl,
+  type ClaudeConnectionStatus,
+} from "@/application/auth/claude.ts";
+import {
   seal,
   unseal,
   type Sealed,
@@ -23,6 +29,7 @@ import * as v from "valibot";
 // The transferred namespace uses these values as AES-GCM associated data.
 const pendingContext = "meguri:codex:default:pending:v1";
 const credentialContext = "meguri:codex:default:credentials:v1";
+const claudeContext = "tailos:claude:token:v1";
 
 const pendingSchema = v.strictObject({
   id: v.string(),
@@ -35,6 +42,14 @@ const pendingSchema = v.strictObject({
 type StoredConnection = {
   version: string;
   accessVersion?: string;
+  value: Sealed;
+};
+
+// A pasted Claude token. It lives under its own key and associated data so a
+// ChatGPT record can never be read as one.
+type StoredClaudeToken = {
+  version: string;
+  savedAt: number;
   value: Sealed;
 };
 
@@ -53,7 +68,10 @@ function logConnectionFailure(stage: string, error?: unknown) {
   });
 }
 
-export class CredentialBroker extends DurableObject<Bindings> {
+export class CredentialBroker
+  extends DurableObject<Bindings>
+  implements ClaudeConnectionControl
+{
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
     new CodexDeviceAuth();
 
@@ -127,9 +145,48 @@ export class CredentialBroker extends DurableObject<Bindings> {
 
   async disconnect(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
-      await this.ctx.storage.delete(["connection", "pending", "status"]);
+      await this.ctx.storage.delete([
+        "connection",
+        "pending",
+        "status",
+        "claude",
+      ]);
       await this.ctx.storage.deleteAlarm();
     });
+  }
+
+  async claudeStatus(): Promise<ClaudeConnectionStatus> {
+    const stored = await this.ctx.storage.get<StoredClaudeToken>("claude");
+    return claudeConnectionStatus(stored?.savedAt, Date.now());
+  }
+
+  async saveClaudeToken(token: string): Promise<boolean> {
+    const value = await seal(
+      v.parse(ClaudeToken, token),
+      this.key,
+      claudeContext,
+    );
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (await this.ctx.storage.get("claude")) return false;
+      await this.ctx.storage.put("claude", {
+        version: crypto.randomUUID(),
+        savedAt: Date.now(),
+        value,
+      } satisfies StoredClaudeToken);
+      return true;
+    });
+  }
+
+  async issueClaudeAccess(): Promise<ClaudeAccess | null> {
+    const stored = await this.ctx.storage.get<StoredClaudeToken>("claude");
+    if (!stored) return null;
+    return {
+      token: v.parse(
+        ClaudeToken,
+        await unseal(stored.value, this.key, claudeContext),
+      ),
+      connectionVersion: stored.version,
+    };
   }
 
   async issueAccess(rejected?: {

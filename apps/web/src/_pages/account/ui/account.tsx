@@ -45,7 +45,7 @@ export function Account() {
         </a>
         {data.connectEnabled && (
           <a href="/connect" className="action action-primary">
-            ChatGPT 接続を開く
+            Agent 接続を開く
           </a>
         )}
         <form method="post" action={apiOrigin + "/api/auth/logout"}>

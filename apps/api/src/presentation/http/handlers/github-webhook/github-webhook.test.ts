@@ -12,6 +12,7 @@ import {
   acceptPlanningInput,
   dispatchPlanningInputs,
 } from "@/infrastructure/d1/planning.ts";
+import { d1Projects } from "@/infrastructure/d1/projects.ts";
 
 test.for([undefined, false, true] as const)(
   "accepts signed issue events with project network setting %s and rejects unauthorized actors",
@@ -45,19 +46,24 @@ test.for([undefined, false, true] as const)(
       TAILOS_GH_WEBHOOK_SECRET: "test-secret",
       TAILOS_GH_APP_ID: "100",
       TAILOS_GH_APP_PRIVATE_KEY: "unused-until-run",
-      PROJECTS: JSON.stringify([
-        {
-          id: "private-project",
-          repository: "owner/private",
-          repositoryId: 42,
-          installationId: 19,
-          triggerLabel: "tailos:run",
-          allowedActors: ["allowed-user"],
-          agentNetworkAccess,
-        },
-      ]),
     };
-    const send = (payload: object, secret = env.TAILOS_GH_WEBHOOK_SECRET) => {
+    await d1Projects(db).create(
+      {
+        repository: "owner/private",
+        repositoryId: 42,
+        installationId: 19,
+        triggerLabel: "tailos:run",
+        allowedActors: ["allowed-user"],
+        agentNetworkAccess: agentNetworkAccess ?? false,
+        maxRunMinutes: 30,
+      },
+      "setup",
+    );
+    const send = (
+      payload: object,
+      secret = env.TAILOS_GH_WEBHOOK_SECRET,
+      delivery = "test-delivery",
+    ) => {
       const body = JSON.stringify(payload);
       return app.request(
         "https://tailos.example/webhooks/github",
@@ -66,7 +72,7 @@ test.for([undefined, false, true] as const)(
           body,
           headers: {
             "X-GitHub-Event": "issues",
-            "X-GitHub-Delivery": "test-delivery",
+            "X-GitHub-Delivery": delivery,
             "X-Hub-Signature-256":
               "sha256=" +
               createHmac("sha256", secret).update(body).digest("hex"),
@@ -162,6 +168,78 @@ test.for([undefined, false, true] as const)(
       env,
     );
     expect(another.status).toBe(404);
+    const store = d1Projects(db);
+    const [configured] = await store.list();
+    const oldDeadline = await db
+      .prepare("SELECT deadline_at FROM runs WHERE id = ?")
+      .bind(data.runId)
+      .first("deadline_at");
+    await store.update(
+      configured.project.id,
+      1,
+      {
+        repository: configured.project.repository,
+        repositoryId: configured.project.repositoryId,
+        installationId: configured.project.installationId,
+        triggerLabel: configured.project.triggerLabel,
+        allowedActors: ["next-user"],
+        agentNetworkAccess: !(agentNetworkAccess ?? false),
+        maxRunMinutes: 1,
+      },
+      operator.id,
+    );
+    expect((await send(event)).status).toBe(204);
+    expect(
+      await db
+        .prepare("SELECT execution_context FROM runs WHERE id = ?")
+        .bind(data.runId)
+        .first("execution_context"),
+    ).toBe(run);
+    expect(
+      await db
+        .prepare("SELECT deadline_at FROM runs WHERE id = ?")
+        .bind(data.runId)
+        .first("deadline_at"),
+    ).toBe(oldDeadline);
+    await db
+      .prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
+      .bind(data.runId)
+      .run();
+    const next = await send(
+      { ...event, sender: { login: "next-user" } },
+      env.TAILOS_GH_WEBHOOK_SECRET,
+      "next-delivery",
+    );
+    expect(next.status).toBe(202);
+    const [nextRun] = await db
+      .prepare(
+        "SELECT execution_context, deadline_at, created_at FROM runs WHERE id != ?",
+      )
+      .bind(data.runId)
+      .all<{
+        execution_context: string;
+        deadline_at: number;
+        created_at: number;
+      }>()
+      .then((r) => r.results);
+    expect(
+      JSON.parse(nextRun.execution_context).repository.agentNetworkAccess,
+    ).toBe(!(agentNetworkAccess ?? false));
+    expect(nextRun.deadline_at - nextRun.created_at).toBe(60_000);
+    await store.remove(configured.project.id, 2, operator.id);
+    expect(
+      (
+        await send(
+          { ...event, sender: { login: "next-user" } },
+          env.TAILOS_GH_WEBHOOK_SECRET,
+          "after-delete",
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (await app.request(path, { headers: { Cookie: operator.cookie } }, env))
+        .status,
+    ).toBe(200);
   },
 );
 
@@ -175,17 +253,19 @@ test("accepts explicit new planning comments without labels and rejects ineligib
     TAILOS_GH_WEBHOOK_SECRET: "secret",
     TAILOS_GH_APP_ID: "100",
     TAILOS_GH_APP_PRIVATE_KEY: "unused",
-    PROJECTS: JSON.stringify([
-      {
-        id: "project",
-        repository: "owner/repo",
-        repositoryId: 42,
-        installationId: 19,
-        triggerLabel: "tailos:run",
-        allowedActors: ["allowed"],
-      },
-    ]),
   };
+  await d1Projects(db).create(
+    {
+      repository: "owner/repo",
+      repositoryId: 42,
+      installationId: 19,
+      triggerLabel: "tailos:run",
+      allowedActors: ["allowed"],
+      agentNetworkAccess: false,
+      maxRunMinutes: 30,
+    },
+    "setup",
+  );
   await createTestOperator(env);
   const event = {
     action: "created",
@@ -376,6 +456,18 @@ test.for([false, true])(
         ),
       ).toBe(1);
     });
+    await d1Projects(DB).create(
+      {
+        repository: "owner/repo",
+        repositoryId: 42,
+        installationId: 19,
+        triggerLabel: "tailos:run",
+        allowedActors: ["allowed"],
+        agentNetworkAccess: false,
+        maxRunMinutes: 30,
+      },
+      "setup",
+    );
     const webhook = createGithubWebhook(
       () => undefined,
       () => async () => {
@@ -383,6 +475,7 @@ test.for([false, true])(
       },
       async () => "operator",
       async () => true,
+      (env) => d1Projects(env.DB).list(),
       recordDecision,
       notify,
       (env, input) => acceptPlanningInput(env.DB, input),
@@ -423,16 +516,6 @@ test.for([false, true])(
         TAILOS_GH_WEBHOOK_SECRET: "secret",
         TAILOS_GH_APP_ID: "100",
         TAILOS_GH_APP_PRIVATE_KEY: "unused",
-        PROJECTS: JSON.stringify([
-          {
-            id: "project",
-            repository: "owner/repo",
-            repositoryId: 42,
-            installationId: 19,
-            triggerLabel: "tailos:run",
-            allowedActors: ["allowed"],
-          },
-        ]),
       },
       {
         waitUntil: (task) => {

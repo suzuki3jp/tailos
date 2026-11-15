@@ -3,9 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { safeParse } from "valibot";
 import { readLoginConfig } from "./login-config.mjs";
-import { projectsSchema } from "../src/application/triggers/projects.ts";
 import {
   findD1Database,
   hasR2Bucket,
@@ -36,38 +34,13 @@ const secrets = {
 for (const name of Object.keys(secrets)) delete env[name];
 requireCloudflareCredentials(env);
 
-let projects;
-try {
-  projects = JSON.parse(env.TAILOS_PROJECTS || "[]");
-} catch {
-  throw new Error("TAILOS_PROJECTS must be a JSON array.");
-}
-if (!Array.isArray(projects))
-  throw new Error("TAILOS_PROJECTS must be a JSON array.");
 const appId = env.TAILOS_GH_APP_ID ?? "";
-if (
-  projects.length &&
-  (!/^\d+$/.test(appId) ||
-    !runtimeSecrets.every((name) => Boolean(secrets[name])) ||
-    !login.vars.TAILOS_OPERATOR_GITHUB_ID)
-) {
-  throw new Error(
-    "GitHub projects require GitHub login, TAILOS_GH_APP_ID, GitHub App secrets, and CREDENTIAL_ENCRYPTION_KEY.",
-  );
-}
 if (
   secrets.CREDENTIAL_ENCRYPTION_KEY &&
   !/^[A-Za-z0-9+/]{43}=$/.test(secrets.CREDENTIAL_ENCRYPTION_KEY)
 ) {
   throw new Error(
     "CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key.",
-  );
-}
-
-const checkedProjects = safeParse(projectsSchema, projects);
-if (!checkedProjects.success) {
-  throw new Error(
-    "TAILOS_PROJECTS does not match config/projects.example.json.",
   );
 }
 
@@ -115,7 +88,60 @@ if (!(await hasR2Bucket(bucket, env))) {
     `R2 bucket "${bucket.bucket_name}" is missing. Verify the account and name, then run Provision Cloudflare resources if it needs to be created.`,
   );
 }
+// Keep the existing deployment prerequisites after moving their source of
+// truth to D1. These are read-only queries, before build or migration writes.
+async function projectRows(sql) {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${id}/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sql }),
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  const body = await response.json().catch(() => null);
+  if (
+    !response.ok ||
+    body?.success !== true ||
+    body.result?.length !== 1 ||
+    body.result[0]?.success !== true ||
+    !Array.isArray(body.result[0].results)
+  )
+    throw new Error(
+      "Could not inspect D1 Project configuration before deployment.",
+    );
+  return body.result[0].results;
+}
+const tables = await projectRows(
+  "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'",
+);
+if (tables.length) {
+  const rows = await projectRows(
+    "SELECT count(*) AS count FROM projects WHERE deleted_at IS NULL",
+  );
+  if (
+    rows.length !== 1 ||
+    !Number.isSafeInteger(rows[0].count) ||
+    rows[0].count < 0
+  )
+    throw new Error("D1 returned an invalid Project count.");
+  if (
+    rows[0].count &&
+    (!/^\d+$/.test(appId) ||
+      !runtimeSecrets.every((name) => Boolean(secrets[name])) ||
+      !login.vars.TAILOS_OPERATOR_GITHUB_ID)
+  )
+    throw new Error(
+      "GitHub projects require GitHub login, TAILOS_GH_APP_ID, GitHub App secrets, and CREDENTIAL_ENCRYPTION_KEY.",
+    );
+}
 database.database_id = id;
+delete config.vars?.PROJECTS;
 config.workers_dev = false;
 config.preview_urls = false;
 config.routes = [{ pattern: domain, custom_domain: true }];
@@ -125,7 +151,6 @@ config.vars = {
   TAILOS_PUBLIC_ORIGIN: origin,
   TAILOS_WEB_ORIGIN: webOrigin,
   TAILOS_GH_APP_ID: appId,
-  PROJECTS: JSON.stringify(checkedProjects.output),
 };
 
 // Build before migrating. The build does not need any deployment credentials.

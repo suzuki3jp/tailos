@@ -75,7 +75,15 @@ function setup(t) {
   writeFileSync(
     fetchStub,
     `import { appendFileSync, existsSync } from "node:fs";
-    globalThis.fetch = async (url, { headers }) => {
+    globalThis.fetch = async (url, { headers, body }) => {
+      if (url === "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/${id}/query") {
+        if (headers.Authorization !== "Bearer test-token") throw new Error("Unexpected D1 authorization");
+        const sql = JSON.parse(body).sql;
+        appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: sql.includes("sqlite_master") ? "inspect Project table" : "count Projects" }) + "\\n");
+        if (existsSync("fail-project-lookup")) return Response.json({ success: false }, { status: 503 });
+        const results = sql.includes("sqlite_master") ? existsSync("projects") ? [{ name: "projects" }] : [] : [{ count: 1 }];
+        return Response.json({ success: true, result: [{ success: true, results }] });
+      }
       if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/tailos-run-artifacts") throw new Error("Unexpected R2 lookup URL");
       if (headers.Authorization !== "Bearer test-token") throw new Error("Unexpected R2 authorization");
       appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: "look up R2" }) + "\\n");
@@ -166,6 +174,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(calls.map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
     "look up R2",
+    "inspect Project table",
     ["--filter", "@tailos/runner", "run", "build"],
     ["d1", "migrations", "apply", "DB", "--remote"],
     [
@@ -222,10 +231,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
   expect(missingLoginSecret.status).not.toBe(0);
   expect(missingLoginSecret.stderr).toMatch(/GitHub login requires/);
 
-  const misconfigured = runDeploy({ TAILOS_PROJECTS: "[{}]" });
-  expect(misconfigured.status).not.toBe(0);
-  expect(misconfigured.stderr).toMatch(/GitHub projects require/);
-  expect(readCalls().length).toBe(calls.length);
+  expect(published.config.vars.PROJECTS).toBe(undefined);
 });
 
 test("deploy never migrates when the Runner cannot build", (t) => {
@@ -241,6 +247,7 @@ test("deploy never migrates when the Runner cannot build", (t) => {
   expect(readCalls().map(({ command }) => command)).toStrictEqual([
     "d1 list --json",
     "look up R2",
+    "inspect Project table",
     ["--filter", "@tailos/runner", "run", "build"],
   ]);
 });
@@ -281,4 +288,30 @@ test("deploy transfers the existing credential namespace and creates a fresh Run
       ],
     },
   ]);
+});
+
+test("D1 projects retain deployment prerequisites and inspection failure prevents writes", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  for (const marker of ["database", "bucket", "projects"])
+    writeFileSync(join(cwd, marker), "");
+  const missing = runDeploy();
+  expect(missing.status).not.toBe(0);
+  expect(missing.stderr).toContain("GitHub projects require");
+  expect(readCalls().some((call) => Array.isArray(call.command))).toBe(false);
+  const valid = runDeploy({
+    TAILOS_GH_APP_ID: "100",
+    TAILOS_GH_APP_PRIVATE_KEY: "test-key",
+    TAILOS_GH_WEBHOOK_SECRET: "test-secret",
+  });
+  expect(valid.status, valid.stderr).toBe(0);
+  const previous = readCalls().length;
+  writeFileSync(join(cwd, "fail-project-lookup"), "");
+  const failed = runDeploy();
+  expect(failed.status).not.toBe(0);
+  expect(failed.stderr).toContain("Could not inspect D1 Project configuration");
+  expect(
+    readCalls()
+      .slice(previous)
+      .some((call) => Array.isArray(call.command)),
+  ).toBe(false);
 });

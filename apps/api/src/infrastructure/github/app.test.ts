@@ -591,3 +591,107 @@ test("planning checks out an unlabelled issue without publication branch rules",
     /trigger/,
   );
 });
+
+test("project repository discovery pages installations and repositories, uses metadata-only grants, and never exposes tokens", async () => {
+  const paths: string[] = [];
+  const grants: object[] = [];
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname + url.search);
+      if (url.pathname === "/app/installations") {
+        expect(init?.headers).toMatchObject({
+          Authorization: expect.stringMatching(/^Bearer /),
+        });
+        return Response.json(
+          url.searchParams.get("page") === "1"
+            ? Array.from({ length: 100 }, (_, i) => ({
+                id: i + 1,
+                suspended_at: i === 0 ? null : "2026-11-14T00:00:00Z",
+              }))
+            : [{ id: 101, suspended_at: null }],
+        );
+      }
+      if (url.pathname.endsWith("/access_tokens")) {
+        const body = JSON.parse(String(init?.body));
+        grants.push(body);
+        expect(body.permissions).toEqual({ metadata: "read" });
+        return Response.json({
+          token: "metadata-token",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      }
+      if (url.pathname === "/installation/repositories")
+        return Response.json({
+          repositories:
+            url.searchParams.get("page") === "1"
+              ? Array.from({ length: 100 }, (_, i) => ({
+                  id: i + 1,
+                  full_name: `owner/repo-${i + 1}`,
+                }))
+              : [{ id: 101, full_name: "owner/final" }],
+        });
+      if (url.pathname === "/installation/token") {
+        expect(init?.method).toBe("DELETE");
+        return new Response(null, { status: 204 });
+      }
+      throw new Error("Unexpected URL " + url);
+    },
+  );
+  const choices = await github.projectRepositories().list();
+  expect(paths).toContain("/app/installations?per_page=100&page=2");
+  expect(
+    paths.filter(
+      (path) => path === "/installation/repositories?per_page=100&page=2",
+    ),
+  ).toHaveLength(2);
+  expect(choices).toHaveLength(202);
+  expect(choices).toContainEqual({
+    repository: "owner/final",
+    repositoryId: 101,
+    installationId: 101,
+  });
+  expect(grants).toHaveLength(2);
+  expect(JSON.stringify(choices)).not.toContain("metadata-token");
+  expect(paths.filter((path) => path === "/installation/token")).toHaveLength(
+    2,
+  );
+});
+
+test("project saves verify selected repository IDs with the configured App and revoke even on a mismatch", async () => {
+  let mismatch = false;
+  let revokes = 0;
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/app/installations/19/access_tokens") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          repository_ids: [42],
+          permissions: { metadata: "read" },
+        });
+        return Response.json({
+          token: "scoped-token",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      }
+      if (url.pathname === "/repos/owner/private")
+        return Response.json({
+          id: mismatch ? 43 : 42,
+          full_name: "owner/private",
+        });
+      if (url.pathname === "/installation/token") {
+        revokes++;
+        return new Response(null, { status: 204 });
+      }
+      throw new Error("Unexpected URL");
+    },
+  );
+  await github.projectRepositories().verify(target);
+  mismatch = true;
+  await expect(github.projectRepositories().verify(target)).rejects.toThrow(
+    /target changed/,
+  );
+  expect(revokes).toBe(2);
+});

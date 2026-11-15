@@ -675,9 +675,22 @@ test.for([
       defaultBranch: "main",
       triggerLabel: "tailos:run",
     };
+    const { d1Projects } = await import("@/infrastructure/d1/projects.ts");
+    const configured = await d1Projects(DB).create(
+      {
+        repository: "owner/repo",
+        repositoryId: 1,
+        installationId: 2,
+        triggerLabel: "tailos:run",
+        allowedActors: ["allowed"],
+        agentNetworkAccess: false,
+        maxRunMinutes: 1,
+      },
+      "owner",
+    );
     await acceptPlanningInput(DB, {
       ownerId: "owner",
-      projectId: "project",
+      projectId: configured.project.id,
       repositoryId: 1,
       issueNumber: 3,
       commentId: 100,

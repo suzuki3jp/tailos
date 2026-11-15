@@ -1,6 +1,7 @@
 export type PlanningAdmission = {
   ownerId: string;
   projectId: string;
+  projectRevision?: number;
   repositoryId: number;
   issueNumber: number;
   commentId: number;

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, type TestContext } from "vitest";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import {
   acceptPlanningInput,
@@ -24,7 +24,7 @@ const target = {
 };
 const input = {
   ownerId: "operator",
-  projectId: "project",
+  projectId: "00000000-0000-4000-8000-000000000001",
   repositoryId: 1,
   issueNumber: 3,
   commentId: 100,
@@ -43,8 +43,34 @@ const input = {
   timeoutMs: 60_000,
 };
 
-test("deduplicates concurrent first comments and deliveries, then drains inputs once in persistence order", async (t) => {
+async function planningDb(t: TestContext) {
   const db = await createTestDb(t);
+  for (const [id, repositoryId] of [
+    [input.projectId, 1],
+    ["00000000-0000-4000-8000-000000000002", 4],
+  ] as const) {
+    const config = {
+      id,
+      repository: "owner/repo",
+      repositoryId,
+      installationId: 2,
+      triggerLabel: "tailos:run",
+      allowedActors: ["allowed"],
+      agentNetworkAccess: false,
+      maxRunMinutes: 1,
+    };
+    await db
+      .prepare(
+        "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, ?, ?, 1, 1, 'operator')",
+      )
+      .bind(id, repositoryId, JSON.stringify(config))
+      .run();
+  }
+  return db;
+}
+
+test("deduplicates concurrent first comments and deliveries, then drains inputs once in persistence order", async (t) => {
+  const db = await planningDb(t);
   const receipts = await Promise.all([
     acceptPlanningInput(db, input),
     acceptPlanningInput(db, input),
@@ -185,7 +211,7 @@ test("deduplicates concurrent first comments and deliveries, then drains inputs 
 });
 
 test("guides before planning and isolates owner, project and repository identity", async (t) => {
-  const db = await createTestDb(t);
+  const db = await planningDb(t);
   await acceptPlanningInput(db, {
     ...input,
     start: false,
@@ -208,7 +234,7 @@ test("guides before planning and isolates owner, project and repository identity
   });
   for (const change of [
     { ownerId: "other" },
-    { projectId: "other" },
+    { projectId: "00000000-0000-4000-8000-000000000002", repositoryId: 4 },
     { repositoryId: 4 },
   ]) {
     await acceptPlanningInput(db, {
@@ -217,14 +243,15 @@ test("guides before planning and isolates owner, project and repository identity
       deliveryId: crypto.randomUUID(),
     });
   }
-  expect(await dispatchPlanningInputs(db)).toHaveLength(4);
+  // The mismatched Project/repository tuple must not start a Run.
+  expect(await dispatchPlanningInputs(db)).toHaveLength(3);
   await expect(
     acceptPlanningInput(db, { ...input, ownerId: "wrong" }),
   ).rejects.toThrow("original scope");
 });
 
 test("recovers reply leases and retries without rerunning the agent", async (t) => {
-  const db = await createTestDb(t);
+  const db = await planningDb(t);
   await acceptPlanningInput(db, { ...input, start: false });
   const store = planningReplyStore(db);
   const [stale] = await store.claim();
@@ -246,7 +273,7 @@ test("recovers reply leases and retries without rerunning the agent", async (t) 
 });
 
 test("rolls back message and input assignment if run creation fails", async (t) => {
-  const db = await createTestDb(t);
+  const db = await planningDb(t);
   await acceptPlanningInput(db, input);
   await db
     .prepare(
@@ -262,4 +289,54 @@ test("rolls back message and input assignment if run creation fails", async (t) 
   ).toBe(0);
   await db.prepare("DROP TRIGGER reject_plan").run();
   expect(await dispatchPlanningInputs(db)).toHaveLength(1);
+});
+
+test("actor removal applies to future acceptance while already accepted pending inputs still run", async (t) => {
+  const { d1Projects } = await import("./projects.ts");
+  const db = await planningDb(t);
+  const store = d1Projects(db);
+  await acceptPlanningInput(db, input);
+  const [first] = await dispatchPlanningInputs(db);
+  await acceptPlanningInput(db, {
+    ...input,
+    commentId: 101,
+    deliveryId: "accepted-follow-up",
+    start: false,
+  });
+  const current = (await store.list()).find(
+    (p) => p.project.id === input.projectId,
+  )!;
+  const { id: _id, ...settings } = current.project;
+  await store.update(
+    input.projectId,
+    1,
+    {
+      ...settings,
+      allowedActors: ["replacement"],
+      agentNetworkAccess: true,
+      maxRunMinutes: 3,
+    },
+    "operator",
+  );
+  await db
+    .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
+    .bind(first)
+    .run();
+  const [second] = await dispatchPlanningInputs(db);
+  expect(second).toBeTruthy();
+  expect(
+    await db
+      .prepare("SELECT state FROM planning_inbox WHERE comment_id = 101")
+      .first("state"),
+  ).toBe("assigned");
+  const row = await db
+    .prepare(
+      "SELECT execution_context, deadline_at - created_at AS timeout FROM runs WHERE id = ?",
+    )
+    .bind(second)
+    .first<{ execution_context: string; timeout: number }>();
+  expect(JSON.parse(row!.execution_context).repository.agentNetworkAccess).toBe(
+    true,
+  );
+  expect(row!.timeout).toBe(180_000);
 });

@@ -27,3 +27,14 @@
 | [PDR-20261114-009](records/PDR-20261114-009.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
 | [PDR-20261114-010](records/PDR-20261114-010.md) | accepted | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
 | [PDR-20261114-011](records/PDR-20261114-011.md) | accepted | agent.claude.token-expiry-notice | Claude トークンの期限切れは 30 日前から接続画面で知らせる |
+| [PDR-20261114-project-agent-field-timing](records/PDR-20261114-project-agent-field-timing.md) | accepted | project.configuration.agent-field-timing | 今回の Project 設定管理には agent 項目を追加しない |
+| [PDR-20261114-project-change-history](records/PDR-20261114-project-change-history.md) | accepted | project.configuration.change-history | Project の変更者と変更前後の設定を D1 に残す |
+| [PDR-20261114-project-config-source](records/PDR-20261114-project-config-source.md) | accepted | project.configuration.source | Project 設定を明示的に移行して D1 に一本化する |
+| [PDR-20261114-project-deletion](records/PDR-20261114-project-deletion.md) | accepted | project.configuration.deletion | Project 削除後は新規起動を止め履歴と既存 Run を保持する |
+| [PDR-20261114-project-editable-fields](records/PDR-20261114-project-editable-fields.md) | accepted | project.configuration.editable-fields | 安定した Project ID を維持し運用設定を画面から変更する |
+| [PDR-20261114-project-ownership](records/PDR-20261114-project-ownership.md) | accepted | project.configuration.ownership | Project の設定をデプロイ全体で共有する |
+| [PDR-20261114-project-pending-actors](records/PDR-20261114-project-pending-actors.md) | accepted | project.configuration.pending-actors | 許可ユーザーの変更は新規受付に適用し受理済み入力は実行する |
+| [PDR-20261114-project-repository-input](records/PDR-20261114-project-repository-input.md) | accepted | project.configuration.repository-input | GitHub App がアクセスできるリポジトリを select で選ぶ |
+| [PDR-20261114-project-trigger-direction](records/PDR-20261114-project-trigger-direction.md) | proposed | project.future.project-session-trigger-model | 複数 Project と Session の紐付け、trigger ごとの Agent 選択を検討する |
+| [PDR-20261114-project-uuid](records/PDR-20261114-project-uuid.md) | accepted | project.identity.uuid | D1 移行時に Project ID を UUID に変える |
+| [PDR-20261114-project-webhook-conflict](records/PDR-20261114-project-webhook-conflict.md) | accepted | project.configuration.webhook-conflict | Project 編集と重なった Webhook は最新条件で一度だけ再試行する |

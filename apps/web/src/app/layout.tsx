@@ -40,8 +40,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </Link>
             <nav
               aria-label="メインメニュー"
-              className="flex gap-3 text-sm text-muted sm:gap-5"
+              className="flex min-w-0 gap-3 overflow-x-auto whitespace-nowrap text-sm text-muted sm:gap-5"
             >
+              <Link
+                href="/projects"
+                className="inline-flex min-h-11 items-center hover:text-ink"
+              >
+                Project
+              </Link>
               <Link
                 href="/connect"
                 className="inline-flex min-h-11 items-center hover:text-ink"

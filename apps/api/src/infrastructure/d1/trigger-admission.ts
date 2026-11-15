@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import { diagnosticRetentionMs } from "@tailos/core/diagnostics";
 
 import type {
@@ -24,13 +25,14 @@ export async function admitTrigger(
   const delivery = "source = ? AND idempotency_key = ?";
   const created = "EXISTS (SELECT 1 FROM sessions WHERE id = ?)";
 
-  const results = await db.batch<Admission>([
+  const results = await db.batch<Admission | { projectCurrent: number }>([
     db
       .prepare(
         `INSERT INTO sessions (id, owner_id, project_id, target, created_at)
        SELECT ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM trigger_events WHERE ${delivery})
-         AND NOT EXISTS (SELECT 1 FROM runs WHERE ${active})`,
+         AND NOT EXISTS (SELECT 1 FROM runs WHERE ${active})
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL))`,
       )
       .bind(
         sessionId,
@@ -41,6 +43,9 @@ export async function admitTrigger(
         input.source,
         input.idempotencyKey,
         scope,
+        input.projectRevision ?? null,
+        input.projectId ?? null,
+        input.projectRevision ?? null,
       ),
     db
       .prepare(
@@ -175,9 +180,23 @@ export async function admitTrigger(
        WHERE ${delivery} AND sessions.owner_id = ?`,
       )
       .bind(input.source, input.idempotencyKey, input.ownerId),
+    db
+      .prepare(
+        `SELECT (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AS projectCurrent`,
+      )
+      .bind(
+        input.projectRevision ?? null,
+        input.projectId ?? null,
+        input.projectRevision ?? null,
+      ),
   ]);
-  const admission = results.at(-1)?.results[0];
-  if (!admission)
+  const row = results.at(-2)?.results[0];
+  const admission = row && "runId" in row ? row : undefined;
+  const state = results.at(-1)?.results[0];
+  if (!admission) {
+    if (state && "projectCurrent" in state && state.projectCurrent === 0)
+      throw new ProjectChanged("Project changed before admission");
     throw new Error("Trigger delivery does not match its original owner");
+  }
   return admission;
 }

@@ -2,7 +2,7 @@
 
 ## MVP の範囲
 
-GitHub Issue に `tailos:run` ラベルを付けると、Tailos が Session と最初の依頼を作る。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は config で管理する。PR 作成後のレビューとマージは人が行う。
+GitHub Issue に `tailos:run` ラベルを付けると、Tailos が Session と最初の依頼を作る。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は D1 に保存し、運用者が Web の `/projects` で管理する。PR 作成後のレビューとマージは人が行う。
 
 GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。Web チャットからの起動・続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
@@ -12,7 +12,7 @@ GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。W
 
 | 配置 | 技術 | 責務 |
 | --- | --- | --- |
-| `apps/web` | vinext、React、Tailwind CSS、TanStack Query | ログイン、ChatGPT 接続、Session 詳細の画面 |
+| `apps/web` | vinext、React、Tailwind CSS、TanStack Query | ログイン、ChatGPT 接続、Project 設定、Session 詳細の画面 |
 | `apps/api` | Hono、Cloudflare Workers、Wrangler、Drizzle ORM | トリガーの受付、Session と会話履歴の管理、Run の進行、コンテナ制御、プロバイダ認証、PR 作成 |
 | `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。MVP の実装は Codex app-server |
 | `packages/core` | TypeScript、Valibot | ジョブ、イベント、結果など API と Runner の共有契約 |
@@ -88,7 +88,7 @@ erDiagram
 
 | テーブル | 保存する情報 |
 | --- | --- |
-| `sessions` | 所有者は Tailos 上の ID で識別する。`project_id` は config の安定した ID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
+| `sessions` | 所有者は Tailos 上の ID で識別する。`project_id` は Project の安定した UUID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
 | `session_messages` | 自動化が生成した依頼、ユーザーの発言、Agent の確定した返答を `(session_id, seq)` の順に保存する。起点は `runs.start_message_id` で参照し、返答や将来の追加指示はメッセージの `run_id` で関連づける |
 | `runs` | `queued`、`running`、`succeeded`、`failed` の状態、締切、次の処理時刻、失敗理由を持つ。`execution_context` は実行に使う Agent・接続 ID・基準コミット・自動公開の可否を記録する。`step_state` は作業ブランチ、公開処理の進行、ログの取得位置などを持つ。`result` には PR URL、公開したブランチとコミット SHA、`no_changes` などを記録する |
 | `trigger_events` | 外部イベントの起動元、重複判定キー、受付時刻、対応する Run を記録する。`disposition` は起点の `started` と、既存 Run に合流した `coalesced` |
@@ -102,7 +102,15 @@ JSON の列はバージョン付きの Valibot スキーマで検証する。Iss
 3. 進行中の Run だけ `concurrency_key` を一意にする。Issue → PR のキーは依頼の種類、GitHub リポジトリ ID、Issue 番号から作る。同じ Issue に対する別の配送が実行中に届いたら、`coalesced` として既存 Run に紐づける。完了後にラベルを付け直したら、新しい Session を作る。
 4. 新規 Webhook の受付では Session、最初のメッセージ、Run、`started` イベントを一つの D1 バッチトランザクションで作る。外部イベントで始まる Run の `started` は一件に制限する。将来、Web から始まる Run はユーザーのメッセージを起点にする。
 
-ラベルや対象リポジトリなどの起動ルールは config で管理する。Project の管理画面を作る段階で、既存の `project_id` を引き継ぎ、Project、リポジトリ、接続の割り当てを D1 に追加できる。単発チャットは Project やリポジトリを指定せずに作成できる。接続を使えるかどうかは実行時に確認する。
+Project はデプロイ全体で共有する複数件の設定であり、運用者認証と Web の Origin 検査で管理する。`projects` は UUID、設定 JSON、リポジトリ ID、版、更新者・時刻、削除時刻、移行元の旧 ID を保持する。UUID はサーバーで発行し変更しない。稼働中の Project は最大 100 件で、同じリポジトリ ID を重複登録できない。リポジトリは GitHub App の installation とアクセス可能な全ページの候補から選び、保存時にも metadata の読み取りトークンで名前・ID・installation の組み合わせを照合する。秘密鍵とトークンは API 内だけで扱う。 [GitHub App の installation API](https://docs.github.com/en/rest/apps/installations)
+
+`project_changes` は DB トリガーで追加・変更・削除・インポートの変更前後と運用者の内部 ID・時刻を保存する。設定の変更と履歴は同じトランザクションであり、履歴を保存できなければ設定も変更されない。履歴は画面から全ページを閲覧でき、自動削除や履歴の編集・復元は提供しない。旧 JSON の明示的な初回移行では `project_imports` に完了を記録し、Project の `legacy_id` と UUID の対応に従って既存 Session の参照と計画会話・inbox の scope 内の Project ID も一括更新する。
+
+Webhook は D1 から設定を読み、リポジトリ、installation、ラベル、許可ユーザーを照合する。Run 受付のトランザクションでも Project の版と未削除状態を確認し、読み取り後の設定変更で古い権限の新規 Run が作られるのを防ぐ。通信許可と時間上限は Run 作成時に保存し、その後 Project を変更・削除しても既存 Run の設定と期限を変更しない。Project の版が受付直前に変わった場合は、最新設定で起動条件をすべて再確認して一度だけ再試行する。二度目の競合は 503 と診断で返す。D1 の障害時は環境変数へフォールバックせず、この再試行も適用しない。
+
+削除は論理削除とし、新規起動を停止する。削除前に作成された queued・running の Run は続行する。過去の Session・会話・Run は元の所有者のまま保持する。計画会話の保留入力も、削除済み Project から新規 Run へ割り当てない。受理済みの保留入力は投稿者が後で許可ユーザーから外れても実行し、許可変更は以後のコメント受付に適用する。保留入力から Run を作る時点で現行の通信許可・時間上限などを保存し、Project の対象リポジトリが会話の対象と異なる間も割り当てを停止する。
+
+単発チャットは引き続き Project やリポジトリを指定せずに作成できる。将来の Project・リポジトリ・Session の構成拡張と trigger ごとの Agent 選択は [構想段階の PDR](pdr/records/PDR-20261114-project-trigger-direction.md) に記録する。今回 `agent` 項目・モデル・effort の指定は追加せず、既存の Codex 起動を維持する。
 
 ## 実行と復旧
 

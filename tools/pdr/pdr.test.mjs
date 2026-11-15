@@ -131,7 +131,17 @@ test("real questions find this session's decisions and keep unknown rationale no
     query: "8000 根拠",
   }).results.find((r) => r.id === "PDR-20261113-004");
   assert.equal(unknown.authoritative, false);
-  assert.ok(records.filter((r) => r.status === "accepted").length >= 8);
+  for (const id of [
+    "PDR-20261113-001",
+    "PDR-20261113-002",
+    "PDR-20261113-003",
+    "PDR-20261113-006",
+    "PDR-20261113-007",
+    "PDR-20261113-008",
+    "PDR-20261113-009",
+    "PDR-20261113-011",
+  ])
+    assert.equal(records.find((r) => r.id === id)?.status, "accepted", id);
 });
 
 test("normalizes numeric spellings and finds short Japanese terms", (t) => {

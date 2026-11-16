@@ -1,67 +1,50 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Warm cream · signature: Session history · v2.0.0 */
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/geist";
+@import "../shared/styles/index.css";
 
-:root {
-  color-scheme: light;
-  --paper: #f6f3ee;
-  --panel: #fffcf5;
-  --ink: #211b17;
-  --muted: #63584a;
-  --rule: #ded4c3;
-  --accent: #855333;
-  --accent-ink: #fff9ef;
-  --signal: #365b58;
-  --danger: #a42b2b;
-  --body-face: system-ui, sans-serif;
-  --code-face: ui-monospace, monospace;
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--body-face);
+    scrollbar-color: var(--muted-foreground) var(--background);
+  }
+
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  h1,
+  h2 {
+    min-width: 0;
+    overflow-wrap: break-word;
+    text-wrap: balance;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }
 
-@theme inline {
-  --color-paper: var(--paper);
-  --color-panel: var(--panel);
-  --color-ink: var(--ink);
-  --color-muted: var(--muted);
-  --color-rule: var(--rule);
-  --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-signal: var(--signal);
-  --color-danger: var(--danger);
-  --font-sans: var(--body-face);
-  --font-mono: var(--code-face);
-}
-
-html,
-body {
-  overflow-x: clip;
-}
-
-body {
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--body-face);
-  scrollbar-color: var(--muted) var(--paper);
-}
-
-::selection {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
+/* Keep keyboard focus visible even on primitives with outline-none utilities. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 4px;
 }
 
-h1,
-h2 {
-  min-width: 0;
-  overflow-wrap: break-word;
-  text-wrap: balance;
-}
-
+/* Temporary styles for prototype management screens. */
 @layer components {
   .action {
-    @apply inline-flex min-h-11 items-center rounded-md border border-muted/75 px-4 py-2 text-sm font-medium hover:border-muted;
+    @apply inline-flex min-h-11 items-center rounded-md border border-muted-foreground/75 px-4 py-2 text-sm font-medium hover:border-muted-foreground;
   }
 
   .action:active {
@@ -74,7 +57,7 @@ h2 {
   }
 
   .action-primary {
-    @apply border-accent bg-accent text-accent-ink hover:border-accent;
+    @apply border-primary bg-primary text-accent-ink hover:border-primary;
   }
 
   .surface {

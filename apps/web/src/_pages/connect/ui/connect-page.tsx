@@ -27,7 +27,7 @@ export function ConnectPage() {
       <div className="surface space-y-4">
         <h2 className="text-lg font-medium">ChatGPT</h2>
         {connection.isPending ? (
-          <p role="status" className="text-muted">
+          <p role="status" className="text-muted-foreground">
             接続状態を確認しています。
           </p>
         ) : !status || "error" in status ? (
@@ -52,7 +52,7 @@ export function ConnectPage() {
             >
               ChatGPT を開く
             </a>
-            <p role="status" className="text-sm text-muted">
+            <p role="status" className="text-sm text-muted-foreground">
               接続が完了すると自動で更新します。
             </p>
           </>

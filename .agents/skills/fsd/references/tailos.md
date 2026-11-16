@@ -16,6 +16,7 @@
 ## import と検査
 
 - `@/*` は Web の `src/*` を指す。ルートからは `@/_pages/account` など公開 API を使い、ルート同士を参照しない。
+- 同じ場所の `page.test.tsx` などから、対応するルート本体を検証のために import できる。テストから別のルートを参照することは許可しない。
 - query key・取得・mutation・invalidation は所有する slice にまとめる。Provider と QueryClient の生成は App。MCP キーの平文は mutation の返り値や cache に残さず画面の一時 state に閉じる。
 - `_pages` / Features / Entities / Shared から App / Worker への依存は禁止。Worker は公開設定だけを参照し、client / React / 画面を import しない。
 - `pnpm lint` は `lint:code`（Oxlint、API / Web の境界 rule）と `lint:fsd`（Steiger）を実行し、CI の lint job に含まれる。

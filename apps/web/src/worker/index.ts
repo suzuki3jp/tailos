@@ -15,6 +15,7 @@ export default {
       "default-src 'none'",
       `script-src 'self' ${scriptSource}`,
       `style-src 'self' ${styleSource}`,
+      "style-src-attr 'unsafe-inline'",
       "img-src 'self'",
       "font-src 'self'",
       `connect-src 'self' ${apiOrigin}${import.meta.env.DEV ? " ws: wss:" : ""}`,

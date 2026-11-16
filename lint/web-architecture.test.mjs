@@ -73,6 +73,9 @@ test("Oxlint allows public adapters, framework composition and API types", async
     "src/app/layout.tsx":
       'import { Providers } from "./providers"; export { Providers };',
     "src/app/providers.tsx": 'export const Providers = "providers";',
+    "src/app/page.test.tsx": 'import Home from "./page"; export { Home };',
+    "src/app/other/layout.spec.tsx":
+      'import Layout from "./layout.tsx"; export { Layout };',
     "src/app/widget.ts": 'export { Panel } from "@/widgets/panel";',
     "src/worker/index.ts":
       'import { origin } from "@/shared/config"; export { origin };',
@@ -103,6 +106,8 @@ test("Oxlint rejects adapter bypasses and backend implementation imports", async
     "src/app/relative/page.tsx":
       'export { Home as default } from "../../_pages/home/ui/home";',
     "src/app/other/page.tsx": 'export { default } from "../page";',
+    "src/app/other/page.test.tsx": 'export { default } from "../page";',
+    "src/app/layout.test.tsx": 'export { default } from "./page";',
     "src/app/config.ts": 'export { origin } from "@/shared/config/origin";',
     "src/app/widget.ts": 'export { Panel } from "@/widgets/panel/ui/panel";',
     "src/worker/screen.ts": 'export { Home } from "@/_pages/home";',
@@ -134,6 +139,28 @@ test("Oxlint rejects adapter bypasses and backend implementation imports", async
       result.output.includes(path),
       `Missing boundary diagnostic for ${path}:\n${result.output}`,
     );
+  }
+});
+
+test("Oxlint only allows a colocated route test to import its own subject", async (t) => {
+  const valid = await boundaryFixture(t, {
+    "src/app/page.test.tsx": 'import Page from "./page"; export { Page };',
+    "src/app/account/layout.spec.tsx":
+      'import Layout from "./layout.tsx"; export { Layout };',
+  });
+  assert.equal(valid.status, 0, valid.output);
+
+  const cases = {
+    "src/app/other/page.test.tsx":
+      'import Page from "../page"; export { Page };',
+    "src/app/page.spec.tsx":
+      'import Layout from "./layout"; export { Layout };',
+    "src/app/example.tsx": 'import Page from "./page"; export { Page };',
+  };
+  const invalid = await boundaryFixture(t, cases);
+  assert.equal(invalid.status, 1, invalid.output);
+  for (const path of Object.keys(cases)) {
+    assert.ok(invalid.output.includes(path), invalid.output);
   }
 });
 

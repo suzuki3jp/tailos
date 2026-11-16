@@ -47,6 +47,8 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
     "'self'",
     expect.stringMatching(/^'nonce-[A-Za-z0-9+/]+=*'$/),
   ]);
+  expect(directives.get("style-src")).toEqual(directives.get("script-src"));
+  expect(directives.get("style-src-attr")).toEqual(["'unsafe-inline'"]);
   expect(directives.get("base-uri")).toEqual(["'none'"]);
   expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
   expect(directives.get("connect-src")).toEqual([

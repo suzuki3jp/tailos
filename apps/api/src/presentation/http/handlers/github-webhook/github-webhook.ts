@@ -159,9 +159,19 @@ export function createGithubWebhook(
           agentNetworkAccess: target.agentNetworkAccess,
         },
       } satisfies ExecutionContext;
+      const sessionMetadata = {
+        initialTitle: data.issue.title,
+        triggerMetadata: JSON.stringify({
+          kind: "github.issue",
+          repository: target.repository,
+          number: data.issue.number,
+          url: `https://github.com/${target.repository}/issues/${data.issue.number}`,
+        }),
+      };
       if ("comment" in data && normalized.kind === "comment") {
         if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
         const receipt = await acceptPlan(c.env, {
+          ...sessionMetadata,
           ownerId,
           projectId: target.id,
           projectRevision: projectRecord?.revision,
@@ -193,6 +203,7 @@ export function createGithubWebhook(
         "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
 
       const result = await admit(c.env)({
+        ...sessionMetadata,
         source: "github.issue-label",
         idempotencyKey: delivery,
         ownerId,

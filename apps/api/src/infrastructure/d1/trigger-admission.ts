@@ -28,8 +28,8 @@ export async function admitTrigger(
   const results = await db.batch<Admission | { projectCurrent: number }>([
     db
       .prepare(
-        `INSERT INTO sessions (id, owner_id, project_id, target, created_at)
-       SELECT ?, ?, ?, ?, ?
+        `INSERT INTO sessions (id, owner_id, project_id, target, title, trigger_metadata, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM trigger_events WHERE ${delivery})
          AND NOT EXISTS (SELECT 1 FROM runs WHERE ${active})
          AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL))`,
@@ -39,6 +39,8 @@ export async function admitTrigger(
         input.ownerId,
         input.projectId ?? null,
         input.target ?? null,
+        input.initialTitle ?? "新しい会話",
+        input.triggerMetadata ?? null,
         now,
         input.source,
         input.idempotencyKey,

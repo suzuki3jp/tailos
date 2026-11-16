@@ -119,7 +119,11 @@ test("runs an implementation turn inside the workspace with only the Run's crede
   const { calls, agent } = runtime([
     [
       { type: "system", subtype: "init", model: "claude-test" },
-      success({ reply: "Done", headline: "fix: repair the widget" }),
+      success({
+        reply: "Done",
+        headline: "fix: repair the widget",
+        sessionTitle: "Widget repair",
+      }),
     ],
   ]);
 
@@ -129,7 +133,11 @@ test("runs an implementation turn inside the workspace with only the Run's crede
     cwd,
   );
 
-  expect(result).toEqual({ reply: "Done", headline: "fix: repair the widget" });
+  expect(result).toEqual({
+    reply: "Done",
+    headline: "fix: repair the widget",
+    sessionTitle: "Widget repair",
+  });
   const { prompt, options } = calls[0]!;
   expect(prompt).toContain("Fix the bug");
   expect(prompt).toContain("Use mcp__tailos__github_get to look up");

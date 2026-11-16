@@ -88,11 +88,16 @@ test("stages changes without a package manifest, pushing, or storing credentials
       );
       await rm(join(cwd, ".git"));
       await rename(join(cwd, "README.md"), join(cwd, "Guide.md"));
-      return result;
+      return { ...result, sessionTitle: "Documentation update" };
     }, stage),
-  ).resolves.toEqual({ reply: result.reply, publication: { kind: "checked" } });
+  ).resolves.toEqual({
+    reply: result.reply,
+    sessionTitle: "Documentation update",
+    publication: { kind: "checked" },
+  });
   expect(stage).toHaveBeenCalledExactlyOnceWith({
     ...result,
+    sessionTitle: "Documentation update",
     baseSha: repo.baseSha,
     branch: repo.branch,
     tree: expect.stringMatching(/^[a-f0-9]{40}$/),

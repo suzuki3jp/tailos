@@ -1,5 +1,6 @@
 import { replyText } from "@tailos/core/runner";
 import * as v from "valibot";
+import { sessionTitleStatement } from "@/infrastructure/d1/session-title.ts";
 import type { D1Database } from "@cloudflare/workers-types";
 import {
   advanceRun as execute,
@@ -65,7 +66,11 @@ function d1RunStore(db: D1Database): RunStore {
       // The issue_notification_terminal SQL trigger advances the notification
       // state/version atomically with this batch's terminal runs.status update.
       v.parse(replyText, reply);
-      const [, , update] = await db.batch([
+      const metadata = v.parse(
+        v.object({ sessionTitle: v.optional(v.unknown()) }),
+        JSON.parse(result),
+      );
+      const results = await db.batch([
         executionTransition(
           db,
           runId,
@@ -83,13 +88,14 @@ function d1RunStore(db: D1Database): RunStore {
                 'agent', ?, id, ? FROM runs WHERE id = ? AND status = 'running'`,
           )
           .bind(crypto.randomUUID(), reply, finishedAt, runId),
+        sessionTitleStatement(db, runId, metadata.sessionTitle),
         db
           .prepare(
             "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING id",
           )
           .bind(result, finishedAt, runId),
       ]);
-      return update?.results.length === 1;
+      return results.at(-1)?.results.length === 1;
     },
     async readStatus(runId: string) {
       const stored = await db

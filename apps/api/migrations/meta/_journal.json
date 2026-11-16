@@ -64,6 +64,13 @@
       "when": 1794662912351,
       "tag": "0008_project_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794810503775,
+      "tag": "0009_session_metadata",
+      "breakpoints": true
     }
   ]
 }

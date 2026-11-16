@@ -1,5 +1,6 @@
 import {
   maxReplyLength,
+  normalizeSessionTitle,
   PlanResult,
   replyText,
   type RunnerJob,
@@ -11,10 +12,12 @@ export type RepositoryJob = Exclude<RunnerJob, { engine: "fake" }>;
 
 const repositoryReplySchema = v.object({
   reply: v.string(),
+  sessionTitle: v.optional(v.unknown()),
   headline: v.nullable(v.string()),
 });
 const planReplySchema = v.object({
   reply: v.string(),
+  sessionTitle: v.optional(v.unknown()),
   ...PlanResult.entries,
 });
 
@@ -44,7 +47,10 @@ export function agentPrompt(job: RepositoryJob, githubTool: string) {
           "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
           "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
           "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
-        : job.prompt)
+        : job.prompt) +
+    (job.checkout || job.mode === "plan"
+      ? "\n\nReturn sessionTitle with a concise, single-line summary of the conversation purpose in its primary language (1–100 UTF-16 code units, no control characters). This is separate from the commit headline. If unavailable, use null."
+      : "")
   );
 }
 
@@ -55,6 +61,8 @@ export function replySchema(job: RepositoryJob) {
     type: "object",
     properties: {
       reply: { type: "string" },
+      // Length and content validation are independent of the primary answer.
+      sessionTitle: { type: ["string", "null"] },
       ...(job.mode === "plan"
         ? {
             planPresented: { type: "boolean" },
@@ -64,8 +72,8 @@ export function replySchema(job: RepositoryJob) {
     },
     required:
       job.mode === "plan"
-        ? ["reply", "planPresented", "needsAnswer"]
-        : ["reply", "headline"],
+        ? ["reply", "sessionTitle", "planPresented", "needsAnswer"]
+        : ["reply", "sessionTitle", "headline"],
     additionalProperties: false,
   };
 }
@@ -94,9 +102,11 @@ export async function runAgentTurns(options: {
   };
   let prompt = options.prompt;
   let implementationHeadline: string | null | undefined;
+  let sessionTitle: string | undefined;
   const implementation = !!job.checkout && job.mode !== "plan";
   const replyWithHeadline = (text: string) => ({
     reply: text,
+    ...(sessionTitle && { sessionTitle }),
     ...(implementationHeadline != null &&
     redact(implementationHeadline) === implementationHeadline
       ? { headline: implementationHeadline }
@@ -145,6 +155,11 @@ export async function runAgentTurns(options: {
     }
     if (revision === 0 && "headline" in result)
       implementationHeadline = result.headline;
+    if (!sessionTitle && "sessionTitle" in result) {
+      const raw = result.sessionTitle;
+      if (typeof raw === "string" && redact(raw) === raw)
+        sessionTitle = normalizeSessionTitle(raw);
+    }
     const text = redact(result.reply);
     if (text.length > maxReplyLength) {
       const exhausted = revision >= 2;
@@ -165,6 +180,7 @@ export async function runAgentTurns(options: {
     if ("planPresented" in result && "needsAnswer" in result)
       return {
         reply: validatedReply,
+        ...(sessionTitle && { sessionTitle }),
         plan: {
           planPresented: result.planPresented,
           needsAnswer: result.needsAnswer,

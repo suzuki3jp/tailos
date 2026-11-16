@@ -39,7 +39,7 @@ export function ClaudeConnection() {
     <div className="surface space-y-4">
       <h2 className="text-lg font-medium">Claude</h2>
       {connection.isPending ? (
-        <p role="status" className="text-muted">
+        <p role="status" className="text-muted-foreground">
           接続状態を確認しています。
         </p>
       ) : !status || "error" in status ? (
@@ -51,7 +51,7 @@ export function ClaudeConnection() {
       ) : status.state === "connected" ? (
         <>
           <p>Claude のトークンを保存済みです。</p>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             {date.format(status.savedAt)} に保存しました。有効期限の目安は{" "}
             {date.format(status.expiresAt)} です。
           </p>
@@ -83,7 +83,7 @@ export function ClaudeConnection() {
         </>
       ) : (
         <form className="space-y-4" onSubmit={submit}>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             手元で <code>claude setup-token</code>{" "}
             を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
           </p>

@@ -38,7 +38,9 @@ function DiagnosticBody({
         (query.isPending ? (
           <p role="status">本文を読み込んでいます。</p>
         ) : query.data && "error" in query.data && query.data.error === 410 ? (
-          <p className="text-muted">本文の保管期限が過ぎています。</p>
+          <p className="text-muted-foreground">
+            本文の保管期限が過ぎています。
+          </p>
         ) : body !== undefined ? (
           <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-anywhere text-sm">
             {body}
@@ -102,7 +104,7 @@ export function DiagnosticsExplorer() {
     <section className="space-y-7">
       <header className="space-y-2">
         <h1 className="text-3xl font-medium">Diagnostics</h1>
-        <p className="text-muted">
+        <p className="text-muted-foreground">
           起動元、実行の経過、保存された入出力を調べます。
         </p>
       </header>
@@ -149,14 +151,14 @@ export function DiagnosticsExplorer() {
             <h2 className="font-medium">関連する処理</h2>
             {traces.isPending && <p role="status">読み込んでいます。</p>}
             {!traces.isPending && allTraces.length === 0 && (
-              <p className="text-muted">記録が見つかりません。</p>
+              <p className="text-muted-foreground">記録が見つかりません。</p>
             )}
             <ul className="space-y-3">
               {allTraces.map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
-                    className={`w-full text-left ${item.id === traceId ? "text-signal" : "text-muted"}`}
+                    className={`w-full text-left ${item.id === traceId ? "text-signal" : "text-muted-foreground"}`}
                     onClick={() => setSelected(item.id)}
                   >
                     <span className="block font-medium">{item.source}</span>
@@ -184,7 +186,7 @@ export function DiagnosticsExplorer() {
                 <p className="break-all font-mono text-xs">{traceId}</p>
                 {trace?.runStatus && <p>Run: {trace.runStatus}</p>}
                 {trace && (
-                  <p className="text-muted">
+                  <p className="text-muted-foreground">
                     {captureLabels[trace.captureState] ?? trace.captureState}
                     {trace.dropped > 0 && ` · 省略 ${trace.dropped} 件`}
                   </p>
@@ -207,7 +209,7 @@ export function DiagnosticsExplorer() {
                       style={{ paddingLeft: `${depth(event.spanId)}rem` }}
                     >
                       <div className="flex flex-wrap items-baseline gap-3">
-                        <time className="font-mono text-xs text-muted">
+                        <time className="font-mono text-xs text-muted-foreground">
                           {new Date(event.occurredAt).toISOString()}
                         </time>
                         <span className="font-medium">{event.name}</span>
@@ -221,12 +223,12 @@ export function DiagnosticsExplorer() {
                         </span>
                       </div>
                       {event.requestId && (
-                        <p className="break-all font-mono text-xs text-muted">
+                        <p className="break-all font-mono text-xs text-muted-foreground">
                           request: {event.requestId}
                         </p>
                       )}
                       <details>
-                        <summary className="cursor-pointer text-sm text-muted">
+                        <summary className="cursor-pointer text-sm text-muted-foreground">
                           詳細
                         </summary>
                         <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere text-xs">

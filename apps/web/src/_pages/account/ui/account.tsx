@@ -10,7 +10,7 @@ export function Account() {
 
   if (account.isPending)
     return (
-      <p role="status" className="text-muted">
+      <p role="status" className="text-muted-foreground">
         ログイン状態を確認しています。
       </p>
     );

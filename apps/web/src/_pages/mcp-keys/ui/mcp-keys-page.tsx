@@ -57,12 +57,12 @@ export function McpKeysPage() {
     <section className="max-w-3xl space-y-6">
       <div className="space-y-2">
         <h1 className="text-3xl font-medium">MCP 接続</h1>
-        <p className="text-muted">
+        <p className="text-muted-foreground">
           AI Agent から Session や実行記録を読み取るためのキーを管理します。
         </p>
       </div>
       {status === "pending" ? (
-        <p role="status" className="text-muted">
+        <p role="status" className="text-muted-foreground">
           キーを読み込んでいます。
         </p>
       ) : status === "error" || !data || "error" in data ? (
@@ -75,7 +75,7 @@ export function McpKeysPage() {
         <>
           <div className="surface space-y-3">
             <h2 className="text-lg font-medium">接続先</h2>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               Agent の MCP 設定に接続先 URL を登録し、Streamable HTTP
               を選択します。
             </p>
@@ -91,7 +91,7 @@ export function McpKeysPage() {
                 URL をコピー
               </button>
             </div>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               認証は Bearer token / API key
               を選び、発行したキーを設定してください。ヘッダーを指定する場合は{" "}
               <code>Authorization: Bearer &lt;キー&gt;</code> を使います。
@@ -137,7 +137,7 @@ export function McpKeysPage() {
           )}
           <form className="surface space-y-4" onSubmit={submit}>
             <h2 className="text-lg font-medium">キーを発行</h2>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               権限は Session・会話・実行記録の読み取り専用です。
             </p>
             <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
@@ -175,7 +175,7 @@ export function McpKeysPage() {
               {create.isPending ? "発行しています…" : "キーを発行"}
             </button>
             {issued && (
-              <p className="text-sm text-muted">
+              <p className="text-sm text-muted-foreground">
                 発行したキーを保存してから、次のキーを発行できます。
               </p>
             )}
@@ -188,7 +188,9 @@ export function McpKeysPage() {
           <div className="space-y-3">
             <h2 className="text-lg font-medium">発行済みのキー</h2>
             {data.keys.length === 0 ? (
-              <p className="text-sm text-muted">キーはまだありません。</p>
+              <p className="text-sm text-muted-foreground">
+                キーはまだありません。
+              </p>
             ) : (
               <ul className="divide-y divide-rule rounded-lg border border-rule bg-panel">
                 {data.keys.map((key) => (
@@ -198,10 +200,10 @@ export function McpKeysPage() {
                   >
                     <div className="min-w-0 space-y-1">
                       <p className="break-all font-medium">{key.name}</p>
-                      <p className="text-sm text-muted">
+                      <p className="text-sm text-muted-foreground">
                         <code>{key.prefix}…</code>
                       </p>
-                      <p className="text-sm text-muted">
+                      <p className="text-sm text-muted-foreground">
                         発行{" "}
                         {new Date(key.createdAt).toLocaleDateString("ja-JP")} ·{" "}
                         {key.expiresAt <= Date.now()

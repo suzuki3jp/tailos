@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createTestBindings, createTestDb } from "./testing.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 import { advanceRun } from "./run-execution.ts";
@@ -19,6 +19,46 @@ const input = {
     number: 3,
   }),
 };
+
+test("Run start and replyless failure use Worker time while running retries leave activity unchanged", async (t) => {
+  const db = await createTestDb(t);
+  const admitted = await admitTrigger(db, input);
+  const readTime = () =>
+    db
+      .prepare("SELECT updated_at FROM sessions WHERE id = ?")
+      .bind(admitted.sessionId)
+      .first<number>("updated_at");
+  const startedAt = (await readTime())! + 1000;
+  const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+  t.onTestFinished(() => clock.mockRestore());
+  const running = {
+    start: async () => ({ status: "running" as const }),
+    poll: async () => ({ status: "running" as const }),
+  };
+  await advanceRun(db, admitted.runId, running);
+  expect(await readTime()).toBe(startedAt);
+  clock.mockReturnValue(startedAt + 1000);
+  await advanceRun(db, admitted.runId, running);
+  expect(await readTime()).toBe(startedAt);
+  clock.mockReturnValue(startedAt + 2000);
+  await advanceRun(db, admitted.runId, {
+    ...running,
+    poll: async () => ({
+      status: "failed",
+      errorCode: "agent_failed",
+      events: [],
+    }),
+  });
+  expect(await readTime()).toBe(startedAt + 2000);
+  expect(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM session_messages WHERE session_id = ? AND author_kind = 'agent'",
+      )
+      .bind(admitted.sessionId)
+      .first("n"),
+  ).toBe(0);
+});
 
 test("failed and title-only-invalid replies leave the session eligible for a later valid title", async (t) => {
   const db = await createTestDb(t);

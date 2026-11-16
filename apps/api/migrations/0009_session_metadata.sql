@@ -44,7 +44,8 @@ CREATE TRIGGER session_run_activity AFTER INSERT ON runs BEGIN
 END;
 --> statement-breakpoint
 CREATE TRIGGER session_run_transition_activity AFTER UPDATE OF status ON runs
-WHEN NEW.status != OLD.status BEGIN
-  UPDATE sessions SET updated_at = max(updated_at,
-    coalesce(NEW.finished_at, CAST(unixepoch('subsec') * 1000 AS INTEGER))) WHERE id = NEW.session_id;
+WHEN NEW.status IN ('succeeded', 'failed') AND NEW.status != OLD.status AND NEW.finished_at IS NOT NULL BEGIN
+  -- Starting activity is written atomically by claim(runId, now). Both paths
+  -- use Worker timestamps rather than mixing the Worker and D1 clocks.
+  UPDATE sessions SET updated_at = max(updated_at, NEW.finished_at) WHERE id = NEW.session_id;
 END;

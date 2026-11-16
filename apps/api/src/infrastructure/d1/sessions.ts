@@ -1,5 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import { and, asc, desc, eq, exists, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { SessionStore } from "@/application/sessions/create-session.ts";
 import { runs, sessionMessages, sessions } from "@/infrastructure/d1/schema.ts";
@@ -54,13 +54,7 @@ export function d1Sessions(database: D1Database) {
           and(
             eq(sessions.ownerId, ownerId),
             before
-              ? or(
-                  lt(sessions.updatedAt, before.updatedAt),
-                  and(
-                    eq(sessions.updatedAt, before.updatedAt),
-                    lt(sessions.id, before.id),
-                  ),
-                )
+              ? sql`(${sessions.updatedAt}, ${sessions.id}) < (${before.updatedAt}, ${before.id})`
               : undefined,
           ),
         )

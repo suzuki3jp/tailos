@@ -23,6 +23,11 @@ function d1RunStore(db: D1Database): RunStore {
       const results = await db.batch<RunInput>([
         ...ensureRunTrace(db, runId, now),
         executionTransition(db, runId, "queued", "running", now),
+        // Use the Worker timestamp consistently with creation and completion.
+        db
+          .prepare(`UPDATE sessions SET updated_at = max(updated_at, ?)
+          WHERE id = (SELECT session_id FROM runs WHERE id = ? AND status = 'queued')`)
+          .bind(now, runId),
         db
           .prepare(
             `UPDATE runs SET status = 'running', next_action_at = ?

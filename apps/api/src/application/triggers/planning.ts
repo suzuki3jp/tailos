@@ -4,6 +4,8 @@ export type PlanningAdmission = {
   projectRevision?: number;
   repositoryId: number;
   issueNumber: number;
+  initialTitle?: string;
+  triggerMetadata?: string;
   commentId: number;
   actor: string;
   url: string;

@@ -3,6 +3,22 @@ import { DiagnosticContext } from "./diagnostics.js";
 
 export const maxPromptLength = 4000;
 export const maxReplyLength = 8000;
+export const sessionTitleText = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1),
+  v.maxLength(100),
+  v.check((title) => !/[\p{Cc}\u2028\u2029]/u.test(title)),
+);
+
+// A title is auxiliary: invalid or older Runner values must not reject work.
+export function normalizeSessionTitle(value: unknown): string | undefined {
+  const parsed = v.safeParse(sessionTitleText, value);
+  return parsed.success ? parsed.output : undefined;
+}
+export const optionalSessionTitle = v.optional(
+  v.pipe(v.unknown(), v.transform(normalizeSessionTitle)),
+);
 export const promptText = v.pipe(
   v.string(),
   v.minLength(1),
@@ -228,6 +244,7 @@ export const RunnerStatus = v.variant("status", [
   v.strictObject({
     status: v.literal("succeeded"),
     reply: replyText,
+    sessionTitle: optionalSessionTitle,
     publication: v.optional(RunnerPublication),
     plan: v.optional(PlanResult),
     events,
@@ -258,6 +275,7 @@ export const checkedPublicationFields = {
   tree: gitSha,
   headline: changeHeadline,
   reply: replyText,
+  sessionTitle: optionalSessionTitle,
   events,
 };
 export const CheckedPublication = v.strictObject({

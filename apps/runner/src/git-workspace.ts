@@ -31,6 +31,7 @@ export async function runInGitWorkspace(
   mode?: RunnerJob["mode"],
 ): Promise<{
   reply: string;
+  sessionTitle?: string;
   publication?: RunnerPublication;
   plan?: AgentResult["plan"];
 }> {
@@ -123,11 +124,12 @@ export async function runInGitWorkspace(
     if (checkoutSpan) diagnostics?.end(checkoutSpan);
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
-    const { reply, headline, plan } = await work(cwd);
+    const { reply, headline, plan, sessionTitle } = await work(cwd);
+    const title = sessionTitle ? { sessionTitle } : {};
     signal.throwIfAborted();
     if (mode === "plan") {
       if (!plan) throw new Error("Missing plan result");
-      return { reply, plan };
+      return { reply, plan, ...title };
     }
     const inspectSpan = diagnostics?.start("workspace");
     if (!(await readFile(configPath)).equals(trustedConfig))
@@ -147,7 +149,7 @@ export async function runInGitWorkspace(
     ]);
     if (!paths.length) {
       if (inspectSpan) diagnostics?.end(inspectSpan, {}, "no_changes");
-      return { reply, publication: { kind: "no_changes" } };
+      return { reply, publication: { kind: "no_changes" }, ...title };
     }
     const validatedHeadline = v.safeParse(changeHeadline, headline);
     if (!validatedHeadline.success)
@@ -202,9 +204,10 @@ export async function runInGitWorkspace(
       headline: validatedHeadline.output,
       reply,
       changes,
+      ...title,
     });
     if (publicationSpan) diagnostics?.end(publicationSpan);
-    return { reply, publication: { kind: "checked" } };
+    return { reply, publication: { kind: "checked" }, ...title };
   } finally {
     await Promise.all([
       rm(cwd, { recursive: true, force: true }),

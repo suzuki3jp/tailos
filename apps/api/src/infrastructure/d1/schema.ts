@@ -57,9 +57,22 @@ export const sessions = sqliteTable(
     ownerId: text("owner_id").notNull(),
     projectId: text("project_id"),
     target: text(),
+    title: text().notNull().default("新しい会話"),
+    titleGenerated: integer("title_generated", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    trigger: text("trigger_metadata"),
     createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull().default(0),
   },
-  (t) => [index("session_owner_created").on(t.ownerId, t.createdAt, t.id)],
+  (t) => [
+    index("session_owner_created").on(t.ownerId, t.createdAt, t.id),
+    index("session_owner_updated").on(
+      t.ownerId,
+      sql`${t.updatedAt} DESC`,
+      sql`${t.id} DESC`,
+    ),
+  ],
 );
 
 export const sessionMessages = sqliteTable(

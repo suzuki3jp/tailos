@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { assert, expect, test, vi } from "vitest";
+import * as v from "valibot";
 import {
   createTestOperator,
   testLoginBindings,
@@ -155,7 +156,15 @@ test.for([undefined, false, true] as const)(
     const session = await view.text();
     expect(session).toContain("structured job context");
     expect(session).not.toContain("Private issue details");
-    expect(session).not.toContain("Fix an issue");
+    const detail = v.parse(
+      v.object({
+        session: v.object({ title: v.string() }),
+        messages: v.array(v.object({ body: v.string() })),
+      }),
+      JSON.parse(session),
+    );
+    expect(detail.session.title).toBe("Fix an issue");
+    expect(JSON.stringify(detail.messages)).not.toContain("Fix an issue");
     await db
       .prepare(
         "INSERT INTO sessions (id, owner_id, created_at) VALUES (?, ?, ?)",

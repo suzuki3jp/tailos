@@ -4,7 +4,14 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 export async function createTestBindings(
   t: TestContext,
-  options: { script?: string; bindings?: Record<string, string> } = {},
+  options: {
+    script?: string;
+    bindings?: Record<string, string>;
+    beforeMigration?: (
+      db: Awaited<ReturnType<Miniflare["getD1Database"]>>,
+      file: string,
+    ) => Promise<void>;
+  } = {},
 ): Promise<{
   DB: Awaited<ReturnType<Miniflare["getD1Database"]>>;
   RUN_ARTIFACTS: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
@@ -29,6 +36,7 @@ export async function createTestBindings(
     .filter((file) => file.endsWith(".sql"))
     .sort();
   for (const file of files) {
+    await options.beforeMigration?.(db, file);
     const migration = await readFile(new URL(file, directory), "utf8");
     await db.batch(
       migration

@@ -135,8 +135,9 @@ async function execute(
           )
         : await agent
             .run(input, signal, undefined, diagnostics)
-            .then(({ reply, plan }) => ({
+            .then(({ reply, plan, sessionTitle }) => ({
               reply,
+              ...(sessionTitle && { sessionTitle }),
               ...(input.mode === "plan" && { plan }),
             }));
     signal.throwIfAborted();

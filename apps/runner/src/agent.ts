@@ -3,6 +3,7 @@ import type { Diagnostics } from "@tailos/core/diagnostics";
 
 export type AgentResult = {
   reply: string;
+  sessionTitle?: string;
   headline?: string;
   plan?: PlanResult;
 };

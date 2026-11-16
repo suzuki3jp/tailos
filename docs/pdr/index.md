@@ -38,5 +38,8 @@
 | [PDR-20261114-project-trigger-direction](records/PDR-20261114-project-trigger-direction.md) | proposed | project.future.project-session-trigger-model | 複数 Project と Session の紐付け、trigger ごとの Agent 選択を検討する |
 | [PDR-20261114-project-uuid](records/PDR-20261114-project-uuid.md) | accepted | project.identity.uuid | D1 移行時に Project ID を UUID に変える |
 | [PDR-20261114-project-webhook-conflict](records/PDR-20261114-project-webhook-conflict.md) | accepted | project.configuration.webhook-conflict | Project 編集と重なった Webhook は最新条件で一度だけ再試行する |
+| [PDR-20261116-session-list-contract](records/PDR-20261116-session-list-contract.md) | accepted | sessions.account-list-contract | 会話一覧 API のページングとレスポンス契約を定める |
 | [PDR-20261116-session-list](records/PDR-20261116-session-list.md) | accepted | sessions.account-list | アカウントのセッション一覧に起動元と会話の要約タイトルを表示する |
+| [PDR-20261116-session-metadata-backfill](records/PDR-20261116-session-metadata-backfill.md) | accepted | sessions.metadata-backfill | 会話メタデータは保存済みの事実から補完する |
+| [PDR-20261116-session-title-validation](records/PDR-20261116-session-title-validation.md) | accepted | sessions.title-validation | 生成タイトルを独立して検証し最初の正常値を一度だけ保存する |
 | [PDR-20261116-session-updated-at](records/PDR-20261116-session-updated-at.md) | accepted | sessions.activity-timestamp | Session の更新日時にメッセージと Run の状態変更を反映する |

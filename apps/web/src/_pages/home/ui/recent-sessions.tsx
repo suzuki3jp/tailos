@@ -66,7 +66,7 @@ function SessionRow({
           <span>{session.updatedLabel}</span>
         </span>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent lang="en">
         <DialogHeader className="pr-6">
           <DialogTitle>{session.title}</DialogTitle>
           <DialogDescription>

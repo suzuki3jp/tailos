@@ -23,6 +23,7 @@ export function HomePage() {
     <div
       className="flex min-h-dvh bg-background text-foreground"
       data-home-preview
+      lang="en"
     >
       <a
         href="#home-content"
@@ -52,6 +53,7 @@ export function HomePage() {
               <IconMenu2 aria-hidden="true" />
             </SheetTrigger>
             <SheetContent
+              lang="en"
               side="left"
               showCloseButton={false}
               className="gap-0 bg-sidebar p-0 data-[side=left]:w-60"

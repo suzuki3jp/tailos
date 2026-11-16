@@ -21,7 +21,7 @@ The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVy
 | light-button-primary | primary | `#855333` |
 | light-font-danger | destructive | `#a42b2b` |
 
-Home headings and Session titles currently use black in Figma, exposed separately as `foreground-strong`. Card, popover and sidebar backgrounds alias `background`. The exported unread asset uses `#004ebb`; it is separate from Run state. The Select focus example uses `#d4d4d4` for its ring. A solid primary outline keeps keyboard focus visible.
+Home headings and Session titles currently use black in Figma, exposed separately as `foreground-strong`. Card, popover and sidebar backgrounds alias `background`. The exported unread asset uses `#004ebb`; it is separate from Run state. The Select focus example uses `#d4d4d4` for its ring. An unlayered `:focus-visible` rule adds a solid primary outline to keyboard-focused controls, overriding the primitives' `outline-none` utilities.
 
 Secondary, muted and hover surfaces are supplemental UI values, mixed from the existing border and background colors. They are not additional colors already specified by Figma. The theme is light-only; no dark theme is enabled.
 

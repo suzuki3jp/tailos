@@ -28,7 +28,7 @@ export function ProjectSelect({ compact = false }: { compact?: boolean }) {
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} align="start">
+      <SelectContent lang="en" alignItemWithTrigger={false} align="start">
         {items.map((item) => (
           <SelectItem key={item.value} value={item.value}>
             {item.label}

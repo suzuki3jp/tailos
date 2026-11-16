@@ -22,11 +22,6 @@
     color: var(--primary-foreground);
   }
 
-  :focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 4px;
-  }
-
   h1,
   h2 {
     min-width: 0;
@@ -38,6 +33,12 @@
   [role="button"]:not([aria-disabled="true"]) {
     cursor: pointer;
   }
+}
+
+/* Keep keyboard focus visible even on primitives with outline-none utilities. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
 }
 
 /* Temporary styles for prototype management screens. */

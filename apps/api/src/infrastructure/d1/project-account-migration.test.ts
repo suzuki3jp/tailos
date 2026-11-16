@@ -104,3 +104,74 @@ test("account migration preserves IDs, revisions, long repository names and exis
     [],
   );
 });
+
+test("old Worker inserts on either side of owner assignment stay visible with one creation snapshot", async (t) => {
+  const { DB } = await createTestBindings(t, {
+    migrationsThrough: "0008_project_settings.sql",
+  });
+  const migration = await readFile(
+    new URL(
+      "../../../migrations/0009_project_account_identity.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await DB.batch(
+    migration
+      .split("--> statement-breakpoint")
+      .map((statement) => DB.prepare(statement)),
+  );
+  const config = {
+    repository: "owner/repo",
+    repositoryId: 1,
+    installationId: 1,
+    triggerLabel: "tailos",
+    allowedActors: ["operator"],
+    agentNetworkAccess: false,
+    maxRunMinutes: 30,
+  };
+  // This is the pre-0009 INSERT shape used by the still-running old Worker.
+  const oldInsert = (repositoryId: number) => {
+    const id = crypto.randomUUID();
+    return DB.prepare(
+      "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, ?, ?, 10, 20, 'operator')",
+    )
+      .bind(id, repositoryId, JSON.stringify({ ...config, repositoryId, id }))
+      .run();
+  };
+  await oldInsert(1);
+  // The deployment assignment has completed; an old request can still finish
+  // before the new Worker is published. It must not leave another unowned row.
+  await DB.prepare(
+    "UPDATE projects SET owner_id = 'operator' WHERE owner_id IS NULL",
+  ).run();
+  await oldInsert(2);
+  expect(
+    (
+      await DB.prepare(
+        "SELECT name, owner_id, revision, updated_at FROM projects ORDER BY repository_id",
+      ).all()
+    ).results,
+  ).toEqual([
+    { name: "owner/repo", owner_id: "operator", revision: 1, updated_at: 20 },
+    { name: "owner/repo", owner_id: "operator", revision: 1, updated_at: 20 },
+  ]);
+  const store = d1Projects(DB);
+  expect((await store.page("operator", 50)).items).toHaveLength(2);
+  expect(await store.settings("other")).toEqual([]);
+  const history = await store.history("operator");
+  expect(history.changes.map((change) => change.operation)).toEqual([
+    "create",
+    "create",
+  ]);
+  expect(
+    history.changes.every(
+      (change) => change.before === null && change.after?.name === "owner/repo",
+    ),
+  ).toBe(true);
+  await DB.prepare(
+    "CREATE TRIGGER reject_legacy_audit BEFORE INSERT ON project_changes BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+  ).run();
+  await expect(oldInsert(3)).rejects.toThrow("audit unavailable");
+  expect((await store.page("operator", 50)).items).toHaveLength(2);
+});

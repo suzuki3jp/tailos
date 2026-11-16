@@ -111,7 +111,7 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
   expect(created.status).toBe(201);
   const item = v.parse(
     v.object({
-      project: v.object({ ...projectSchema.entries, name: v.string() }),
+      project: projectSchema,
       revision: v.number(),
     }),
     await created.json(),

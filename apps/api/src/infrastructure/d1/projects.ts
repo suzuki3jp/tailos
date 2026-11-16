@@ -12,7 +12,6 @@ import {
   type ProjectRecord,
   type ProjectStore,
   type ProjectChange,
-  type NamedProject,
   type ProjectSummary,
 } from "@/application/projects/store.ts";
 
@@ -24,16 +23,18 @@ type Row = {
   revision: number;
   updated_at: number;
 };
-function namedProject(value: string, name?: string): NamedProject {
+function readProject(value: string, name?: string): Project {
   const { name: storedName, ...config } = v.parse(
     v.looseObject({ name: v.optional(v.string()) }),
     JSON.parse(value),
   );
-  const project = v.parse(projectSchema, config);
-  return { ...project, name: name || storedName || project.repository };
+  return v.parse(projectSchema, {
+    ...config,
+    name: name || storedName || config.repository,
+  });
 }
 function record(row: Row): ProjectRecord {
-  const project = namedProject(row.config, row.name);
+  const project = readProject(row.config, row.name);
   if (project.id !== row.id || project.repositoryId !== row.repository_id)
     throw new Error("Invalid stored project");
   return { project, revision: row.revision, updatedAt: row.updated_at };
@@ -53,7 +54,7 @@ function mutationError(error: unknown): never {
 
 export function d1Projects(db: D1Database): ProjectStore {
   const insert = (
-    project: NamedProject,
+    project: Project,
     actorId: string,
     now: number,
     legacyId: string | null = null,
@@ -72,9 +73,9 @@ export function d1Projects(db: D1Database): ProjectStore {
         now,
         actorId,
       );
-  function configuration(project: NamedProject): Project {
+  function configuration(project: Project) {
     const { name: _name, ...config } = project;
-    return v.parse(projectSchema, config);
+    return config;
   }
   return {
     async settings(ownerId) {
@@ -118,7 +119,7 @@ export function d1Projects(db: D1Database): ProjectStore {
       const records = results.map(record);
       v.parse(
         projectsSchema,
-        records.map((r) => configuration(r.project)),
+        records.map((r) => r.project),
       );
       return records;
     },
@@ -190,10 +191,10 @@ export function d1Projects(db: D1Database): ProjectStore {
           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
             .bind(
               project.id,
-              project.repository,
+              project.name,
               actorId,
               project.repositoryId,
-              JSON.stringify(project),
+              JSON.stringify(configuration(project)),
               legacyIds[index],
               now,
               now,
@@ -248,8 +249,8 @@ export function d1Projects(db: D1Database): ProjectStore {
         operation: r.operation,
         actorId: r.actor_id,
         createdAt: r.created_at,
-        before: r.before_config === null ? null : namedProject(r.before_config),
-        after: r.after_config === null ? null : namedProject(r.after_config),
+        before: r.before_config === null ? null : readProject(r.before_config),
+        after: r.after_config === null ? null : readProject(r.after_config),
       }));
       return {
         changes,

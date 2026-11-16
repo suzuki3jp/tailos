@@ -156,6 +156,7 @@ export function createProjectRoutes(
       for (const project of legacy) await repositories(c.env).verify(project);
       const projects = legacy.map((project) => ({
         ...project,
+        name: project.repository,
         id: crypto.randomUUID(),
       }));
       await store(c.env).import(

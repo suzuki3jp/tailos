@@ -5,7 +5,7 @@ const repository = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
 );
-// Display names are metadata, separate from execution snapshots and legacy input.
+// Legacy imports retain their original configuration shape.
 const configuration = v.strictObject({
   repository,
   repositoryId: id,
@@ -20,6 +20,8 @@ const configuration = v.strictObject({
 });
 export const projectSchema = v.strictObject({
   id: v.pipe(v.string(), v.uuid()),
+  // Existing repository-based names may exceed the new input limit.
+  name: v.pipe(v.string(), v.minLength(1)),
   ...configuration.entries,
 });
 const legacyProject = v.strictObject({

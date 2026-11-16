@@ -200,10 +200,21 @@ try {
   const unowned = await projectRows(
     "SELECT count(*) AS count FROM projects WHERE owner_id IS NULL",
   );
-  if (unowned.length !== 1 || unowned[0].count !== 0)
+  if (
+    unowned.length !== 1 ||
+    !Number.isSafeInteger(unowned[0].count) ||
+    unowned[0].count < 0
+  )
+    throw new Error("D1 returned an invalid unassigned Project count.");
+  if (unowned[0].count !== 0) {
+    if (!githubId)
+      throw new Error(
+        "Legacy Projects require GitHub login configuration, including TAILOS_OPERATOR_GITHUB_ID, before ownership can be assigned. Configure GitHub login and retry.",
+      );
     throw new Error(
       "Legacy Projects require the configured operator to log in before ownership can be assigned. Log in using the existing deployment and retry.",
     );
+  }
   wrangler([...deploy, "--config", path]);
 } finally {
   try {

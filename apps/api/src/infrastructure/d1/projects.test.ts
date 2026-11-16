@@ -120,8 +120,11 @@ test("imports UUID mappings and session references once, preserving run snapshot
       "INSERT INTO sessions (id, owner_id, project_id, created_at) VALUES ('old', 'owner', 'meguri', 1), ('standalone', 'owner', NULL, 1), ('unmapped', 'owner', 'unknown', 1)",
     )
     .run();
-  const { name: _name, ...legacySettings } = settings;
-  const project = { ...legacySettings, id: crypto.randomUUID() };
+  const project = {
+    ...settings,
+    name: settings.repository,
+    id: crypto.randomUUID(),
+  };
   await db
     .prepare(
       "CREATE TRIGGER reject_mapping BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'mapping failure'); END",
@@ -268,8 +271,11 @@ test("UUID import moves planning scopes atomically and preserves the existing co
   };
   const receipt = await acceptPlanningInput(db, input);
   expect(await dispatchPlanningInputs(db)).toEqual([]);
-  const { name: _name, ...legacySettings } = settings;
-  const project = { ...legacySettings, id: crypto.randomUUID() };
+  const project = {
+    ...settings,
+    name: settings.repository,
+    id: crypto.randomUUID(),
+  };
   await db
     .prepare(
       "CREATE TRIGGER reject_scope BEFORE UPDATE ON planning_inbox BEGIN SELECT RAISE(ABORT, 'scope failure'); END",

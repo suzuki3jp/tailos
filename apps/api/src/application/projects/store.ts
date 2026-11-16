@@ -5,16 +5,15 @@ import type {
   ProjectSettings,
 } from "@/application/triggers/projects.ts";
 
-export type NamedProject = Project & { name: string };
 export type ProjectPosition = { name: string; id: string };
 export const projectSummary = v.strictObject({
   id: projectSchema.entries.id,
-  name: v.pipe(v.string(), v.minLength(1)),
+  name: projectSchema.entries.name,
   repository: projectSchema.entries.repository,
 });
 export type ProjectSummary = v.InferOutput<typeof projectSummary>;
 export type ProjectRecord = {
-  project: NamedProject;
+  project: Project;
   revision: number;
   updatedAt: number;
 };
@@ -28,8 +27,8 @@ export type ProjectChange = {
   operation: "create" | "update" | "delete" | "import";
   actorId: string;
   createdAt: number;
-  before: NamedProject | null;
-  after: NamedProject | null;
+  before: Project | null;
+  after: Project | null;
 };
 export class ProjectConflict extends Error {}
 export type ProjectStore = {

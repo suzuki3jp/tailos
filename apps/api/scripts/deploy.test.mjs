@@ -81,7 +81,7 @@ function setup(t) {
         const sql = JSON.parse(body).sql;
         appendFileSync(process.env.TAILOS_TEST_CAPTURE, JSON.stringify({ command: sql.includes("sqlite_master") ? "inspect Project table" : sql.includes("owner_id") ? "check Project owners" : "count Projects" }) + "\\n");
         if (existsSync("fail-project-lookup")) return Response.json({ success: false }, { status: 503 });
-        const results = sql.includes("sqlite_master") ? existsSync("projects") ? [{ name: "projects" }] : [] : [{ count: sql.includes("owner_id") ? existsSync("uninitialized-owner") ? 1 : 0 : 1 }];
+        const results = sql.includes("sqlite_master") ? existsSync("projects") || existsSync("deleted-projects") ? [{ name: "projects" }] : [] : [{ count: sql.includes("owner_id") ? existsSync("uninitialized-owner") ? 1 : 0 : existsSync("deleted-projects") ? 0 : 1 }];
         return Response.json({ success: true, result: [{ success: true, results }] });
       }
       if (url !== "https://api.cloudflare.com/client/v4/accounts/test-account/r2/buckets/tailos-run-artifacts") throw new Error("Unexpected R2 lookup URL");
@@ -334,6 +334,32 @@ test("deploy refuses to publish while legacy projects have no initialized owner"
   const result = runDeploy();
   expect(result.status).not.toBe(0);
   expect(result.stderr).toContain("configured operator to log in");
+  expect(readCalls().some((call) => call.command[0] === "deploy")).toBe(false);
+  expect(
+    readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),
+  ).toBe(false);
+});
+
+test("deploy asks for GitHub login configuration when deleted legacy Projects remain without an operator", (t) => {
+  const { cwd, runDeploy, readCalls } = setup(t);
+  for (const marker of [
+    "database",
+    "bucket",
+    "deleted-projects",
+    "uninitialized-owner",
+  ])
+    writeFileSync(join(cwd, marker), "");
+  const result = runDeploy({
+    TAILOS_OPERATOR_GITHUB_ID: "",
+    TAILOS_GITHUB_OAUTH_CLIENT_ID: "",
+    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "",
+    BETTER_AUTH_SECRET: "",
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain(
+    "GitHub login configuration, including TAILOS_OPERATOR_GITHUB_ID",
+  );
+  expect(result.stderr).not.toContain("configured operator to log in");
   expect(readCalls().some((call) => call.command[0] === "deploy")).toBe(false);
   expect(
     readdirSync(cwd).some((file) => file.startsWith("wrangler.deploy.")),

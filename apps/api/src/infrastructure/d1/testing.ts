@@ -8,6 +8,10 @@ export async function createTestBindings(
     script?: string;
     bindings?: Record<string, string>;
     migrationsThrough?: string;
+    beforeMigration?: (
+      db: Awaited<ReturnType<Miniflare["getD1Database"]>>,
+      file: string,
+    ) => Promise<void>;
   } = {},
 ): Promise<{
   DB: Awaited<ReturnType<Miniflare["getD1Database"]>>;
@@ -37,6 +41,7 @@ export async function createTestBindings(
     )
     .sort();
   for (const file of files) {
+    await options.beforeMigration?.(db, file);
     const migration = await readFile(new URL(file, directory), "utf8");
     await db.batch(
       migration

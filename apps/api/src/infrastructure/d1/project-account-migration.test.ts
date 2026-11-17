@@ -5,7 +5,7 @@ import { d1Projects } from "./projects.ts";
 
 test("account migration preserves IDs, revisions, long repository names and existing audit snapshots", async (t) => {
   const { DB } = await createTestBindings(t, {
-    migrationsThrough: "0008_project_settings.sql",
+    migrationsThrough: "0009_session_metadata.sql",
   });
   const ids = [crypto.randomUUID(), crypto.randomUUID()];
   const repository = "owner/" + "r".repeat(110);
@@ -35,7 +35,7 @@ test("account migration preserves IDs, revisions, long repository names and exis
   ).results;
   const migration = await readFile(
     new URL(
-      "../../../migrations/0009_project_account_identity.sql",
+      "../../../migrations/0010_project_account_identity.sql",
       import.meta.url,
     ),
     "utf8",
@@ -107,11 +107,11 @@ test("account migration preserves IDs, revisions, long repository names and exis
 
 test("old Worker inserts on either side of owner assignment stay visible with one creation snapshot", async (t) => {
   const { DB } = await createTestBindings(t, {
-    migrationsThrough: "0008_project_settings.sql",
+    migrationsThrough: "0009_session_metadata.sql",
   });
   const migration = await readFile(
     new URL(
-      "../../../migrations/0009_project_account_identity.sql",
+      "../../../migrations/0010_project_account_identity.sql",
       import.meta.url,
     ),
     "utf8",
@@ -130,7 +130,7 @@ test("old Worker inserts on either side of owner assignment stay visible with on
     agentNetworkAccess: false,
     maxRunMinutes: 30,
   };
-  // This is the pre-0009 INSERT shape used by the still-running old Worker.
+  // This is the pre-0010 INSERT shape used by the still-running old Worker.
   const oldInsert = (repositoryId: number) => {
     const id = crypto.randomUUID();
     return DB.prepare(

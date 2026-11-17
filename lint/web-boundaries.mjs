@@ -50,6 +50,13 @@ export function createWebBoundaryRule(root) {
       const from = location(filename);
       if (!from) return {};
 
+      // A colocated test may import its own route; routes still cannot compose
+      // other routes, and tests cannot reach unrelated framework modules.
+      const testSubject = filename.replace(
+        /\.(?:test|spec)(\.[cm]?[jt]sx?)$/,
+        "$1",
+      );
+
       function report(node, message) {
         context.report({ node, message });
       }
@@ -96,7 +103,15 @@ export function createWebBoundaryRule(root) {
               node,
               "FSD layers and adapters cannot depend on another Web adapter.",
             );
-          } else if (from[0] === "app" && routeModule.test(to.join("/"))) {
+          } else if (
+            from[0] === "app" &&
+            routeModule.test(to.join("/")) &&
+            !(
+              testSubject !== filename &&
+              (testSubject === target ||
+                testSubject.replace(/\.[cm]?[jt]sx?$/, "") === target)
+            )
+          ) {
             report(
               node,
               "Import a page slice instead of another framework route module.",

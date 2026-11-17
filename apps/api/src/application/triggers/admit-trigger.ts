@@ -5,6 +5,8 @@ export type TriggerAdmission = {
   projectId?: string;
   projectRevision?: number;
   target?: string;
+  initialTitle?: string;
+  triggerMetadata?: string;
   concurrencyKey: string;
   prompt: string;
   executionContext: string;

@@ -7,7 +7,7 @@ export function RequestState({
   missing: string;
   retry: () => void;
 }) {
-  if (status === 404) return <p className="text-muted">{missing}</p>;
+  if (status === 404) return <p className="text-muted-foreground">{missing}</p>;
   return (
     <div className="space-y-3">
       <p role="alert" className="text-danger">

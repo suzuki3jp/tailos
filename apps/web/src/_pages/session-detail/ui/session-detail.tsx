@@ -65,10 +65,12 @@ export function SessionDetail({ id }: { id: string }) {
     <section className="space-y-7">
       <header className="space-y-2">
         <h1 className="text-3xl font-medium">Session</h1>
-        <p className="break-all font-mono text-sm text-muted">{id}</p>
+        <p className="break-all font-mono text-sm text-muted-foreground">
+          {id}
+        </p>
       </header>
       {session.isPending ? (
-        <p role="status" className="text-muted">
+        <p role="status" className="text-muted-foreground">
           Session を読み込んでいます。
         </p>
       ) : !detail || "error" in detail ? (
@@ -82,7 +84,7 @@ export function SessionDetail({ id }: { id: string }) {
           <section className="surface">
             <h2 className="mb-4 text-lg font-medium">会話</h2>
             {detail.messages.length === 0 && (
-              <p className="text-muted">会話はまだありません。</p>
+              <p className="text-muted-foreground">会話はまだありません。</p>
             )}
             <ol className="divide-y divide-rule">
               {detail.messages.map((message) => (
@@ -100,7 +102,9 @@ export function SessionDetail({ id }: { id: string }) {
           <section className="surface">
             <h2 className="mb-4 text-lg font-medium">Run</h2>
             {detail.runs.length === 0 && (
-              <p className="text-muted">実行履歴はまだありません。</p>
+              <p className="text-muted-foreground">
+                実行履歴はまだありません。
+              </p>
             )}
             <ol className="divide-y divide-rule">
               {detail.runs.map((run) => {
@@ -116,7 +120,7 @@ export function SessionDetail({ id }: { id: string }) {
                       {runLabel[run.status]}
                     </p>
                     {plan && <p>{plan}</p>}
-                    <p className="break-all font-mono text-xs text-muted">
+                    <p className="break-all font-mono text-xs text-muted-foreground">
                       {run.id}
                     </p>
                     <a

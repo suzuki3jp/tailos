@@ -10,6 +10,11 @@ import type {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
+import {
+  listSessions,
+  sessionListInput,
+  type SessionListStore,
+} from "@/application/sessions/list-sessions.ts";
 
 import {
   smokeAuth,
@@ -33,7 +38,7 @@ const sessionInput = v.strictObject({
 });
 
 export function createSessionRoutes<Detail>(
-  store: (env: Bindings) => SessionStore<Detail>,
+  store: (env: Bindings) => SessionStore<Detail> & SessionListStore,
   operatorAuth: ReturnType<typeof createOperatorAuth>,
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
@@ -60,6 +65,13 @@ export function createSessionRoutes<Detail>(
 
   const userSessionRoutes = new Hono<OperatorEnv>()
     .use("*", operatorAuth)
+    .get("/", async (c) => {
+      const input = sessionListInput(new URL(c.req.url).searchParams);
+      if (!input) return c.json({ error: "invalid_input" as const }, 400);
+      return c.json(
+        await listSessions(store(c.env), c.var.operatorUserId, input),
+      );
+    })
     .get("/:id", async (c) => {
       const detail = await store(c.env).read(
         c.req.param("id"),

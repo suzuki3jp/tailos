@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { sessionTitleStatement } from "@/infrastructure/d1/session-title.ts";
 import type {
   LegacyPublication,
   PendingPublication,
@@ -65,8 +66,9 @@ export async function stageRunPublication(
       "changes() = 1 AND json_extract(step_state, '$.pendingPublication') = json(?)",
       [payload],
     ),
+    sessionTitleStatement(db, runId, work.sessionTitle, payload),
   ]);
-  return results.at(-2)?.results.length === 1;
+  return results.at(-3)?.results.length === 1;
 }
 
 export async function beginPublicationReconciliation(

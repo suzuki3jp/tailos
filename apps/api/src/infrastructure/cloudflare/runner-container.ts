@@ -734,6 +734,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     const pendingWork = {
       reply: status.reply,
+      ...(status.sessionTitle && { sessionTitle: status.sessionTitle }),
       events: status.events,
       ...status.publication,
     };
@@ -804,6 +805,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return {
       status: "succeeded" as const,
       reply: work.reply,
+      ...(work.sessionTitle && { sessionTitle: work.sessionTitle }),
       events: work.events,
       publicationResult: {
         kind: "pull_request" as const,

@@ -28,35 +28,37 @@ const empty: ProjectSettings = {
 const fieldClass =
   "block w-full rounded-md border border-rule bg-paper px-3 py-2";
 function Snapshot({ project }: { project: ProjectChange["before"] }) {
-  if (!project) return <p className="text-muted">設定なし</p>;
+  if (!project) return <p className="text-muted-foreground">設定なし</p>;
   return (
     <dl className="space-y-1 break-words text-sm">
       <div>
-        <dt className="text-muted">名前</dt>
+        <dt className="text-muted-foreground">名前</dt>
         <dd>{project.name}</dd>
       </div>
       <div>
-        <dt className="text-muted">リポジトリ</dt>
+        <dt className="text-muted-foreground">リポジトリ</dt>
         <dd>{project.repository}</dd>
       </div>
       <div>
-        <dt className="text-muted">起動ラベル</dt>
+        <dt className="text-muted-foreground">起動ラベル</dt>
         <dd>{project.triggerLabel}</dd>
       </div>
       <div>
-        <dt className="text-muted">許可ユーザー</dt>
+        <dt className="text-muted-foreground">許可ユーザー</dt>
         <dd>{project.allowedActors.join(", ")}</dd>
       </div>
       <div>
-        <dt className="text-muted">通信</dt>
+        <dt className="text-muted-foreground">通信</dt>
         <dd>{project.agentNetworkAccess ? "許可" : "無効"}</dd>
       </div>
       <div>
-        <dt className="text-muted">制限時間</dt>
+        <dt className="text-muted-foreground">制限時間</dt>
         <dd>{project.maxRunMinutes}分</dd>
       </div>
       <div>
-        <dt className="text-muted">リポジトリ ID / installation ID</dt>
+        <dt className="text-muted-foreground">
+          リポジトリ ID / installation ID
+        </dt>
         <dd>
           {project.repositoryId} / {project.installationId}
         </dd>
@@ -143,7 +145,7 @@ export function ProjectsPage() {
     <section className="space-y-8">
       <div className="space-y-2">
         <h1 className="text-3xl font-medium">Project 設定</h1>
-        <p className="text-muted">
+        <p className="text-muted-foreground">
           リポジトリと起動条件を管理します。変更は新しく作る Run
           に適用されます。
         </p>
@@ -163,7 +165,7 @@ export function ProjectsPage() {
           </button>
         </div>
         {data.projects.length === 0 ? (
-          <p className="text-muted">Project はまだありません。</p>
+          <p className="text-muted-foreground">Project はまだありません。</p>
         ) : (
           <ul className="divide-y divide-rule rounded-lg border border-rule bg-panel">
             {data.projects.map((item) => (
@@ -171,10 +173,10 @@ export function ProjectsPage() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="font-medium">{item.project.name}</p>
-                    <p className="text-sm text-muted">
+                    <p className="text-sm text-muted-foreground">
                       {item.project.repository}
                     </p>
-                    <p className="break-all font-mono text-xs text-muted">
+                    <p className="break-all font-mono text-xs text-muted-foreground">
                       {item.project.id}
                     </p>
                   </div>
@@ -218,7 +220,7 @@ export function ProjectsPage() {
                     </button>
                   </div>
                 </div>
-                <p className="text-sm text-muted">
+                <p className="text-sm text-muted-foreground">
                   ラベル {item.project.triggerLabel} · 通信{" "}
                   {item.project.agentNetworkAccess ? "許可" : "無効"} · 上限{" "}
                   {item.project.maxRunMinutes}分
@@ -299,7 +301,7 @@ export function ProjectsPage() {
             retry={() => void repositories.refetch()}
           />
         ) : choices.length === 0 ? (
-          <p className="text-muted">
+          <p className="text-muted-foreground">
             選択できるリポジトリがありません。GitHub App の installation
             とリポジトリへのアクセスを確認してください。
           </p>
@@ -353,7 +355,7 @@ export function ProjectsPage() {
             onChange={(e) => setActors(e.target.value)}
             placeholder="login1, login2"
           />
-          <span className="text-muted">
+          <span className="text-muted-foreground">
             ログイン名をカンマまたは空白で区切って入力します（1〜100件）。
           </span>
         </label>
@@ -371,7 +373,7 @@ export function ProjectsPage() {
             />
             Agent のコマンドによる通信を許可する
           </label>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-muted-foreground">
             有効にすると依存関係のスクリプトを含むコマンドが任意の宛先へ通信でき、非公開ソースや読み取り可能なデータを外部に送信できるようになります。
           </p>
         </div>
@@ -416,7 +418,7 @@ export function ProjectsPage() {
               if (!busy) migrate.mutate();
             }}
           >
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted-foreground">
               旧 TAILOS_PROJECTS の JSON
               配列を貼り付けてください。登録履歴のない環境で一度だけ実行できます。UUID
               を発行し、既存 Session の紐付けも移します。
@@ -457,7 +459,9 @@ export function ProjectsPage() {
         ) : (
           <>
             {history.data.changes.length === 0 && (
-              <p className="text-muted">変更履歴はまだありません。</p>
+              <p className="text-muted-foreground">
+                変更履歴はまだありません。
+              </p>
             )}
             {history.data.changes.map((change) => (
               <details className="surface" key={change.id}>
@@ -473,7 +477,7 @@ export function ProjectsPage() {
                   }{" "}
                   · {change.after?.repository ?? change.before?.repository}
                 </summary>
-                <p className="my-3 break-all text-xs text-muted">
+                <p className="my-3 break-all text-xs text-muted-foreground">
                   Project {change.projectId} · 変更者 {change.actorId}
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">

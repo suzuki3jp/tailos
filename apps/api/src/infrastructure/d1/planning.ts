@@ -28,8 +28,8 @@ export async function acceptPlanningInput(
   ];
   const result = await db.batch<PlanningReceipt | { projectCurrent: number }>([
     db
-      .prepare(`INSERT INTO sessions (id, owner_id, project_id, target, created_at)
-      SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM planning_issues WHERE scope = ?)
+      .prepare(`INSERT INTO sessions (id, owner_id, project_id, target, title, trigger_metadata, created_at)
+      SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM planning_issues WHERE scope = ?)
       AND NOT EXISTS (SELECT 1 FROM planning_deliveries WHERE delivery_id = ?) AND ${projectGuard}`)
       .bind(
         sessionId,
@@ -41,6 +41,8 @@ export async function acceptPlanningInput(
           repositoryId: input.repositoryId,
           issueNumber: input.issueNumber,
         }),
+        input.initialTitle ?? "新しい会話",
+        input.triggerMetadata ?? null,
         now,
         scope,
         input.deliveryId,

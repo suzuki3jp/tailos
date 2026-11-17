@@ -116,7 +116,7 @@ const script = `
       send({ method: "item/completed", params: {
         threadId: "test-thread",
         item: { type: "agentMessage", text: mode === "workspaceWrite"
-          ? JSON.stringify({ reply: "Reply containing new-access", headline: "fix(api): handle refresh" })
+          ? JSON.stringify({ reply: "Reply containing new-access", headline: "fix(api): handle refresh", sessionTitle: "Credential refresh" })
           : "Reply containing new-access" },
       } });
       send({ method: "turn/completed", params: {
@@ -236,7 +236,10 @@ test.for([
       ),
     ).toEqual({
       reply: "Reply containing [REDACTED]",
-      ...(job.checkout && { headline: "fix(api): handle refresh" }),
+      ...(job.checkout && {
+        headline: "fix(api): handle refresh",
+        sessionTitle: "Credential refresh",
+      }),
     });
   },
 );

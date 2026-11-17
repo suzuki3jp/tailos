@@ -11,7 +11,7 @@ test("protects the device code and requires a POST from the Web origin to change
   const login = testLoginBindings(await createTestDb(t));
   const { id, cookie } = await createTestOperator(login);
   const origin = login.TAILOS_WEB_ORIGIN;
-  const path = login.TAILOS_PUBLIC_ORIGIN + "/api/connect";
+  const path = login.TAILOS_PUBLIC_ORIGIN + "/v1/connect";
   let status: ConnectionStatus = { state: "disconnected" };
   let starts = 0;
   const env = {
@@ -109,7 +109,7 @@ test("saves a pasted Claude token without ever returning it", async (t) => {
   const login = testLoginBindings(await createTestDb(t));
   const { id, cookie } = await createTestOperator(login);
   const origin = login.TAILOS_WEB_ORIGIN;
-  const path = login.TAILOS_PUBLIC_ORIGIN + "/api/connect/claude";
+  const path = login.TAILOS_PUBLIC_ORIGIN + "/v1/connect/claude";
   const token = "sk-ant-oat01-" + "a".repeat(64);
   const saved: string[] = [];
   const connected = {

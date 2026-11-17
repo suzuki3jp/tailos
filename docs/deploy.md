@@ -92,11 +92,13 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 
 ドメイン割り当てが失敗した場合は、Cloudflare の **Domains & Routes** と DNS を確認する。旧 API Worker や prototype に紐づいたままなら解除し、最新の `main` に対する **Deploy** の失敗ジョブを再実行する。
 
-ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @tailos/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/api/auth/callback/github` を設定する。
+ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @tailos/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/v1/auth/callback/github` を設定する。
 
 ## 運用者の GitHub ログイン
 
-GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/api/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
+既存環境を `/api` から `/v1` へ更新する際も、GitHub OAuth App の Authorization callback URL を新しい `/v1/auth/callback/github` に変更する。
+
+GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/v1/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
 ## GitHub App
 

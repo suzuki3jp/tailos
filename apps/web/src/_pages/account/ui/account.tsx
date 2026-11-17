@@ -26,7 +26,7 @@ export function Account() {
   }
   if (!data) {
     return (
-      <form method="post" action={apiOrigin + "/api/auth/login"}>
+      <form method="post" action={apiOrigin + "/v1/auth/login"}>
         <button className="action action-primary" type="submit">
           GitHub でログイン
         </button>
@@ -48,7 +48,7 @@ export function Account() {
             Agent 接続を開く
           </a>
         )}
-        <form method="post" action={apiOrigin + "/api/auth/logout"}>
+        <form method="post" action={apiOrigin + "/v1/auth/logout"}>
           <button className="action" type="submit">
             ログアウト
           </button>

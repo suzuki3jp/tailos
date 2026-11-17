@@ -10,7 +10,7 @@ test("keeps credentialed cross-origin requests and cancellation signals", async 
   const controller = new AbortController();
   await api.account.$get(undefined, { init: { signal: controller.signal } });
   expect(fetch).toHaveBeenCalledWith(
-    new URL("/api/account", apiOrigin).href,
+    new URL("/v1/account", apiOrigin).href,
     expect.objectContaining({
       credentials: "include",
       signal: controller.signal,

@@ -36,7 +36,7 @@ test("session listing authenticates the owner and pages tied timestamps without 
   }
   const send = (query = "", cookie = operator.cookie) =>
     app.request(
-      `${env.TAILOS_PUBLIC_ORIGIN}/api/sessions${query}`,
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/sessions${query}`,
       { headers: { Cookie: cookie } },
       env,
     );

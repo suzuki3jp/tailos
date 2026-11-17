@@ -65,11 +65,11 @@ test("writes settings and revisions as JSON and surfaces conflicts without autom
   const { name: _name, ...legacySettings } = settings;
   await importProjects(JSON.stringify([{ ...legacySettings, id: "meguri" }]));
   expect(requests).toEqual([
-    { path: "/api/projects", body: settings },
-    { path: "/api/projects/id", body: { ...settings, revision: 3 } },
-    { path: "/api/projects/id/delete", body: { revision: 4 } },
+    { path: "/v1/projects", body: settings },
+    { path: "/v1/projects/id", body: { ...settings, revision: 3 } },
+    { path: "/v1/projects/id/delete", body: { revision: 4 } },
     {
-      path: "/api/projects/import",
+      path: "/v1/projects/import",
       body: [{ ...legacySettings, id: "meguri" }],
     },
   ]);

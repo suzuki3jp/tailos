@@ -253,6 +253,75 @@ test("rejects the job before login if Codex cannot start its command sandbox", a
   ).rejects.toThrow(AgentSandboxUnavailable);
 });
 
+test.for([0, 1])(
+  "records sandbox probe output and exit code with credentials redacted (%s)",
+  async (exitCode) => {
+    const job = testJob();
+    job.diagnostics = {
+      traceId: `run/${job.runId}`,
+      parentSpanId: `run/${job.runId}`,
+      producerId: randomUUID(),
+      url: "https://tailos.example/diagnostics",
+      bearer: "b".repeat(64),
+      expiresAt: Date.now() + 60_000,
+    };
+    const sent: string[] = [];
+    const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+      sent.push(String(init?.body));
+      return new Response(null, { status: 204 });
+    });
+    const agent = createCodexAgent(
+      launchStub("readOnly", {
+        result: {
+          exitCode,
+          stdout: `probe output ${job.access.accessToken}`,
+          stderr: `bwrap: execvp codex-linux-sandbox: No such file or directory ${job.refresh.bearer}`,
+        },
+      }),
+      async () => Response.json({ ...job.access, accessToken: "new-access" }),
+    );
+    try {
+      const result = agent.run(
+        job,
+        AbortSignal.timeout(10_000),
+        undefined,
+        diagnostics,
+      );
+      if (exitCode === 0) await result;
+      else await expect(result).rejects.toThrow(AgentSandboxUnavailable);
+    } finally {
+      await diagnostics.finish();
+    }
+    expect(sent.join("")).not.toContain(job.access.accessToken);
+    expect(sent.join("")).not.toContain(job.refresh.bearer);
+    const records = sent.flatMap(
+      (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+    );
+    const probe = records.find(
+      (record) =>
+        record.attributes.operation === "sandbox" &&
+        record.name === "span.finished",
+    );
+    expect(probe?.attributes.exitCode).toBe(exitCode);
+    expect(probe?.attributes.outcome).toBe(
+      exitCode === 0 ? "succeeded" : "failed",
+    );
+    expect(JSON.parse(probe?.body ?? "null")).toEqual({
+      stdout: "probe output [REDACTED]",
+      stderr:
+        "bwrap: execvp codex-linux-sandbox: No such file or directory [REDACTED]",
+    });
+    expect(
+      records.some(
+        (record) =>
+          record.name === "span.started" &&
+          record.spanId === probe?.spanId &&
+          JSON.parse(record.body ?? "null")?.command?.[0] === "/bin/true",
+      ),
+    ).toBe(true);
+  },
+);
+
 test("records effective input and command results without refreshed credentials", async () => {
   const job = testJob();
   job.diagnostics = {

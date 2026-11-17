@@ -5,6 +5,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && rm -rf /var/lib/apt/lists/*
 ENV TAILOS_CODEX_VERSION=0.166.0
 RUN npm install --global --ignore-scripts @openai/codex@${TAILOS_CODEX_VERSION}
+# External bubblewrap resolves this helper through PATH. Codex will not create
+# its usual helper aliases when the disposable CODEX_HOME is under /tmp.
+RUN codex_binary="$(find /usr/local/lib/node_modules/@openai/codex -type f -path '*/vendor/*/bin/codex')" \
+    && test -n "$codex_binary" && test -x "$codex_binary" \
+    && ln -s "$codex_binary" /usr/local/bin/codex-linux-sandbox
 # Make Tailos's formatting and linting tools available to the Agent offline.
 RUN npm install --prefix /opt/tailos-checks --ignore-scripts \
     @pnpm/exe@12.15.0 oxfmt@0.75.0 oxlint@1.89.0

@@ -71,7 +71,7 @@ Agent の成功と Run の成功を分ける。外部へのリクエストがタ
 
 起動対象外の判定やスケジュール失敗の補足は best effort とし、診断ストアが失敗しても元の HTTP 応答を変えない。失敗時は ID と許可済みの判定コードだけを Workers Logs に残す。Run を新規受理する際の起動理由・関係は、業務上の受理と同じ batch で保証する。
 
-Codex Adapter は対応する item の開始・完了と、Tailos の GitHub ツールを記録する。プロバイダが通知しない処理や内部の推論は記録できない。未知の raw RPC、認証 RPC、app-server の stderr 全文は保存しない。
+Codex Adapter は対応する item の開始・完了と、Tailos の GitHub ツールを記録する。開始前の sandbox 起動チェックは、コマンド、終了コード、標準出力・標準エラーを sandbox Span に記録し、既存の秘匿・容量制限を適用する。プロバイダが通知しない処理や内部の推論は記録できない。未知の raw RPC、認証 RPC、app-server の stderr 全文は保存しない。
 
 ## 保存先と保証
 

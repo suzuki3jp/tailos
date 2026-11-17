@@ -21,6 +21,8 @@ const threadSchema = v.object({
 });
 const sandboxProbeSchema = v.object({
   exitCode: v.pipe(v.number(), v.safeInteger()),
+  stdout: v.optional(v.string()),
+  stderr: v.optional(v.string()),
 });
 const messageSchema = v.object({
   threadId: v.string(),
@@ -365,15 +367,35 @@ async function runTurn(
   try {
     signal.throwIfAborted();
     await initialize(rpc);
-    const probe = v.parse(
-      sandboxProbeSchema,
-      await rpc.call("command/exec", {
-        command: ["/bin/true"],
-        cwd,
-        timeoutMs: 5_000,
-        sandboxPolicy,
-      }),
+    const sandboxSpan = diagnostics?.start(
+      "sandbox",
+      JSON.stringify({ command: ["/bin/true"], cwd }),
+      agentSpan,
     );
+    let probe;
+    try {
+      probe = v.parse(
+        sandboxProbeSchema,
+        await rpc.call("command/exec", {
+          command: ["/bin/true"],
+          cwd,
+          timeoutMs: 5_000,
+          sandboxPolicy,
+        }),
+      );
+    } catch (error) {
+      if (sandboxSpan) diagnostics?.end(sandboxSpan, { outcome: "failed" });
+      throw error;
+    }
+    if (sandboxSpan)
+      diagnostics?.end(
+        sandboxSpan,
+        {
+          outcome: probe.exitCode === 0 ? "succeeded" : "failed",
+          exitCode: probe.exitCode,
+        },
+        JSON.stringify({ stdout: probe.stdout, stderr: probe.stderr }),
+      );
     if (probe.exitCode !== 0) {
       throw new AgentSandboxUnavailable("Codex command sandbox unavailable");
     }

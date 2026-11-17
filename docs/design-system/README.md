@@ -1,13 +1,13 @@
 # Tailos design system
 
-The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=21-10905) and [Design Systems page](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=6-2). Treat Figma as read-only. The current home is a presentation preview; it does not fetch account, Project, or Session data and never starts a Run.
+The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=21-10905) and [Design Systems page](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=6-2). Treat Figma as read-only. Home reads the authenticated account's Project and Session lists. The composer does not start a Run. See [the home API integration decision](../pdr/records/PDR-20261117-home-api-integration.md).
 
 ## Ownership
 
 - `apps/web/src/shared/styles/tokens.css`: semantic colors, typography and radii. `index.css` is the stylesheet's public entry.
 - `apps/web/src/shared/ui`: shadcn Base UI / Nova components, adapted in place for Tailos. Import each component's public module, such as `@/shared/ui/button`.
 - `apps/web/src/shared/lib/cn.ts`: class merging, including Tailos's semantic font-size names. Adding a typography utility also requires registering its name here so it does not conflict with text colors.
-- `apps/web/src/_pages/home`: home layout, composition and isolated presentation fixtures. Keep API integration and durable product behavior out of the fixtures.
+- `apps/web/src/_pages/home`: home layout, API query options, selection state and Session presentation. Queries use the existing credentialed API client and remain in the page slice.
 - `apps/web/src/app/(management)`: existing public management routes, currently composed with the prototype layout. These screens may adopt new styles, fonts and icons freely; preserving their previous appearance is not a requirement. Root login errors continue to render the account screen. See [the prototype styling decision](../pdr/records/PDR-20261116-web-prototype-styles.md).
 
 ## Tokens
@@ -32,11 +32,11 @@ Geist is self-hosted through the pinned Fontsource package. Font sizes / line he
 ## Components
 
 - **Button**: `default` for primary actions, `outline` for bordered alternatives, `ghost` for unobtrusive controls. Icon buttons need an accessible name.
-- **Select**: `default` 32px, `sm` 28px, `xs` 22px, `lg` 36px. The `ghost` variant is used in the composer; the sidebar uses the bordered variant. It remains a non-editable Select; a searchable Combobox can be added when required.
+- **Select**: `default` 32px, `sm` 28px, `xs` 22px, `lg` 36px. The `ghost` variant is used in the composer; the sidebar uses the bordered variant. Both controls share a selection, initially the first Project returned by the API. Choices show Project names and repositories, including later API pages. Loading, failures and empty lists disable the controls; selection is not persisted across reloads. It remains a non-editable Select; a searchable Combobox can be added when required.
 - **InputGroup**: shared focus boundary around a textarea and a `block-end` action area. Clicking the action area must not steal focus from its Select or buttons. The composer preserves the draft and reports that preview submission did not send it.
-- **Avatar**: local sample imagery for this preview. It is not the authenticated user's identity.
-- **Dialog / Sheet**: accessible sample-session details and mobile navigation. Escape and focus restoration remain provided by Base UI.
-- **Recent Sessions**: custom rows with the Figma separator, rather than extra Card borders or shadows. The preview never links fixture IDs to live Session endpoints.
+- **Avatar**: a generic account icon until the API supplies user identity. Sample imagery is not presented as the authenticated user.
+- **Dialog / Sheet**: shared dialog primitives and mobile navigation. Escape and focus restoration remain provided by Base UI.
+- **Recent Sessions**: rows link to the actual Session detail page and display the API's trigger, timestamp and latest Run status. The account-wide list follows API ordering, loads later pages on request, and handles loading, empty, login and retry states. Project selection does not filter this list. Unread marks are not inferred from Run state.
 
 The static desktop sidebar is page composition; it does not add shadcn's optional cookie-backed collapsing behavior. Mobile uses Sheet for focus containment and dismissal.
 
@@ -61,6 +61,6 @@ Project-specific Figma imagery and decorations are downloaded under `apps/web/pu
 
 ## Verification
 
-Compare the home at 1320 × 832 with the reference: sidebar 240px, header 60px, content 640px inside 24px gutters, 48px top padding, 140px initial composer and 60px between sections. Use minimum heights rather than clipping long content. Check narrow screens, Select keyboard operation, Dialog / Sheet dismissal and focus restoration, draft retention and absence of API requests. Verify built Worker output under the existing CSP; external fonts and images are not needed.
+Compare the home at 1320 × 832 with the reference: sidebar 240px, header 60px, content 640px inside 24px gutters, 48px top padding, 140px initial composer and 60px between sections. Use minimum heights rather than clipping long content. Check narrow screens, synchronized Project selection, Sheet dismissal and focus restoration, draft retention, Session pagination and error recovery. Home only reads the two list APIs; composer submission must not create a Session or Run. Verify built Worker output under the existing CSP; external fonts and images are not needed.
 
 Run the same checks as CI: `pnpm format:check`, `pnpm lint`, `pnpm test`, `pnpm typecheck`, and `pnpm --filter @tailos/web run build`.

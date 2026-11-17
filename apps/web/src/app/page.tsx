@@ -1,5 +1,5 @@
 import { AccountPage } from "@/_pages/account";
-import { HomePage as HomePreview } from "@/_pages/home";
+import { HomePage as Home } from "@/_pages/home";
 import { LegacyLayout } from "@/app/legacy-layout";
 
 export default async function HomePage({
@@ -13,6 +13,6 @@ export default async function HomePage({
       <AccountPage error={error} />
     </LegacyLayout>
   ) : (
-    <HomePreview />
+    <Home />
   );
 }

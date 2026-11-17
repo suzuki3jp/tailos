@@ -57,6 +57,8 @@ export async function createTestBindings(
   };
 }
 
-export async function createTestDb(t: TestContext) {
+export async function createTestDb(
+  t: TestContext,
+): Promise<Awaited<ReturnType<Miniflare["getD1Database"]>>> {
   return (await createTestBindings(t)).DB;
 }

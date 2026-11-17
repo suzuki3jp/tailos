@@ -39,7 +39,7 @@
 | [PDR-20261114-project-uuid](records/PDR-20261114-project-uuid.md) | accepted | project.identity.uuid | D1 移行時に Project ID を UUID に変える |
 | [PDR-20261114-project-webhook-conflict](records/PDR-20261114-project-webhook-conflict.md) | accepted | project.configuration.webhook-conflict | Project 編集と重なった Webhook は最新条件で一度だけ再試行する |
 | [PDR-20261116-csp-style-attributes](records/PDR-20261116-csp-style-attributes.md) | accepted | web.csp.style-attributes | JavaScript の制限を維持し、style 属性だけを許可する |
-| [PDR-20261116-home-design-preview](records/PDR-20261116-home-design-preview.md) | accepted | web.home.design-preview | Figma に合わせたホームをモックデータで先に実装する |
+| [PDR-20261116-home-design-preview](records/PDR-20261116-home-design-preview.md) | superseded | web.home.design-preview | Figma に合わせたホームをモックデータで先に実装する |
 | [PDR-20261116-project-account-list](records/PDR-20261116-project-account-list.md) | accepted | projects.account-list | アカウントの Project 一覧を名前順にページングして取得する |
 | [PDR-20261116-project-account-ownership](records/PDR-20261116-project-account-ownership.md) | accepted | project.configuration.ownership | Project をアカウントの所有にする |
 | [PDR-20261116-project-editable-fields](records/PDR-20261116-project-editable-fields.md) | accepted | project.configuration.editable-fields | Project に自由な名前を追加しリポジトリの重複を許可する |
@@ -53,3 +53,4 @@
 | [PDR-20261116-session-updated-at](records/PDR-20261116-session-updated-at.md) | accepted | sessions.activity-timestamp | Session の更新日時にメッセージと Run の状態変更を反映する |
 | [PDR-20261116-web-icons](records/PDR-20261116-web-icons.md) | accepted | web.design-system.icons | Web の汎用アイコンを Tabler Icons に統一する |
 | [PDR-20261116-web-prototype-styles](records/PDR-20261116-web-prototype-styles.md) | accepted | web.design-system.prototype-migration | デザイン導入で既存プロトタイプの見た目の変更を許容する |
+| [PDR-20261117-home-api-integration](records/PDR-20261117-home-api-integration.md) | accepted | web.home.design-preview | ホームの Project と Session 一覧を実データに接続する |

@@ -5,12 +5,18 @@ import {
   IconChartHistogram,
   IconSettings,
 } from "@tabler/icons-react";
-import { ProjectSelect } from "./project-select";
+import { ProjectSelect, type ProjectSelection } from "./project-select";
 
 const itemClass =
   "flex h-12 w-full items-center gap-6 px-6 py-2.5 text-caption hover:bg-sidebar-accent";
 
-export function HomeSidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function HomeSidebar({
+  onNavigate,
+  projectSelection,
+}: {
+  onNavigate?: () => void;
+  projectSelection: ProjectSelection;
+}) {
   return (
     <>
       <div className="flex h-15 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
@@ -27,7 +33,7 @@ export function HomeSidebar({ onNavigate }: { onNavigate?: () => void }) {
             height={48}
           />
         </Link>
-        <ProjectSelect />
+        <ProjectSelect {...projectSelection} />
       </div>
       <nav aria-label="Main navigation" className="flex flex-col gap-9">
         <Link

@@ -54,7 +54,7 @@ test("authorizes trace, cursor and body access with the existing operator sessio
     producer,
     batch,
   );
-  const base = "https://api.tailos.example/api/diagnostics";
+  const base = "https://api.tailos.example/v1/diagnostics";
   const headers = { Cookie: operator.cookie };
   expect((await app.request(`${base}/traces`, undefined, env)).status).toBe(
     401,

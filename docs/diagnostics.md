@@ -150,11 +150,11 @@ Cron は期限切れの本文を50件ずつ、未参照 object も含む R2 pref
 
 | API | 用途 |
 | --- | --- |
-| `GET /api/diagnostics/traces?runId=...` | Run と関連する受付 Trace を取得 |
-| `GET /api/diagnostics/traces?source=...&deliveryId=...` | 起動しなかった配送も検索 |
-| `GET /api/diagnostics/traces/:id/events?after=...` | 受信順のカーソルで最大100件ずつ取得 |
-| `GET /api/diagnostics/traces/:id/artifacts?after=...` | Artifact の一覧と期限を最大100件ずつ取得 |
-| `GET /api/diagnostics/artifacts/:id` | 対象の上限付きバッチ本文を取得 |
+| `GET /v1/diagnostics/traces?runId=...` | Run と関連する受付 Trace を取得 |
+| `GET /v1/diagnostics/traces?source=...&deliveryId=...` | 起動しなかった配送も検索 |
+| `GET /v1/diagnostics/traces/:id/events?after=...` | 受信順のカーソルで最大100件ずつ取得 |
+| `GET /v1/diagnostics/traces/:id/artifacts?after=...` | Artifact の一覧と期限を最大100件ずつ取得 |
+| `GET /v1/diagnostics/artifacts/:id` | 対象の上限付きバッチ本文を取得 |
 
 Trace の一覧は最大50件で、`nextCursor` を次の `before` に渡す。Trace ID に含まれる `/` はパスパラメータとしてエンコードする。
 

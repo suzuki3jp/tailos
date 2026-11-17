@@ -33,7 +33,7 @@ async function fixture(t: TestContext) {
   const env = testLoginBindings(DB);
   const store = d1Projects(DB);
   const app = new Hono<{ Bindings: Bindings }>().route(
-    "/api/projects",
+    "/v1/projects",
     createProjectRoutes(
       () => store,
       () => ({ list: async () => [], verify: async () => {} }),
@@ -45,7 +45,7 @@ async function fixture(t: TestContext) {
   );
   const request = (path = "", owner = "owner-a", body?: unknown) =>
     app.request(
-      `${env.TAILOS_PUBLIC_ORIGIN}/api/projects${path}`,
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/projects${path}`,
       {
         method: body === undefined ? "GET" : "POST",
         headers: {

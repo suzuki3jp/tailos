@@ -12,7 +12,7 @@ async function setup(t: TestContext) {
   const { DB } = await createTestBindings(t);
   const env = testLoginBindings(DB);
   const operator = await createTestOperator(env);
-  const url = env.TAILOS_PUBLIC_ORIGIN + "/api/mcp-keys";
+  const url = env.TAILOS_PUBLIC_ORIGIN + "/v1/mcp-keys";
   const headers = {
     Cookie: operator.cookie,
     Origin: env.TAILOS_WEB_ORIGIN,

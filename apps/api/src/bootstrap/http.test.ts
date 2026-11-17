@@ -29,3 +29,43 @@ test("runner smoke does not allocate a container without a configured bearer tok
     ).status,
   ).toBe(503);
 });
+
+const origin = "https://tailos.example";
+const env = {
+  TAILOS_WEB_ORIGIN: origin,
+  TAILOS_PUBLIC_ORIGIN: "https://api.tailos.example",
+  BETTER_AUTH_SECRET: "test-secret",
+};
+
+test("v1 browser routes retain authentication and credentialed CORS", async () => {
+  for (const path of [
+    "account",
+    "projects",
+    "sessions",
+    "connect",
+    "mcp-keys",
+    "diagnostics/traces",
+  ]) {
+    const response = await app.request(
+      `https://api.tailos.example/v1/${path}`,
+      { headers: { Origin: origin } },
+      env,
+    );
+    expect(response.status, path).toBe(401);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe(
+      "true",
+    );
+  }
+});
+
+test("the old API prefix is no longer routed", async () => {
+  for (const path of ["account", "projects", "sessions", "auth/login"]) {
+    const response = await app.request(
+      `https://api.tailos.example/api/${path}`,
+      { method: path === "auth/login" ? "POST" : "GET" },
+      env,
+    );
+    expect(response.status, path).toBe(404);
+  }
+});

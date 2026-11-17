@@ -149,7 +149,7 @@ test.for([undefined, false, true] as const)(
     expect(
       await db.prepare("SELECT count(*) AS count FROM runs").first("count"),
     ).toBe(1);
-    const path = `https://api.tailos.example/api/sessions/${data.sessionId}`;
+    const path = `https://api.tailos.example/v1/sessions/${data.sessionId}`;
     expect((await app.request(path, undefined, env)).status).toBe(401);
     const view = await app.request(
       path,
@@ -178,7 +178,7 @@ test.for([undefined, false, true] as const)(
       .bind("other-session", crypto.randomUUID(), Date.now())
       .run();
     const another = await app.request(
-      "https://api.tailos.example/api/sessions/other-session",
+      "https://api.tailos.example/v1/sessions/other-session",
       { headers: { Cookie: operator.cookie } },
       env,
     );
@@ -448,7 +448,7 @@ test("accepts explicit new planning comments without labels and rejects ineligib
   expect(
     (
       await app.request(
-        `https://api.tailos.example/api/sessions/${receipt.sessionId}`,
+        `https://api.tailos.example/v1/sessions/${receipt.sessionId}`,
         undefined,
         env,
       )

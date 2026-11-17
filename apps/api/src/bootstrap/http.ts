@@ -150,8 +150,8 @@ export type BrowserApi = ApplyGlobalResponse<
   }
 >;
 
-app.route("/api", browserApi);
-app.route("/api/auth", loginRoutes);
+app.route("/v1", browserApi);
+app.route("/v1/auth", loginRoutes);
 app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);

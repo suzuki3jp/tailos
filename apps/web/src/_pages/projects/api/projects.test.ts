@@ -9,6 +9,7 @@ import { saveProject, deleteProject, importProjects } from "./mutations";
 
 afterEach(() => vi.unstubAllGlobals());
 const settings = {
+  name: "Tailos",
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
@@ -61,12 +62,16 @@ test("writes settings and revisions as JSON and surfaces conflicts without autom
   await saveProject(settings);
   await saveProject(settings, "id", 3);
   await deleteProject("id", 4);
-  await importProjects(JSON.stringify([{ ...settings, id: "meguri" }]));
+  const { name: _name, ...legacySettings } = settings;
+  await importProjects(JSON.stringify([{ ...legacySettings, id: "meguri" }]));
   expect(requests).toEqual([
     { path: "/api/projects", body: settings },
     { path: "/api/projects/id", body: { ...settings, revision: 3 } },
     { path: "/api/projects/id/delete", body: { revision: 4 } },
-    { path: "/api/projects/import", body: [{ ...settings, id: "meguri" }] },
+    {
+      path: "/api/projects/import",
+      body: [{ ...legacySettings, id: "meguri" }],
+    },
   ]);
   http.mockImplementation(async () => new Response(null, { status: 409 }));
   await expect(saveProject(settings, "id", 3)).rejects.toThrow(/一覧を更新/);

@@ -7,6 +7,7 @@ export async function createTestBindings(
   options: {
     script?: string;
     bindings?: Record<string, string>;
+    migrationsThrough?: string;
     beforeMigration?: (
       db: Awaited<ReturnType<Miniflare["getD1Database"]>>,
       file: string,
@@ -33,7 +34,11 @@ export async function createTestBindings(
   const db = await worker.getD1Database("DB");
   const directory = new URL("../../../migrations/", import.meta.url);
   const files = (await readdir(directory))
-    .filter((file) => file.endsWith(".sql"))
+    .filter(
+      (file) =>
+        file.endsWith(".sql") &&
+        (!options.migrationsThrough || file <= options.migrationsThrough),
+    )
     .sort();
   for (const file of files) {
     await options.beforeMigration?.(db, file);

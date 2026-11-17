@@ -8,6 +8,7 @@ import { admitTrigger } from "./trigger-admission.ts";
 import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 
 const settings = {
+  name: "Tailos",
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
@@ -34,18 +35,18 @@ test("atomic CRUD keeps revisions and audit history, blocks repository duplicate
     first.project.id,
     1,
     { ...settings, agentNetworkAccess: true },
-    "next-operator",
+    "operator",
   );
   expect(updated?.revision).toBe(2);
   expect(
     await store.update(first.project.id, 1, settings, "operator"),
   ).toBeNull();
   expect(await store.remove(first.project.id, 1, "operator")).toBe(false);
-  expect(await store.remove(first.project.id, 2, "next-operator")).toBe(true);
+  expect(await store.remove(first.project.id, 2, "operator")).toBe(true);
   expect(await store.list()).toEqual([]);
   const replacement = await store.create(settings, "operator");
   expect(replacement.project.id).not.toBe(first.project.id);
-  const history = await store.history();
+  const history = await store.history("operator");
   expect(history.changes.map((c) => c.operation)).toEqual([
     "create",
     "delete",
@@ -54,7 +55,7 @@ test("atomic CRUD keeps revisions and audit history, blocks repository duplicate
   ]);
   expect(history.changes[1]).toMatchObject({
     projectId: first.project.id,
-    actorId: "next-operator",
+    actorId: "operator",
     before: { agentNetworkAccess: true },
     after: null,
   });
@@ -86,7 +87,7 @@ test("enforces the 100 active project limit atomically and pages the complete hi
     ids.map((id, index) =>
       db
         .prepare(
-          "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, ?, ?, 1, 1, 'operator')",
+          "INSERT INTO projects (id, owner_id, name, repository_id, config, created_at, updated_at, updated_by) VALUES (?, 'operator', 'Tailos', ?, ?, 1, 1, 'operator')",
         )
         .bind(
           id,
@@ -104,7 +105,7 @@ test("enforces the 100 active project limit atomically and pages the complete hi
   const seen: number[] = [];
   let cursor: number | undefined;
   do {
-    const page = await store.history(cursor);
+    const page = await store.history("operator", cursor);
     seen.push(...page.changes.map((c) => c.id));
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
@@ -119,7 +120,11 @@ test("imports UUID mappings and session references once, preserving run snapshot
       "INSERT INTO sessions (id, owner_id, project_id, created_at) VALUES ('old', 'owner', 'meguri', 1), ('standalone', 'owner', NULL, 1), ('unmapped', 'owner', 'unknown', 1)",
     )
     .run();
-  const project = { ...settings, id: crypto.randomUUID() };
+  const project = {
+    ...settings,
+    name: settings.repository,
+    id: crypto.randomUUID(),
+  };
   await db
     .prepare(
       "CREATE TRIGGER reject_mapping BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'mapping failure'); END",
@@ -129,7 +134,7 @@ test("imports UUID mappings and session references once, preserving run snapshot
     /mapping failure/,
   );
   expect(await store.list()).toEqual([]);
-  expect((await store.history()).changes).toEqual([]);
+  expect((await store.history("operator")).changes).toEqual([]);
   expect(
     await db.prepare("SELECT count(*) AS n FROM project_imports").first("n"),
   ).toBe(0);
@@ -156,7 +161,7 @@ test("imports UUID mappings and session references once, preserving run snapshot
       .bind(project.id)
       .first("legacy_id"),
   ).toBe("meguri");
-  expect((await store.history()).changes[0]).toMatchObject({
+  expect((await store.history("operator")).changes[0]).toMatchObject({
     operation: "import",
     projectId: project.id,
   });
@@ -266,7 +271,11 @@ test("UUID import moves planning scopes atomically and preserves the existing co
   };
   const receipt = await acceptPlanningInput(db, input);
   expect(await dispatchPlanningInputs(db)).toEqual([]);
-  const project = { ...settings, id: crypto.randomUUID() };
+  const project = {
+    ...settings,
+    name: settings.repository,
+    id: crypto.randomUUID(),
+  };
   await db
     .prepare(
       "CREATE TRIGGER reject_scope BEFORE UPDATE ON planning_inbox BEGIN SELECT RAISE(ABORT, 'scope failure'); END",

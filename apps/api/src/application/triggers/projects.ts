@@ -5,7 +5,8 @@ const repository = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
 );
-export const projectSettings = v.strictObject({
+// Legacy imports retain their original configuration shape.
+const configuration = v.strictObject({
   repository,
   repositoryId: id,
   installationId: id,
@@ -19,11 +20,13 @@ export const projectSettings = v.strictObject({
 });
 export const projectSchema = v.strictObject({
   id: v.pipe(v.string(), v.uuid()),
-  ...projectSettings.entries,
+  // Existing repository-based names may exceed the new input limit.
+  name: v.pipe(v.string(), v.minLength(1)),
+  ...configuration.entries,
 });
 const legacyProject = v.strictObject({
   id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
-  ...projectSettings.entries,
+  ...configuration.entries,
 });
 const uniqueProjects = (items: { id: string; repositoryId: number }[]) =>
   new Set(items.map((item) => item.repositoryId)).size === items.length &&
@@ -38,5 +41,16 @@ export const legacyProjectsSchema = v.pipe(
   v.maxLength(100),
   v.check((items) => uniqueProjects(items)),
 );
+export const projectName = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1),
+  v.maxLength(100),
+);
+export const projectSettings = v.strictObject({
+  name: projectName,
+  ...configuration.entries,
+});
+
 export type Project = v.InferOutput<typeof projectSchema>;
 export type ProjectSettings = v.InferOutput<typeof projectSettings>;

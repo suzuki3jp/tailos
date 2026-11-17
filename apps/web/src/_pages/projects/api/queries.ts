@@ -5,7 +5,7 @@ import { api } from "@/shared/api";
 export const projectsKey = ["projects"];
 export const projectHistoryKey = ["project-history"];
 export type ProjectItem = InferResponseType<
-  typeof api.projects.$get,
+  typeof api.projects.settings.$get,
   200
 >["projects"][number];
 export type ProjectSettings = Omit<ProjectItem["project"], "id">;
@@ -21,7 +21,9 @@ export function projectsQueryOptions() {
   return queryOptions({
     queryKey: projectsKey,
     queryFn: async ({ signal }) => {
-      const response = await api.projects.$get(undefined, { init: { signal } });
+      const response = await api.projects.settings.$get(undefined, {
+        init: { signal },
+      });
       return response.ok ? response.json() : { error: response.status };
     },
   });

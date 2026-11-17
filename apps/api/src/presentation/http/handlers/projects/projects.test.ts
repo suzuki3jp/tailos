@@ -14,6 +14,7 @@ import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts"
 import type { Bindings } from "@/bindings.ts";
 
 const settings = {
+  name: "Tailos",
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
@@ -109,7 +110,10 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
   const created = await send("", settings);
   expect(created.status).toBe(201);
   const item = v.parse(
-    v.object({ project: projectSchema, revision: v.number() }),
+    v.object({
+      project: projectSchema,
+      revision: v.number(),
+    }),
     await created.json(),
   );
   expect(item).toMatchObject({
@@ -132,7 +136,7 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
   expect(
     (await send(`/${item.project.id}/delete`, { revision: 2 })).status,
   ).toBe(200);
-  expect(await (await send()).json()).toEqual({ projects: [] });
+  expect(await (await send()).json()).toEqual({ items: [], nextCursor: null });
   const history = v.parse(
     v.object({ changes: v.array(v.object({ actorId: v.string() })) }),
     await (await send("/history")).json(),
@@ -172,7 +176,8 @@ test("imports only valid unique legacy projects and verifies all GitHub targets 
       },
       env,
     );
-  const legacy = { ...settings, id: "meguri" };
+  const { name: _name, ...legacySettings } = settings;
+  const legacy = { ...legacySettings, id: "meguri" };
   expect((await send([legacy, legacy])).status).toBe(400);
   expect((await send([legacy, { ...legacy, repositoryId: 43 }])).status).toBe(
     400,

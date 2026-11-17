@@ -1,0 +1,177 @@
+import { readFile } from "node:fs/promises";
+import { expect, test } from "vitest";
+import { createTestBindings } from "./testing.ts";
+import { d1Projects } from "./projects.ts";
+
+test("account migration preserves IDs, revisions, long repository names and existing audit snapshots", async (t) => {
+  const { DB } = await createTestBindings(t, {
+    migrationsThrough: "0009_session_metadata.sql",
+  });
+  const ids = [crypto.randomUUID(), crypto.randomUUID()];
+  const repository = "owner/" + "r".repeat(110);
+  const config = {
+    repository,
+    repositoryId: 1,
+    installationId: 1,
+    triggerLabel: "tailos",
+    allowedActors: ["owner"],
+    agentNetworkAccess: false,
+    maxRunMinutes: 30,
+  };
+  await DB.batch(
+    ids.map((id, index) =>
+      DB.prepare(
+        "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by, deleted_at) VALUES (?, ?, ?, 10, 20, 'previous-editor', ?)",
+      ).bind(
+        id,
+        index + 1,
+        JSON.stringify({ ...config, id, repositoryId: index + 1 }),
+        index === 1 ? 30 : null,
+      ),
+    ),
+  );
+  const snapshots = (
+    await DB.prepare("SELECT * FROM project_changes ORDER BY id").all()
+  ).results;
+  const migration = await readFile(
+    new URL(
+      "../../../migrations/0010_project_account_identity.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await DB.batch(
+    migration
+      .split("--> statement-breakpoint")
+      .map((statement) => DB.prepare(statement)),
+  );
+  expect(
+    (await DB.prepare("SELECT * FROM project_changes ORDER BY id").all())
+      .results,
+  ).toEqual(snapshots);
+  expect(
+    (
+      await DB.prepare(
+        "SELECT name, owner_id, revision, updated_at FROM projects",
+      ).all()
+    ).results,
+  ).toEqual([
+    { name: repository, owner_id: null, revision: 1, updated_at: 20 },
+    { name: repository, owner_id: null, revision: 1, updated_at: 20 },
+  ]);
+  await DB.batch([
+    DB.prepare(
+      "INSERT INTO users (id, name, email, email_verified, created_at, updated_at) VALUES ('current', 'Current', 'current@example.test', 1, 1, 1), ('previous', 'Previous', 'previous@example.test', 1, 1, 1)",
+    ),
+    DB.prepare(
+      "INSERT INTO auth_accounts (id, user_id, provider_id, account_id, created_at, updated_at) VALUES ('current-account', 'current', 'github', '123', 1, 1), ('previous-account', 'previous', 'github', '456', 1, 1)",
+    ),
+  ]);
+  // Exercise the deployed assignment query against actual D1, including reruns
+  // after changing the configured operator. Existing ownership must survive.
+  const assign = (githubId: string) =>
+    DB.prepare(
+      "UPDATE projects SET owner_id = (SELECT user_id FROM auth_accounts WHERE provider_id = 'github' AND account_id = ?) WHERE owner_id IS NULL",
+    )
+      .bind(githubId)
+      .run();
+  await assign("123");
+  await assign("456");
+  expect(
+    (await DB.prepare("SELECT owner_id FROM projects").all()).results,
+  ).toEqual([{ owner_id: "current" }, { owner_id: "current" }]);
+  expect(
+    (await DB.prepare("SELECT * FROM project_changes ORDER BY id").all())
+      .results,
+  ).toEqual(snapshots);
+  const store = d1Projects(DB);
+  expect((await store.settings("current"))[0].project).toMatchObject({
+    id: ids[0],
+    name: repository,
+  });
+  expect((await store.history("current")).changes).toHaveLength(2);
+  expect((await store.history("current")).changes[0].after?.name).toBe(
+    repository,
+  );
+  expect(await store.settings("previous")).toEqual([]);
+  const { id: _id, ...settings } = (await store.settings("current"))[0].project;
+  await store.update(ids[0], 1, { ...settings, name: "New name" }, "current");
+  expect((await store.history("current")).changes[0]).toMatchObject({
+    before: { name: repository },
+    after: { name: "New name" },
+  });
+  expect((await DB.prepare("PRAGMA foreign_key_check").all()).results).toEqual(
+    [],
+  );
+});
+
+test("old Worker inserts on either side of owner assignment stay visible with one creation snapshot", async (t) => {
+  const { DB } = await createTestBindings(t, {
+    migrationsThrough: "0009_session_metadata.sql",
+  });
+  const migration = await readFile(
+    new URL(
+      "../../../migrations/0010_project_account_identity.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await DB.batch(
+    migration
+      .split("--> statement-breakpoint")
+      .map((statement) => DB.prepare(statement)),
+  );
+  const config = {
+    repository: "owner/repo",
+    repositoryId: 1,
+    installationId: 1,
+    triggerLabel: "tailos",
+    allowedActors: ["operator"],
+    agentNetworkAccess: false,
+    maxRunMinutes: 30,
+  };
+  // This is the pre-0010 INSERT shape used by the still-running old Worker.
+  const oldInsert = (repositoryId: number) => {
+    const id = crypto.randomUUID();
+    return DB.prepare(
+      "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, ?, ?, 10, 20, 'operator')",
+    )
+      .bind(id, repositoryId, JSON.stringify({ ...config, repositoryId, id }))
+      .run();
+  };
+  await oldInsert(1);
+  // The deployment assignment has completed; an old request can still finish
+  // before the new Worker is published. It must not leave another unowned row.
+  await DB.prepare(
+    "UPDATE projects SET owner_id = 'operator' WHERE owner_id IS NULL",
+  ).run();
+  await oldInsert(2);
+  expect(
+    (
+      await DB.prepare(
+        "SELECT name, owner_id, revision, updated_at FROM projects ORDER BY repository_id",
+      ).all()
+    ).results,
+  ).toEqual([
+    { name: "owner/repo", owner_id: "operator", revision: 1, updated_at: 20 },
+    { name: "owner/repo", owner_id: "operator", revision: 1, updated_at: 20 },
+  ]);
+  const store = d1Projects(DB);
+  expect((await store.page("operator", 50)).items).toHaveLength(2);
+  expect(await store.settings("other")).toEqual([]);
+  const history = await store.history("operator");
+  expect(history.changes.map((change) => change.operation)).toEqual([
+    "create",
+    "create",
+  ]);
+  expect(
+    history.changes.every(
+      (change) => change.before === null && change.after?.name === "owner/repo",
+    ),
+  ).toBe(true);
+  await DB.prepare(
+    "CREATE TRIGGER reject_legacy_audit BEFORE INSERT ON project_changes BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+  ).run();
+  await expect(oldInsert(3)).rejects.toThrow("audit unavailable");
+  expect((await store.page("operator", 50)).items).toHaveLength(2);
+});

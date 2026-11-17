@@ -61,7 +61,7 @@ async function planningDb(t: TestContext) {
     };
     await db
       .prepare(
-        "INSERT INTO projects (id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, ?, ?, 1, 1, 'operator')",
+        "INSERT INTO projects (id, owner_id, name, repository_id, config, created_at, updated_at, updated_by) VALUES (?, 'operator', 'Planning', ?, ?, 1, 1, 'operator')",
       )
       .bind(id, repositoryId, JSON.stringify(config))
       .run();

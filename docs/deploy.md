@@ -39,6 +39,26 @@ Project の設定は D1 に保存し、`/projects` から管理する。`TAILOS_
 
 運用開始後にリソース不足が出たときは、セットアップを再実行する前に対象アカウントと Wrangler のリソース名を確認する。
 
+## Project の名前と所有者の移行
+
+`0010_project_account_identity.sql` は既存 Project（削除済みも含む）の名前を保存済みの `repository` 値で補完する。UUID、版、更新時刻、過去の変更履歴は変更しない。100 文字を超える既存値も切り詰めない。以後の新規作成と名前の変更は、前後の空白を除いて 1〜100 文字の必須入力にする。
+
+デプロイスクリプトは SQL migration の適用後、未割り当ての Project を `TAILOS_OPERATOR_GITHUB_ID` に対応する Tailos 内部ユーザーへ割り当ててから Worker を公開する。現在の運用者が一度もログインしていない場合は、既存デプロイでログインしてから移行する。対応する内部ユーザーがないまま未割り当て行が残る場合、公開を停止する。GitHub ログインが未設定なら `TAILOS_OPERATOR_GITHUB_ID` を含むログイン設定一式を追加し、設定済みなら現在の運用者でログインしてからデプロイを再実行する。既に割り当てた所有者は、運用者の設定変更や再実行で移転しない。
+
+migration 適用後に旧 Worker が受理した新規追加・インポートも、DB の互換トリガーで名前と所有者を INSERT 時に保存する。この場合の所有者は旧 Worker が認証結果から保存した作成者 ID であり、名前は repository 値を使う。所有者割り当ての後に旧リクエストが完了した場合も、未割り当てや空の名前を残さない。作成履歴は一件に保ち、revision と時刻は変えない。
+
+ローカルで SQL migration のみを適用した既存 DB にも、現在の運用者でログインした後に次の SQL をローカル D1 へ適用する。`123` は現在の `TAILOS_OPERATOR_GITHUB_ID` に置き換える。これは初回の未割り当て分だけを対象とし、既存所有者は変更しない。
+
+```sql
+UPDATE projects SET owner_id = (
+  SELECT user_id FROM auth_accounts
+  WHERE provider_id = 'github' AND account_id = '123'
+) WHERE owner_id IS NULL;
+SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
+```
+
+設定画面では自分が所有する Project を管理する。旧形式 JSON の初回インポートは従来の入力形式を受け付け、名前を `repository` 値、所有者を操作したユーザーとして保存する。
+
 ## 既存 Project 設定の D1 移行
 
 この切り替えには GitHub 起動を停止する時間を設ける。設定は自動投入されない。

@@ -22,6 +22,45 @@ const revision = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const update = v.strictObject({ ...projectSettings.entries, revision });
 const remove = v.strictObject({ revision });
 const projectId = v.pipe(v.string(), v.uuid());
+const positionSchema = v.strictObject({
+  version: v.literal(1),
+  name: v.string(),
+  id: projectId,
+});
+const pageQuery = v.object({
+  limit: v.optional(
+    v.pipe(
+      v.string(),
+      v.regex(/^[1-9]\d*$/),
+      v.transform(Number),
+      v.safeInteger(),
+      v.minValue(1),
+      v.maxValue(100),
+    ),
+    "50",
+  ),
+  cursor: v.optional(v.string()),
+});
+function encodeCursor(position: { name: string; id: string }) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ version: 1, ...position }),
+  );
+  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+}
+function decodeCursor(cursor: string) {
+  if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error("Invalid cursor");
+  const bytes = Uint8Array.from(
+    atob(cursor.replaceAll("-", "+").replaceAll("_", "/")),
+    (char) => char.charCodeAt(0),
+  );
+  return v.parse(
+    positionSchema,
+    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+  );
+}
 function jsonInput<T extends v.GenericSchema>(schema: T) {
   return validator("json", (value: v.InferInput<T>, c) => {
     const parsed = v.safeParse(schema, value);
@@ -65,7 +104,32 @@ export function createProjectRoutes(
       });
       return c.json({ error: "project_unavailable" as const }, 503);
     })
-    .get("/", async (c) => c.json({ projects: await store(c.env).list() }))
+    .get("/", async (c) => {
+      const parsed = v.safeParse(pageQuery, c.req.query());
+      if (!parsed.success)
+        return c.json({ error: "invalid_input" as const }, 400);
+      let after;
+      try {
+        after =
+          parsed.output.cursor === undefined
+            ? undefined
+            : decodeCursor(parsed.output.cursor);
+      } catch {
+        return c.json({ error: "invalid_input" as const }, 400);
+      }
+      const page = await store(c.env).page(
+        c.var.operatorUserId,
+        parsed.output.limit,
+        after,
+      );
+      return c.json({
+        items: page.items,
+        nextCursor: page.nextPosition ? encodeCursor(page.nextPosition) : null,
+      });
+    })
+    .get("/settings", async (c) =>
+      c.json({ projects: await store(c.env).settings(c.var.operatorUserId) }),
+    )
     .get("/repositories", async (c) =>
       c.json({ repositories: await repositories(c.env).list() }),
     )
@@ -75,7 +139,9 @@ export function createProjectRoutes(
         value === undefined ? undefined : v.safeParse(revision, Number(value));
       if (cursor && !cursor.success)
         return c.json({ error: "invalid_input" as const }, 400);
-      return c.json(await store(c.env).history(cursor?.output));
+      return c.json(
+        await store(c.env).history(c.var.operatorUserId, cursor?.output),
+      );
     })
     .post("/", jsonInput(projectSettings), async (c) => {
       const settings = c.req.valid("json");
@@ -90,6 +156,7 @@ export function createProjectRoutes(
       for (const project of legacy) await repositories(c.env).verify(project);
       const projects = legacy.map((project) => ({
         ...project,
+        name: project.repository,
         id: crypto.randomUUID(),
       }));
       await store(c.env).import(

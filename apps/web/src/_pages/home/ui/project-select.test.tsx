@@ -12,7 +12,6 @@ test("server rendering includes the real Select without a hydration fallback", (
         ]}
         value="p1"
         onValueChange={() => {}}
-        loading={false}
         disabled={false}
       />,
     );
@@ -29,7 +28,6 @@ test("an empty project list renders a disabled control without a sample project"
       projects={[]}
       value={null}
       onValueChange={() => {}}
-      loading={false}
       disabled
     />,
   );

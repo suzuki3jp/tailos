@@ -5,27 +5,16 @@ import {
   IconChartHistogram,
   IconSettings,
 } from "@tabler/icons-react";
-import { ProjectSelect, type ProjectSelection } from "./project-select";
+import { HomeProjectSelect } from "./project-select";
 
 const itemClass =
   "flex h-12 w-full items-center gap-6 px-6 py-2.5 text-caption hover:bg-sidebar-accent";
 
-export function HomeSidebar({
-  onNavigate,
-  projectSelection,
-}: {
-  onNavigate?: () => void;
-  projectSelection: ProjectSelection;
-}) {
+export function HomeSidebar() {
   return (
     <>
       <div className="flex h-15 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3">
-        <Link
-          href="/"
-          aria-label="Tailos home"
-          onClick={onNavigate}
-          className="shrink-0 rounded-md"
-        >
+        <Link href="/" aria-label="Tailos home" className="shrink-0 rounded-md">
           <img
             src="/assets/design-system/tailos-symbol.png"
             alt=""
@@ -33,15 +22,10 @@ export function HomeSidebar({
             height={48}
           />
         </Link>
-        <ProjectSelect {...projectSelection} />
+        <HomeProjectSelect />
       </div>
       <nav aria-label="Main navigation" className="flex flex-col gap-9">
-        <Link
-          href="/"
-          aria-current="page"
-          className={itemClass}
-          onClick={onNavigate}
-        >
+        <Link href="/" aria-current="page" className={itemClass}>
           <IconHome
             aria-hidden="true"
             size={20}
@@ -50,7 +34,7 @@ export function HomeSidebar({
           Account Home
         </Link>
         <div>
-          <a href="#recent-sessions" className={itemClass} onClick={onNavigate}>
+          <a href="#recent-sessions" className={itemClass}>
             <IconMessages
               aria-hidden="true"
               size={20}
@@ -74,7 +58,7 @@ export function HomeSidebar({
             />
             Insights
           </button>
-          <Link href="/projects" className={itemClass} onClick={onNavigate}>
+          <Link href="/projects" className={itemClass}>
             <IconSettings
               aria-hidden="true"
               size={20}

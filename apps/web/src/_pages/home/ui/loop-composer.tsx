@@ -8,13 +8,9 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/shared/ui/input-group";
-import { ProjectSelect, type ProjectSelection } from "./project-select";
+import { HomeProjectSelect } from "./project-select";
 
-export function LoopComposer({
-  projectSelection,
-}: {
-  projectSelection: ProjectSelection;
-}) {
+export function LoopComposer() {
   const [draft, setDraft] = useState("");
   const [previewNotice, setPreviewNotice] = useState(false);
   return (
@@ -44,7 +40,7 @@ export function LoopComposer({
           align="block-end"
           className="justify-between px-3 pt-0 pb-3"
         >
-          <ProjectSelect compact {...projectSelection} />
+          <HomeProjectSelect compact />
           <InputGroupButton
             type="submit"
             aria-label="Preview loop"

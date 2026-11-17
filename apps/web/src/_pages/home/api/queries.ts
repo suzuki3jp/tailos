@@ -17,14 +17,25 @@ export class HomeRequestError extends Error {
   }
 }
 
-export function homeProjectsQueryOptions() {
+export function requestErrorStatus(error: unknown) {
+  return typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number"
+    ? error.status
+    : undefined;
+}
+
+export function homeProjectsQueryOptions(client = api) {
   return queryOptions({
     queryKey: ["projects", "account-list"],
+    refetchOnMount: false,
+    retryOnMount: false,
     queryFn: async ({ signal }) => {
       const projects = new Map<string, HomeProject>();
       let cursor: string | null = null;
       do {
-        const response = await api.projects.$get(
+        const response = await client.projects.$get(
           { query: cursor === null ? {} : { cursor } },
           { init: { signal } },
         );
@@ -38,12 +49,14 @@ export function homeProjectsQueryOptions() {
   });
 }
 
-export function homeSessionsQueryOptions() {
+export function homeSessionsQueryOptions(client = api) {
   return infiniteQueryOptions({
     queryKey: ["sessions", "account-list"],
+    refetchOnMount: false,
+    retryOnMount: false,
     initialPageParam: "",
     queryFn: async ({ signal, pageParam }) => {
-      const response = await api.sessions.$get(
+      const response = await client.sessions.$get(
         { query: pageParam ? { cursor: pageParam } : {} },
         { init: { signal } },
       );

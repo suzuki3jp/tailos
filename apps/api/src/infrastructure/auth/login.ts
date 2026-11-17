@@ -1,4 +1,5 @@
 import type { LoginAuth } from "@/application/auth/login.ts";
+import { loginSessionCookieName } from "@tailos/core/auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth/minimal";
 import { github } from "better-auth/social-providers";
@@ -34,6 +35,14 @@ export function createLoginAuth(env: Bindings) {
     return null;
 
   const provider = github({ clientId, clientSecret });
+  const apiUrl = new URL(origin);
+  const webUrl = new URL(webOrigin);
+  const sessionDomain =
+    apiUrl.protocol === "https:" &&
+    webUrl.protocol === "https:" &&
+    apiUrl.hostname.endsWith(`.${webUrl.hostname}`)
+      ? webUrl.hostname
+      : undefined;
   return betterAuth({
     baseURL: origin,
     basePath: authPath,
@@ -48,7 +57,16 @@ export function createLoginAuth(env: Bindings) {
         verification: authVerifications,
       },
     }),
-    advanced: { database: { generateId: "uuid" } },
+    advanced: {
+      database: { generateId: "uuid" },
+      cookies: {
+        // A new name avoids ambiguity with the old API-only session cookie.
+        session_token: {
+          name: loginSessionCookieName,
+          attributes: { domain: sessionDomain },
+        },
+      },
+    },
     telemetry: { enabled: false },
     session: { disableSessionRefresh: true },
     socialProviders: {

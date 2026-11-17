@@ -1,5 +1,5 @@
 import { RequestState } from "@/widgets/request-state";
-import { HomeRequestError } from "../api/queries";
+import { requestErrorStatus } from "../api/queries";
 
 export function DataRequestState({
   error,
@@ -11,7 +11,7 @@ export function DataRequestState({
   return (
     <div lang="ja">
       <RequestState
-        status={error instanceof HomeRequestError ? error.status : undefined}
+        status={requestErrorStatus(error)}
         missing="データが見つかりません。"
         retry={retry}
       />

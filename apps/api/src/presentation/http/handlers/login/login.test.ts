@@ -78,6 +78,11 @@ test("GitHub login authenticates the configured account and persists only the Ta
     assert(state);
     const cookie = cookieHeader(response);
     assert(cookie);
+    expect(
+      response.headers
+        .getSetCookie()
+        .every((line) => !line.includes("Domain=")),
+    ).toBe(true);
     return { state, cookie };
   };
   const finish = ({ state, cookie }: Awaited<ReturnType<typeof start>>) =>
@@ -136,9 +141,22 @@ test("GitHub login authenticates the configured account and persists only the Ta
           line.includes("session_token") &&
           line.includes("HttpOnly") &&
           line.includes("Secure") &&
-          !line.includes("Domain="),
+          line.includes("Domain=tailos.example") &&
+          line.includes("SameSite=Lax"),
       ),
   );
+  expect(
+    (
+      await request("/api/account", {
+        headers: {
+          Cookie: sessionCookie.replaceAll(
+            "tailos.session_token",
+            "better-auth.session_token",
+          ),
+        },
+      })
+    ).status,
+  ).toBe(401);
   const auth = createLoginAuth(env);
   assert(auth);
   const current = await auth.api.getSession({

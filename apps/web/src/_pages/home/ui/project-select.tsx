@@ -7,22 +7,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
-import type { HomeProject } from "../api/queries";
+import type { ProjectSelection } from "../model/project-selection";
+import { useProjectSelection } from "./project-selection";
 
-export type ProjectSelection = {
-  projects: HomeProject[];
-  value: string | null;
-  onValueChange: (value: string | null) => void;
-  loading: boolean;
-  disabled: boolean;
-};
+export function HomeProjectSelect({ compact = false }: { compact?: boolean }) {
+  const { selection } = useProjectSelection();
+  return <ProjectSelect compact={compact} {...selection} />;
+}
 
 export function ProjectSelect({
   compact = false,
   projects,
   value,
   onValueChange,
-  loading,
   disabled,
 }: ProjectSelection & { compact?: boolean }) {
   const items = projects.map((project) => ({
@@ -44,9 +41,7 @@ export function ProjectSelect({
         variant={compact ? "ghost" : "outline"}
         className={compact ? "w-35" : "min-w-0 flex-1"}
       >
-        <SelectValue
-          placeholder={loading ? "Loading projects…" : "No projects"}
-        />
+        <SelectValue placeholder="No projects" />
       </SelectTrigger>
       <SelectContent
         lang="en"

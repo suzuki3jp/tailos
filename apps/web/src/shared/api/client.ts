@@ -2,7 +2,12 @@ import type { BrowserApi } from "@tailos/api/browser";
 import { hc } from "hono/client";
 import { apiOrigin } from "../config";
 
-export const api = hc<BrowserApi>(new URL("/api", apiOrigin).href, {
-  fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-    fetch(input, { ...init, credentials: "include" }),
-});
+export function createApiClient(
+  request: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+) {
+  return hc<BrowserApi>(new URL("/api", apiOrigin).href, { fetch: request });
+}
+
+export const api = createApiClient((input, init) =>
+  fetch(input, { ...init, credentials: "include" }),
+);

@@ -5,8 +5,8 @@ import { Providers } from "./providers";
 import HomePage from "./page";
 
 // Exercise the route and real account error UI without loading Vinext's link/image shims.
-vi.mock("@/_pages/home", () => ({
-  HomePage: () => <div data-home />,
+vi.mock("./home", () => ({
+  Home: () => <div data-home />,
 }));
 vi.mock("@/app/legacy-layout", () => ({
   LegacyLayout: ({ children }: { children: ReactNode }) => (

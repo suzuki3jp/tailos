@@ -96,6 +96,8 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 
 ## 運用者の GitHub ログイン
 
+ホームの SSR に対応した版では、API を先に、次に Web をデプロイし、`/login` で再ログインする。ログイン Cookie は新しい `tailos.session_token`（HTTPS では `__Secure-` 接頭辞付き）へ切り替わり、本番では `Domain=tailos.app` で Web と API に共有される。旧 API 専用 Cookie は新しい認証では使わない。HttpOnly・Secure・SameSite=Lax と既存の Origin 検査は維持する。`tailos.app` 配下のサブドメインには信頼できないサービスを置かない。詳細は [Cookie の共有方針](pdr/records/PDR-20261117-login-cookie-scope.md) を参照する。ローカルは Web と API が同じ `localhost` を使い、Domain を付けずにポート間で共有する。
+
 GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/api/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
 ## GitHub App

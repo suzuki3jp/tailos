@@ -182,38 +182,9 @@ export class CredentialBroker
   > {
     const access = await this.issueAccess();
     if (!access) return null;
-    const response = await fetch(
-      "https://chatgpt.com/backend-api/codex/models?client_version=0.166.0",
-      {
-        redirect: "manual",
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          Authorization: `Bearer ${access.accessToken}`,
-          "ChatGPT-Account-Id": access.accountId,
-          originator: "codex_cli_rs",
-        },
-      },
-    );
-    if (!response.ok) {
-      await response.body?.cancel();
-      return null;
-    }
-    const modelSchema = v.object({
-      slug: v.pipe(v.string(), v.minLength(1)),
-      supported_reasoning_levels: v.array(
-        v.object({ effort: v.pipe(v.string(), v.minLength(1)) }),
-      ),
-    });
-    const parsed = v.safeParse(
-      v.object({ models: v.array(modelSchema) }),
-      await response.json(),
-    );
-    return parsed.success
-      ? parsed.output.models.map((m) => ({
-          model: m.slug,
-          efforts: m.supported_reasoning_levels.map((e) => e.effort),
-        }))
-      : null;
+    const runner = this.env.RUNNER;
+    if (!runner) return null;
+    return runner.get(runner.newUniqueId()).codexModels(access);
   }
 
   async issueClaudeAccess(): Promise<ClaudeAccess | null> {

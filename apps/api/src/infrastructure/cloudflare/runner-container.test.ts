@@ -682,7 +682,6 @@ test.for([
         repository: "owner/repo",
         repositoryId: 1,
         installationId: 2,
-        triggerLabel: "tailos:run",
         allowedActors: ["allowed"],
         agentNetworkAccess: false,
         maxRunMinutes: 1,

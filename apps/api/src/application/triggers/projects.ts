@@ -10,7 +10,6 @@ const configuration = v.strictObject({
   repository,
   repositoryId: id,
   installationId: id,
-  triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
   allowedActors: v.pipe(v.array(v.string()), v.minLength(1), v.maxLength(100)),
   agentNetworkAccess: v.optional(v.boolean(), false),
   maxRunMinutes: v.optional(
@@ -27,6 +26,7 @@ export const projectSchema = v.strictObject({
 const legacyProject = v.strictObject({
   id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
   ...configuration.entries,
+  triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
 });
 const uniqueProjects = (items: { id: string; repositoryId: number }[]) =>
   new Set(items.map((item) => item.repositoryId)).size === items.length &&

@@ -108,7 +108,7 @@ export const RepositoryTarget = v.strictObject({
   issueNumber: positiveId,
   issueContentHash: v.optional(sha256),
   defaultBranch: branch,
-  triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
+  triggerLabel: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
   agentNetworkAccess: v.optional(v.boolean()),
 });
 
@@ -119,6 +119,11 @@ export const PlanResult = v.strictObject({
 });
 export type PlanResult = v.InferOutput<typeof PlanResult>;
 
+export const codexOptions = {
+  model: v.optional(v.pipe(v.string(), v.minLength(1))),
+  effort: v.optional(v.pipe(v.string(), v.minLength(1))),
+};
+
 export const ExecutionContext = v.variant("engine", [
   v.strictObject({
     version: v.literal(1),
@@ -128,6 +133,14 @@ export const ExecutionContext = v.variant("engine", [
   v.strictObject({
     version: v.literal(1),
     engine: v.literal("codex"),
+    ...codexOptions,
+    routine: v.optional(
+      v.strictObject({
+        id: v.pipe(v.string(), v.uuid()),
+        revision: positiveId,
+        projectRevision: positiveId,
+      }),
+    ),
     mode: v.optional(ExecutionMode),
     connectionId: v.pipe(
       v.string(),
@@ -205,6 +218,7 @@ export const RunnerJob = v.variant("engine", [
     ...job,
     ...repositoryJob,
     engine: v.literal("codex"),
+    ...codexOptions,
     access: CodexAccess,
     // Also the base URL of the publication checkpoint.
     refresh: lease,

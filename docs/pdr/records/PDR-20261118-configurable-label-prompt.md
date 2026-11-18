@@ -9,6 +9,8 @@ keywords: [設定可能プロンプト, 固定prompt, label, githubContext, cont
 paths:
   - apps/api/src/presentation/http/handlers/github-webhook/**
   - apps/api/src/application/triggers/**
+  - apps/api/src/application/routines/**
+  - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/cloudflare/runner-container.ts
   - packages/core/src/runner.ts
   - apps/runner/src/agent-turns.ts

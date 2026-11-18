@@ -23,7 +23,6 @@ const config = {
   repository: "owner/repo",
   repositoryId: 1,
   installationId: 1,
-  triggerLabel: "tailos",
   allowedActors: ["owner"],
   agentNetworkAccess: false,
   maxRunMinutes: 30,

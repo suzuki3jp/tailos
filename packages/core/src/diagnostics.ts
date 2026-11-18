@@ -31,6 +31,7 @@ export const DiagnosticContext = v.strictObject({
 export type DiagnosticContext = v.InferOutput<typeof DiagnosticContext>;
 
 export const DiagnosticAttributes = v.strictObject({
+  routineId: v.optional(v.pipe(v.string(), v.uuid())),
   operation: v.optional(
     v.picklist([
       "request",

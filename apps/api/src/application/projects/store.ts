@@ -13,6 +13,7 @@ export const projectSummary = v.strictObject({
 });
 export type ProjectSummary = v.InferOutput<typeof projectSummary>;
 export type ProjectRecord = {
+  ownerId: string;
   project: Project;
   revision: number;
   updatedAt: number;
@@ -21,14 +22,15 @@ export type RepositoryChoice = Pick<
   Project,
   "repository" | "repositoryId" | "installationId"
 >;
+export type ProjectSnapshot = Project & { triggerLabel?: string };
 export type ProjectChange = {
   id: number;
   projectId: string;
   operation: "create" | "update" | "delete" | "import";
   actorId: string;
   createdAt: number;
-  before: Project | null;
-  after: Project | null;
+  before: ProjectSnapshot | null;
+  after: ProjectSnapshot | null;
 };
 export class ProjectConflict extends Error {}
 export type ProjectStore = {
@@ -49,7 +51,7 @@ export type ProjectStore = {
   ): Promise<ProjectRecord | null>;
   remove(id: string, revision: number, actorId: string): Promise<boolean>;
   import(
-    projects: Project[],
+    projects: ProjectSnapshot[],
     legacyIds: string[],
     actorId: string,
   ): Promise<void>;

@@ -12,7 +12,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  triggerLabel: "tailos:run",
   allowedActors: ["operator"],
   agentNetworkAccess: false,
   maxRunMinutes: 30,
@@ -72,11 +71,11 @@ test("atomic CRUD keeps revisions and audit history, blocks repository duplicate
     store.update(
       replacement.project.id,
       1,
-      { ...settings, triggerLabel: "changed" },
+      { ...settings, name: "changed" },
       "operator",
     ),
   ).rejects.toThrow(/audit unavailable/);
-  expect((await store.list())[0].project.triggerLabel).toBe("tailos:run");
+  expect((await store.list())[0].project.name).toBe("Tailos");
 });
 
 test("enforces the 100 active project limit atomically and pages the complete history", async (t) => {
@@ -261,7 +260,6 @@ test("UUID import moves planning scopes atomically and preserves the existing co
         repository: settings.repository,
         repositoryId: 42,
         installationId: 19,
-        triggerLabel: settings.triggerLabel,
         agentNetworkAccess: false,
         issueNumber: 3,
         defaultBranch: "main",

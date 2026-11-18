@@ -8,6 +8,8 @@ areas: [triggers, projects, database, api]
 keywords: [Routine, label, fanout, coalesced, 冪等性, revision, 移行, 設定管理]
 paths:
   - apps/api/src/application/triggers/**
+  - apps/api/src/application/routines/**
+  - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/d1/**
   - apps/api/src/presentation/http/handlers/github-webhook/**
   - apps/api/src/presentation/http/handlers/projects/**
@@ -53,7 +55,7 @@ label 起動の移行に適用し、plan の inbox・delivery・会話順序は�
 
 設定取得や検証に失敗した際に固定 prompt へ戻して起動しない。未対応 trigger 種別を保存 API で拒否し、PR や cron のイベントが実際に受け付けられると表示しない。API のレスポンスは全成功時 202、対象なし 204、一部失敗時 503 を基本とし、複数件の結果形式は実装前に契約を確定する。
 
-Project の label・許可ユーザーの移動と、未移行の plan に残る設定は [Project 設定の後継判断](PDR-20261118-project-routine-settings.md) に従う。Routine 設定の保存・有効化に必要な接続・モデル情報の検証は [別の提案](PDR-20261118-routine-configuration-validation.md) として残す。
+Project の label・許可ユーザーの移動と、未移行の plan に残る設定は [Project 設定の後継判断](PDR-20261118-project-routine-settings.md) に従う。Routine 設定の保存・有効化に必要な接続・モデル情報の検証は [保存・有効化の判断](PDR-20261118-routine-configuration-validation.md) に従う。
 
 ## 選択肢と影響
 
@@ -61,7 +63,4 @@ Project に trigger と prompt の項目を増やす案は単一ルールなら�
 
 同一対象のイベントを必ず順番に実行する案なら実行中に来た依頼を処理できるが、待機と新しいジョブ数上限が必要になる。採用する coalescing は現行に近い一方、後から来た配送を別の依頼として実行しない。
 
-## 未決事項
-
-- Routine の件数上限、名前・model の長さ、一覧のページング等の新しい入力上限。既存 prompt の 4,000 UTF-16 コード単位とジョブの 32 KiB 上限は維持する。
-- 複数結果と履歴の API の具体的な形式。
+Routine の名前・label・許可ユーザー・prompt は既存の入力規則を再利用する。新しい件数上限は今回導入せず、設定一覧は Project ごとの全件を取得する。履歴は既存 Project 履歴と同じ 50 件ずつのカーソル形式とする。複数受付結果は `{results: [{routineId, sessionId, runId, disposition}], failed: [routineId]}` とし、一部失敗時にも受付済み分を返す。

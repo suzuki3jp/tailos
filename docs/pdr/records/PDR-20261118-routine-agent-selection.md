@@ -8,6 +8,8 @@ areas: [agent, triggers, runs]
 keywords: [Routine, engine, codex, claude, model, effort, モデル, 既定値, 接続]
 paths:
   - apps/api/src/application/triggers/**
+  - apps/api/src/application/routines/**
+  - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/cloudflare/runner-container.ts
   - packages/core/src/runner.ts
   - apps/runner/src/codex-agent.ts
@@ -38,7 +40,7 @@ Run を受理するときに、指定された実行設定と接続の識別子�
 
 プロンプト・実行設定は同じ Routine revision の値として保存する。未指定 model・effort の保存は「指定しない」という選択の固定であり、provider の既定モデルが将来も同一である保証ではない。provider が返す実効モデル等は観測可能な範囲で別に記録する。
 
-モデル識別子、effort の許容値と組み合わせは各 provider の実装契約を確認する。既存の手動チャット、plan、旧ジョブのスキーマへ新しい必須項目を追加しない。接続不在や能力情報を確認できない場合の設定保存・有効化は [未採択の検証提案](PDR-20261118-routine-configuration-validation.md) として分離する。
+モデル識別子、effort の許容値と組み合わせは各 provider の実装契約を確認する。既存の手動チャット、plan、旧ジョブのスキーマへ新しい必須項目を追加しない。接続不在や能力情報を確認できない場合の設定保存・有効化は [保存・有効化の判断](PDR-20261118-routine-configuration-validation.md) に従う。
 
 今回は `claude` の Routine を保存 API で受け付けず、UI でも実行可能な選択肢として出さない。既存の Claude 接続・Adapter を削除する指示ではない。後続の対応で接続・モデル・effort・実行・公開まで設定が反映されることを確認してから追加する。
 

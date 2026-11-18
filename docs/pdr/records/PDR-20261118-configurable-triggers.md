@@ -8,6 +8,8 @@ areas: [triggers, runs, projects]
 keywords: [Routine, トリガー, プロンプト, prompt, model, effort, label, cron, PR, 抽象化]
 paths:
   - apps/api/src/application/triggers/**
+  - apps/api/src/application/routines/**
+  - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/d1/**
   - apps/api/src/presentation/http/handlers/github-webhook/**
   - packages/core/src/runner.ts
@@ -33,7 +35,7 @@ label 起動を最初に移すことで、新規 Run の受付という比較的
 
 ## 範囲と例外
 
-これは設計方針の採択であり、実装済みを示さない。今回の成果物は計画と PDR である。具体的な保存・受付・Agent 選択の規則は各判断に分ける。接続やモデル情報を確認できない場合の保存・有効化だけは別の未採択提案として扱う。
+これは設計方針の採択であり、実装済みを示さない。今回の成果物は計画と PDR である。具体的な保存・受付・Agent 選択の規則は各判断に分ける。接続やモデル情報を確認できない設定も、無効状態なら保存できる。
 
 プロンプトの設定化に伴う既存方針の更新は [Issue コンテキストの後継判断](PDR-20261118-configurable-label-prompt.md) に記録する。[Routine ごとの Agent 選択](PDR-20261118-routine-agent-selection.md)、[label の受付](PDR-20261118-label-routine-dispatch.md)、[Project と Routine の設定分担](PDR-20261118-project-routine-settings.md) はそれぞれ採択済みの判断に従う。
 

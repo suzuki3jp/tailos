@@ -1,3 +1,8 @@
+import {
+  dispatchIssueLabel,
+  type LabelResult,
+} from "@/application/routines/dispatch-label.ts";
+import type { Routine } from "@/application/routines/routines.ts";
 import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
 import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import type { ProjectRecord } from "@/application/projects/store.ts";
@@ -8,7 +13,7 @@ import type {
   PlanningAdmission,
   PlanningReceipt,
 } from "@/application/triggers/planning.ts";
-import { githubIssueDigest, type ExecutionContext } from "@tailos/core/runner";
+import { type ExecutionContext } from "@tailos/core/runner";
 import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import type { TriggerDiagnostic } from "@/application/diagnostics/store.ts";
@@ -41,6 +46,15 @@ export function createGithubWebhook(
     input: PlanningAdmission,
   ) => Promise<PlanningReceipt>,
   processPlans: (env: Bindings) => Promise<void> = async () => {},
+  readRoutines: (
+    env: Bindings,
+    projectId: string,
+  ) => Promise<Routine[]> = async () => [],
+  replayLabels: (
+    env: Bindings,
+    deliveryId: string,
+    ownerId: string,
+  ) => Promise<LabelResult[]> = async () => [],
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -60,6 +74,7 @@ export function createGithubWebhook(
     const decision = async (
       reason: TriggerDiagnostic["reason"],
       outcome: TriggerDiagnostic["outcome"] = "ignored",
+      routineId?: string,
     ) => {
       const delivery = c.req.header("X-GitHub-Delivery");
       await recordDecision(c.env, {
@@ -70,6 +85,7 @@ export function createGithubWebhook(
             : "github.issue-label",
         reason,
         outcome,
+        ...(routineId && { routineId }),
         ...(delivery && /^[A-Za-z0-9-]{1,100}$/.test(delivery)
           ? { deliveryId: delivery }
           : {}),
@@ -96,6 +112,49 @@ export function createGithubWebhook(
       return c.json({ error: "invalid_event" }, 400);
     }
 
+    if (normalized.kind === "label") {
+      const delivery = c.req.header("X-GitHub-Delivery");
+      if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
+        await decision("delivery", "failed");
+        return c.json({ error: "missing_delivery_id" }, 400);
+      }
+      const ownerId = await findOperatorUserId(c.env);
+      if (!ownerId) return c.json({ error: "operator_not_initialized" }, 503);
+      let result;
+      try {
+        result = await dispatchIssueLabel(
+          {
+            event: normalized.data,
+            deliveryId: delivery,
+            ownerId,
+            diagnostics: c.get("diagnosticRequest"),
+          },
+          {
+            projects: () => readProjects(c.env),
+            routines: (id) => readRoutines(c.env, id),
+            replay: (id, owner) => replayLabels(c.env, id, owner),
+            admit: admit(c.env),
+          },
+        );
+      } catch {
+        await decision("project_config", "failed");
+        return c.json({ error: "invalid_project_config" }, 503);
+      }
+      for (const admission of result.results) {
+        await scheduleRun(c.env)?.(admission.runId).catch(async () => {
+          await decision("schedule", "unknown");
+        });
+      }
+      if (result.results.length) c.executionCtx.waitUntil(notify(c.env));
+      if (result.failed.length) {
+        for (const routineId of result.failed)
+          await decision("project_config", "failed", routineId);
+        return c.json({ ...result, error: "routine_admission_failed" }, 503);
+      }
+      if (!result.results.length) return ignore("label");
+      return c.json(result, 202);
+    }
+
     // Repeat only admission-time Project conflicts. Every retry rereads and
     // reauthorizes the entire trigger; signatures and event parsing stay fixed.
     const accept = async () => {
@@ -119,8 +178,6 @@ export function createGithubWebhook(
         return ignore("repository");
       if (target.installationId !== data.installation.id)
         return ignore("installation");
-      if ("label" in data && target.triggerLabel !== data.label.name)
-        return ignore("label");
       if (
         !target.allowedActors.some(
           (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
@@ -151,11 +208,7 @@ export function createGithubWebhook(
           repositoryId: target.repositoryId,
           installationId: target.installationId,
           issueNumber: data.issue.number,
-          ...(normalized.kind === "label" && {
-            issueContentHash: await githubIssueDigest(data.issue),
-          }),
           defaultBranch: data.repository.default_branch,
-          triggerLabel: target.triggerLabel,
           agentNetworkAccess: target.agentNetworkAccess,
         },
       } satisfies ExecutionContext;
@@ -199,38 +252,7 @@ export function createGithubWebhook(
         );
         return c.json(receipt, 202);
       }
-      const prompt =
-        "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
-
-      const result = await admit(c.env)({
-        ...sessionMetadata,
-        source: "github.issue-label",
-        idempotencyKey: delivery,
-        ownerId,
-        projectId: target.id,
-        projectRevision: projectRecord?.revision,
-        target: JSON.stringify({
-          version: 1,
-          kind: "github.issue",
-          repositoryId: target.repositoryId,
-          issueNumber: data.issue.number,
-        }),
-        concurrencyKey: JSON.stringify([
-          "github.issue-label",
-          target.repositoryId,
-          data.issue.number,
-        ]),
-        prompt,
-        executionContext: JSON.stringify(executionContext),
-        timeoutMs: target.maxRunMinutes * 60_000,
-        diagnostics: c.get("diagnosticRequest"),
-      });
-      c.executionCtx.waitUntil(notify(c.env));
-      await scheduleRun(c.env)?.(result.runId).catch(async () => {
-        // The recovery sweep can schedule the committed run.
-        await decision("schedule", "unknown");
-      });
-      return c.json(result, 202);
+      return c.json({ error: "invalid_event" }, 400);
     };
     try {
       return await accept();

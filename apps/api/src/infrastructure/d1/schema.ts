@@ -55,6 +55,33 @@ export const projectImports = sqliteTable("project_imports", {
   createdAt: integer("created_at").notNull(),
 });
 
+export const routines = sqliteTable(
+  "routines",
+  {
+    id: text().primaryKey().notNull(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    config: text().notNull(),
+    revision: integer().notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [index("routine_project").on(t.projectId, t.deletedAt, t.id)],
+);
+export const routineChanges = sqliteTable("routine_changes", {
+  id: integer().primaryKey({ autoIncrement: true }),
+  routineId: text("routine_id")
+    .notNull()
+    .references(() => routines.id),
+  actorId: text("actor_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  before: text("before_config"),
+  after: text("after_config"),
+});
+
 export const sessions = sqliteTable(
   "sessions",
   {
@@ -168,6 +195,9 @@ export const triggerEvents = sqliteTable(
     idempotencyKey: text("idempotency_key").notNull(),
     disposition: text({ enum: ["started", "coalesced"] }).notNull(),
     receivedAt: integer("received_at").notNull(),
+    routineId: text("routine_id").references(() => routines.id),
+    routineRevision: integer("routine_revision"),
+    deliveryId: text("delivery_id"),
   },
   (t) => [
     unique("unique_trigger_delivery").on(t.source, t.idempotencyKey),

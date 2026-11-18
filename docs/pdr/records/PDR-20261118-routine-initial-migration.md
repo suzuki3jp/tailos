@@ -9,6 +9,8 @@ keywords: [Routine, ルーチン, 名称, 初回移行, 単一利用者, デプ�
 paths:
   - docs/plans/trigger-run-abstraction.md
   - apps/api/src/application/triggers/**
+  - apps/api/src/application/routines/**
+  - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/d1/**
 symbols: []
 supersedes: []

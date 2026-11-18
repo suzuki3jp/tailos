@@ -1,3 +1,8 @@
+import {
+  d1Routines,
+  replayLabelDelivery,
+} from "@/infrastructure/d1/routines.ts";
+import { implementationPrompt } from "@/application/routines/routines.ts";
 import { Hono } from "hono";
 import { expect, test, vi, type TestContext } from "vitest";
 import { createGithubWebhook } from "./github-webhook.ts";
@@ -14,7 +19,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  triggerLabel: "tailos:run",
   allowedActors: ["allowed"],
   agentNetworkAccess: false,
   maxRunMinutes: 30,
@@ -32,15 +36,43 @@ type Change =
 async function fixture(t: TestContext, kind: Kind, change: Change) {
   const DB = await createTestDb(t);
   const store = d1Projects(DB);
-  const project = await store.create(settings, "operator");
+  const owner = "00000000-0000-4000-8000-000000000001";
+  const project = await store.create(settings, owner);
+  const routines = d1Routines(DB);
+  const routine = await routines.save(owner, project.project.id, {
+    name: "Implementation",
+    enabled: true,
+    trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
+    allowedActors: settings.allowedActors,
+    engine: "codex",
+    prompt: implementationPrompt,
+  });
   let attempts = 0;
   const race = async () => {
     attempts++;
     if (change === "unexpected") throw new Error("original owner mismatch");
     if (change === "repeated") throw new ProjectChanged("another edit");
     if (attempts !== 1) return;
+    if (kind === "label" && (change === "actor" || change === "label")) {
+      await routines.save(
+        owner,
+        project.project.id,
+        {
+          name: routine!.name,
+          enabled: routine!.enabled,
+          trigger: routine!.trigger,
+          allowedActors: routine!.allowedActors,
+          prompt: routine!.prompt,
+          engine: routine!.engine,
+          ...(change === "actor"
+            ? { allowedActors: ["someone-else"] }
+            : { trigger: { ...routine!.trigger, label: "new-label" } }),
+        },
+        { id: routine!.id, revision: 1 },
+      );
+    }
     if (change === "deleted") {
-      await store.remove(project.project.id, 1, "operator");
+      await store.remove(project.project.id, 1, owner);
       return;
     }
     await store.update(
@@ -53,9 +85,8 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
         ...(change === "actor" && { allowedActors: ["someone-else"] }),
         ...(change === "installation" && { installationId: 20 }),
         ...(change === "repository" && { repositoryId: 43 }),
-        ...(change === "label" && { triggerLabel: "new-label" }),
       },
-      "operator",
+      owner,
     );
   };
   const read = vi.fn(() => store.list());
@@ -76,6 +107,8 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
       return acceptPlanningInput(env.DB, input);
     },
     async () => {},
+    (env, id) => d1Routines(env.DB).candidates(id),
+    (env, id, ownerId) => replayLabelDelivery(env.DB, id, ownerId),
   );
   const app = new Hono<{ Bindings: Bindings }>()
     .use("*", requestDiagnostics)
@@ -168,7 +201,9 @@ for (const kind of ["label", "comment"] as const) {
     const f = await fixture(t, kind, "repeated");
     const response = await f.send();
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "project_changed" });
+    expect(await response.json()).toMatchObject({
+      error: kind === "label" ? "routine_admission_failed" : "project_changed",
+    });
     expect(f.read).toHaveBeenCalledTimes(2);
     expect(f.attempts()).toBe(2);
     expect(f.diagnostic).toHaveBeenCalledExactlyOnceWith(
@@ -183,7 +218,7 @@ for (const kind of ["label", "comment"] as const) {
     expect(storage.read).toHaveBeenCalledTimes(1);
     expect(storage.attempts()).toBe(0);
     const mismatch = await fixture(t, kind, "unexpected");
-    expect((await mismatch.send()).status).toBe(500);
+    expect((await mismatch.send()).status).toBe(kind === "label" ? 503 : 500);
     expect(mismatch.attempts()).toBe(1);
     expect(mismatch.read).toHaveBeenCalledTimes(1);
   });

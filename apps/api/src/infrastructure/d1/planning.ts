@@ -145,7 +145,6 @@ export async function dispatchPlanningInputs(
           '$.repository.repository', json_extract(project.config, '$.repository'),
           '$.repository.repositoryId', project.repository_id,
           '$.repository.installationId', json_extract(project.config, '$.installationId'),
-          '$.repository.triggerLabel', json_extract(project.config, '$.triggerLabel'),
           '$.repository.agentNetworkAccess', json(CASE WHEN json_extract(project.config, '$.agentNetworkAccess') THEN 'true' ELSE 'false' END)),
           ? + json_extract(project.config, '$.maxRunMinutes') * 60000, ?, ?
         FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope

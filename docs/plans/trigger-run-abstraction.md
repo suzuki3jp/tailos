@@ -1,12 +1,12 @@
 # トリガーと実行設定の抽象化、label 起動の移行計画
 
-作成日: 2026-11-18。対象 checkout: `3607eff`。この文書は実装計画であり、機能はまだ追加していない。
+作成日: 2026-11-18。対象 checkout: `3607eff`。この文書は採択済みの実装計画。現在のブランチで実装と検証を進める。
 
 ## 目的と今回の範囲
 
 「何を契機に動くか」と「どの依頼・実行設定で Run を作るか」を DB の設定で結び、イベント源から独立した共通の受付へ渡す。利用者は条件・prompt・model・effort を変更できるようにする。設定の単位を、この計画では **Routine** と呼ぶ。
 
-最初に GitHub Issue の `issues.labeled` を移行する。設定の保存だけで終えず、設定 API・Web からの編集、保存値の Runner への反映、既存データの切替までを実装の到達点とする。今回の作業はその計画と PDR の作成までである。
+最初に GitHub Issue の `issues.labeled` を移行する。設定の保存だけで終えず、設定 API・Web からの編集、保存値の Runner への反映、既存データの切替までを実装の到達点とする。実装・検証と PR のレビュー対応までを今回の作業に含める。
 
 `@tailos plan` と回答コメントの inbox・Session 継続・Run 割当は現行経路に残す。PR トリガー、cron のスケジューラー、レビュー投稿、任意テンプレート言語、手動チャットの変更は後続とする。第一段階でも既存の label 起動の checkout・検証・PR 公開・Issue 通知は利用する。
 
@@ -20,9 +20,9 @@
 | [Routine ごとの Agent 選択](../pdr/records/PDR-20261118-routine-agent-selection.md) | 採択済み。Routine 単位の設定、今回は Codex、Claude は後続、model・effort 未指定時は provider 既定 |
 | [label の照合・受付・管理](../pdr/records/PDR-20261118-label-routine-dispatch.md) | 採択済み。複数一致、重複排除、同時実行、競合、初期状態、移行・管理の規則 |
 | [Project と Routine の設定分担](../pdr/records/PDR-20261118-project-routine-settings.md) | 採択済み。許可ユーザーは Routine、repository・通信許可・時間上限は Project。Project の label は削除を目標とする |
-| [接続・モデル未検証時の保存](../pdr/records/PDR-20261118-routine-configuration-validation.md) | 提案。接続等を確認できない設定を無効状態で保存できるかだけは未決 |
+| [接続・モデル未検証時の保存](../pdr/records/PDR-20261118-routine-configuration-validation.md) | 採択済み。未検証でも無効状態で保存し、有効化時に検証する |
 
-採択済みの判断には再承認を求めない。未決の保存・有効化規則と入力上限等を、その挙動に依存する実装の前に確定する。PDR の採択は実装完了やデプロイを意味しない。
+採択済みの判断には再承認を求めない。保存・有効化も採択済みであり、無効状態なら接続やモデル情報を確認できなくても保存する。PDR の採択は実装完了やデプロイを意味しない。
 
 ## 現状と再利用する境界
 
@@ -43,7 +43,7 @@
 
 ## 構造案
 
-以下は採択済みの設定・受付方針に基づく実装案である。保存・有効化の検証失敗時の扱いは別の提案に分ける。
+以下は採択済みの設定・受付方針に基づく実装案である。未検証の設定は無効状態で保存できる。
 
 ```mermaid
 flowchart LR
@@ -113,7 +113,7 @@ FSD に従い、画面・form state・取得・mutation・query key / invalidati
 
 | 工程 | 主な変更 | 完了条件 |
 | --- | --- | --- |
-| 0. 残る契約の確定 | 未検証時の保存・有効化、モデル能力の検証方法、上限・複数結果 API | 合意済みの起動・設定分担を前提に、保存検証の提案と新しい入力上限等を確定する |
+| 0. 契約の確定 | 保存・有効化、モデル能力の検証方法、複数結果 API | 保存・有効化を含めた PDR を採択済みとし、以下の契約で実装する |
 | 1. DB と application の基盤 | Routine の型・schema・store、許可ユーザー移動、Project の label 削除、migration、設定履歴、確定要求の組立 | 初版以外の条件を拒否し、既存受付と plan はまだ切り替えない。migration と履歴が原子的・再実行可能である |
 | 2. 実行オプションの伝達 | `ExecutionContext` / `RunnerJob`、DO の job 組立、Codex Adapter | 明示した model・effort が実際の provider 要求に届く。未指定と plan の挙動を保つ |
 | 3. label dispatcher | handler の label 分岐、設定照合、共通受付の guard とキー、診断 | 固定 prompt を handler から除き、別 Routine の独立性・再送・競合・部分失敗を確認する |
@@ -148,15 +148,17 @@ plan の不要な label 参照を外し、`Project.triggerLabel` の削除を目
 - Issue の内容ハッシュ・全ページ取得、4,000 UTF-16 単位と 32 KiB の境界を維持する。
 - Project の label を省いた plan context が受理・実行できること、Routine の label を実装 checkout で照合することを確認する。plan の開始・回答・許可ユーザー・受付順・同一 Session・読み取り専用・通知・Project 削除後の扱いを回帰確認する。
 
-## 実装前に残る判断と調査
+## 確定した実装契約
 
-一件の Routine に条件と実行設定をまとめる、複数一致は全件実行、同じ Routine の実行中配送はまとめる、モデル未指定は provider 既定、新規作成は無効、今回は Codex 対応、単一運用者の範囲とする判断は採択済みである。Claude の Routine 対応は後続とする。
+Routine は一件ごとに条件と実行設定を持ち、複数一致は全件実行する。同じ Routine の実行中配送は既存 Run にまとめる。新規作成は無効、model・effort 未指定は provider の既定、今回は Codex と単一運用者に対応する。接続やモデル情報を検証できなくても無効状態なら保存できる。
 
-残る項目は次のとおり。
-
-1. 接続やモデル能力情報を確認できなくても無効状態で保存できるか、保存自体を拒否するか。「下書き」は無効な Routine を保存する説明であり、別の状態や資源は追加しない。この点は説明・合意待ちとする。
-2. Routine 件数・入力長・一覧のページング等の上限と、複数受付結果・履歴の API 契約。具体的な新しい利用上限は実装案にして合意する。
-3. model・effort の対応する要求フィールドと能力情報の取得方法を、固定された Codex の版で確認する。API と Runner の型を増やすだけでなく、実際の provider 要求まで伝達する。
+- Routine API は `/v1/projects/:projectId/routines` の GET / POST、`/:id` の POST、`/:id/delete` の POST、`/history?before=...` の GET。設定更新と削除には現在の revision を指定する。
+- 名前・label・許可ユーザーには既存の名前 100 文字・label 50 文字・許可ユーザー 1〜100 件の検証を再利用し、prompt は既存の 4,000 UTF-16 コード単位を維持する。model・effort は空文字や制御文字を拒否し、対応する値は接続した provider の能力情報で検証する。設定リクエストは既存 Runner ジョブと同じ 32 KiB の範囲で受け付ける。
+- Routine 一覧は Project ごとの全件、履歴は既存 Project 履歴と同じ 50 件ずつのカーソル形式を利用する。今回新しい Routine 件数上限は導入しない。
+- Webhook は `{results: [{routineId, sessionId, runId, disposition}], failed: [routineId]}` を返す。対象なし 204、全件受付済み 202、一部失敗 503 とし、失敗先を診断に残す。
+- 能力情報は既存の CredentialBroker 内で所有者の接続を使って取得し、資格情報は公開しない。明示したモデルが存在しない・effort が未対応と分かる場合は拒否する。model 未指定で effort の対応を確定できない場合も、無効保存は許可し有効化は検証失敗とする。
+- Runner は固定された Codex 0.166.0 の `model/list` で実際の選択に対する対応を確認し、`thread/start` / `turn/start` に model、`turn/start` に effort を渡す。明示値を別の値へ黙って変更しない。
+- Routine 編集は Project 設定内の利用者の展開操作後に取得する。初期ページの必須データを増やさず、展開した領域だけに Loading・失敗表示を置く。
 
 ## 将来の追加点
 

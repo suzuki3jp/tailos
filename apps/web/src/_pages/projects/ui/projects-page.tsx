@@ -1,5 +1,6 @@
 "use client";
 
+import { RoutinePanel } from "./routine-panel";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
@@ -20,7 +21,6 @@ const empty: ProjectSettings = {
   repository: "",
   repositoryId: 0,
   installationId: 0,
-  triggerLabel: "tailos:run",
   allowedActors: [],
   agentNetworkAccess: false,
   maxRunMinutes: 30,
@@ -39,12 +39,14 @@ function Snapshot({ project }: { project: ProjectChange["before"] }) {
         <dt className="text-muted-foreground">リポジトリ</dt>
         <dd>{project.repository}</dd>
       </div>
+      {project.triggerLabel && (
+        <div>
+          <dt className="text-muted-foreground">移行前の起動ラベル</dt>
+          <dd>{project.triggerLabel}</dd>
+        </div>
+      )}
       <div>
-        <dt className="text-muted-foreground">起動ラベル</dt>
-        <dd>{project.triggerLabel}</dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">許可ユーザー</dt>
+        <dt className="text-muted-foreground">plan の許可ユーザー</dt>
         <dd>{project.allowedActors.join(", ")}</dd>
       </div>
       <div>
@@ -192,7 +194,6 @@ export function ProjectsPage() {
                           repository: item.project.repository,
                           repositoryId: item.project.repositoryId,
                           installationId: item.project.installationId,
-                          triggerLabel: item.project.triggerLabel,
                           allowedActors: item.project.allowedActors,
                           agentNetworkAccess: item.project.agentNetworkAccess,
                           maxRunMinutes: item.project.maxRunMinutes,
@@ -221,10 +222,10 @@ export function ProjectsPage() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  ラベル {item.project.triggerLabel} · 通信{" "}
-                  {item.project.agentNetworkAccess ? "許可" : "無効"} · 上限{" "}
-                  {item.project.maxRunMinutes}分
+                  通信 {item.project.agentNetworkAccess ? "許可" : "無効"} ·
+                  上限 {item.project.maxRunMinutes}分
                 </p>
+                <RoutinePanel projectId={item.project.id} />
               </li>
             ))}
           </ul>
@@ -316,18 +317,6 @@ export function ProjectsPage() {
         </button>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="space-y-2 text-sm">
-            起動ラベル
-            <input
-              required
-              maxLength={50}
-              className={fieldClass}
-              value={settings.triggerLabel}
-              onChange={(e) =>
-                setSettings({ ...settings, triggerLabel: e.target.value })
-              }
-            />
-          </label>
-          <label className="space-y-2 text-sm">
             Run の上限時間（分）
             <input
               required
@@ -347,7 +336,7 @@ export function ProjectsPage() {
           </label>
         </div>
         <label className="block space-y-2 text-sm">
-          起動を許可する GitHub ユーザー
+          plan の起動を許可する GitHub ユーザー
           <input
             required
             className={fieldClass}

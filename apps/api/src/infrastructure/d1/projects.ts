@@ -1,3 +1,7 @@
+import {
+  implementationPrompt,
+  routineSettings,
+} from "@/application/routines/routines.ts";
 import type { D1Database } from "@cloudflare/workers-types";
 import * as v from "valibot";
 import {
@@ -13,9 +17,11 @@ import {
   type ProjectStore,
   type ProjectChange,
   type ProjectSummary,
+  type ProjectSnapshot,
 } from "@/application/projects/store.ts";
 
 type Row = {
+  owner_id: string;
   id: string;
   repository_id: number;
   config: string;
@@ -24,8 +30,15 @@ type Row = {
   updated_at: number;
 };
 function readProject(value: string, name?: string): Project {
-  const { name: storedName, ...config } = v.parse(
-    v.looseObject({ name: v.optional(v.string()) }),
+  const {
+    name: storedName,
+    triggerLabel: _legacyLabel,
+    ...config
+  } = v.parse(
+    v.looseObject({
+      name: v.optional(v.string()),
+      triggerLabel: v.optional(v.string()),
+    }),
     JSON.parse(value),
   );
   return v.parse(projectSchema, {
@@ -33,11 +46,28 @@ function readProject(value: string, name?: string): Project {
     name: name || storedName || config.repository,
   });
 }
+function readSnapshot(value: string): ProjectSnapshot {
+  const legacy = v.parse(
+    v.object({ triggerLabel: v.optional(v.string()) }),
+    JSON.parse(value),
+  );
+  return {
+    ...readProject(value),
+    ...(legacy.triggerLabel === undefined
+      ? {}
+      : { triggerLabel: legacy.triggerLabel }),
+  };
+}
 function record(row: Row): ProjectRecord {
   const project = readProject(row.config, row.name);
   if (project.id !== row.id || project.repositoryId !== row.repository_id)
     throw new Error("Invalid stored project");
-  return { project, revision: row.revision, updatedAt: row.updated_at };
+  return {
+    project,
+    ownerId: row.owner_id,
+    revision: row.revision,
+    updatedAt: row.updated_at,
+  };
 }
 function mutationError(error: unknown): never {
   if (
@@ -73,8 +103,8 @@ export function d1Projects(db: D1Database): ProjectStore {
         now,
         actorId,
       );
-  function configuration(project: Project) {
-    const { name: _name, ...config } = project;
+  function configuration(project: ProjectSnapshot) {
+    const { name: _name, triggerLabel: _legacyLabel, ...config } = project;
     return config;
   }
   return {
@@ -134,7 +164,7 @@ export function d1Projects(db: D1Database): ProjectStore {
       } catch (error) {
         mutationError(error);
       }
-      return { project, revision: 1, updatedAt: now };
+      return { project, ownerId: actorId, revision: 1, updatedAt: now };
     },
     async update(id, revision, settings, actorId) {
       const project = { ...v.parse(projectSettings, settings), id };
@@ -155,7 +185,12 @@ export function d1Projects(db: D1Database): ProjectStore {
           )
           .first<string>("id");
         return result !== null
-          ? { project, revision: revision + 1, updatedAt: now }
+          ? {
+              project,
+              ownerId: actorId,
+              revision: revision + 1,
+              updatedAt: now,
+            }
           : null;
       } catch (error) {
         mutationError(error);
@@ -170,7 +205,13 @@ export function d1Projects(db: D1Database): ProjectStore {
       return result !== null;
     },
     async import(projects, legacyIds, actorId) {
-      v.parse(projectsSchema, projects);
+      v.parse(
+        projectsSchema,
+        projects.map((project) => {
+          const { triggerLabel: _label, ...settings } = project;
+          return settings;
+        }),
+      );
       if (legacyIds.length !== projects.length)
         throw new Error("Invalid project mapping");
       const now = Date.now();
@@ -202,6 +243,35 @@ export function d1Projects(db: D1Database): ProjectStore {
               changeId,
             ),
         );
+        const legacyLabel = project.triggerLabel;
+        if (legacyLabel) {
+          const settings = v.parse(routineSettings, {
+            name: "Issue implementation",
+            enabled: true,
+            trigger: {
+              version: 1,
+              type: "github.issue-label",
+              label: legacyLabel,
+            },
+            allowedActors: project.allowedActors,
+            prompt: implementationPrompt,
+            engine: "codex",
+          });
+          statements.push(
+            db
+              .prepare(`INSERT INTO routines (id, project_id, config, created_at, updated_at, updated_by)
+            SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
+              .bind(
+                project.id,
+                project.id,
+                JSON.stringify(settings),
+                now,
+                now,
+                actorId,
+                changeId,
+              ),
+          );
+        }
         statements.push(
           db
             .prepare(`UPDATE sessions SET project_id = ? WHERE project_id = ?
@@ -249,8 +319,8 @@ export function d1Projects(db: D1Database): ProjectStore {
         operation: r.operation,
         actorId: r.actor_id,
         createdAt: r.created_at,
-        before: r.before_config === null ? null : readProject(r.before_config),
-        after: r.after_config === null ? null : readProject(r.after_config),
+        before: r.before_config === null ? null : readSnapshot(r.before_config),
+        after: r.after_config === null ? null : readSnapshot(r.after_config),
       }));
       return {
         changes,

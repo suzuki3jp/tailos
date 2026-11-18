@@ -18,7 +18,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  triggerLabel: "tailos:run",
   allowedActors: ["operator"],
 };
 test("operator-only CRUD and repository discovery enforce Origin, validation and server-side GitHub verification", async (t) => {
@@ -177,7 +176,11 @@ test("imports only valid unique legacy projects and verifies all GitHub targets 
       env,
     );
   const { name: _name, ...legacySettings } = settings;
-  const legacy = { ...legacySettings, id: "meguri" };
+  const legacy = {
+    ...legacySettings,
+    triggerLabel: "tailos:run",
+    id: "meguri",
+  };
   expect((await send([legacy, legacy])).status).toBe(400);
   expect((await send([legacy, { ...legacy, repositoryId: 43 }])).status).toBe(
     400,

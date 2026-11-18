@@ -1,0 +1,17 @@
+# Copy to .dev.vars in this directory and fill in the four authentication values.
+# Setup: ../../docs/local-development.md
+# Start the API with: pnpm --filter @tailos/api run dev --port 8788
+TAILOS_PUBLIC_ORIGIN="http://localhost:8788"
+TAILOS_WEB_ORIGIN="http://localhost:3000"
+
+# Generate locally with: openssl rand -base64 32
+BETTER_AUTH_SECRET=""
+
+# Local GitHub OAuth App (separate from the GitHub App used for repository access).
+# Homepage URL: http://localhost:3000
+# Authorization callback URL: http://localhost:8788/v1/auth/callback/github
+TAILOS_GITHUB_OAUTH_CLIENT_ID=""
+TAILOS_GITHUB_OAUTH_CLIENT_SECRET=""
+
+# Numeric GitHub user ID, obtained with: gh api user --jq .id
+TAILOS_OPERATOR_GITHUB_ID=""

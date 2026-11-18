@@ -92,7 +92,7 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 
 ドメイン割り当てが失敗した場合は、Cloudflare の **Domains & Routes** と DNS を確認する。旧 API Worker や prototype に紐づいたままなら解除し、最新の `main` に対する **Deploy** の失敗ジョブを再実行する。
 
-ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @tailos/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/v1/auth/callback/github` を設定する。
+ローカルの環境変数、GitHub OAuth App のコールバック URL、API と Web の起動手順は [ローカル開発](local-development.md)を参照。
 
 ## 運用者の GitHub ログイン
 

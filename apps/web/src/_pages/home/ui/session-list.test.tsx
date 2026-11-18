@@ -18,6 +18,44 @@ vi.mock("next/link", () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
+test("renders only the first five sessions and retains the full response in cache", async () => {
+  const items = Array.from({ length: 6 }, (_, index) => ({
+    id: `s${index + 1}`,
+    title: `Session ${index + 1}`,
+    updatedAt: 1_700_000_000_000 - index,
+    trigger: null,
+    latestRun: null,
+  }));
+  const page = { items, nextCursor: "next" };
+  const http = vi.fn<typeof fetch>(async () => Response.json(page));
+  vi.stubGlobal("fetch", http);
+  const client = new QueryClient();
+  const options = homeSessionsQueryOptions();
+  try {
+    await client.fetchInfiniteQuery(options);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <ProjectSelectionProvider>
+          <SessionList />
+        </ProjectSelectionProvider>
+      </QueryClientProvider>,
+    );
+    expect(html.match(/href="\/sessions\/s\d+"/g)).toEqual(
+      items.slice(0, 5).map(({ id }) => `href="/sessions/${id}"`),
+    );
+    expect(html).not.toContain("Load more sessions");
+    expect(client.getQueryData(options.queryKey)).toMatchObject({
+      pages: [page],
+    });
+    expect(http).toHaveBeenCalledTimes(1);
+    expect(
+      new URL(String(http.mock.calls[0]?.[0])).searchParams.has("limit"),
+    ).toBe(false);
+  } finally {
+    client.clear();
+  }
+});
+
 test.each([
   { projects: 401, sessions: 401 },
   { projects: 200, sessions: 401 },

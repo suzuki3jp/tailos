@@ -72,6 +72,12 @@ export class CredentialBroker
   extends DurableObject<Bindings>
   implements ClaudeConnectionControl
 {
+  private modelRequest?: {
+    connectionVersion: string;
+    result: Promise<
+      import("@/application/routines/routines.ts").CodexModel[] | null
+    >;
+  };
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
     new CodexDeviceAuth();
 
@@ -144,6 +150,7 @@ export class CredentialBroker
   }
 
   async disconnect(): Promise<void> {
+    this.modelRequest = undefined;
     await this.ctx.blockConcurrencyWhile(async () => {
       await this.ctx.storage.delete([
         "connection",
@@ -184,7 +191,18 @@ export class CredentialBroker
     if (!access) return null;
     const runner = this.env.RUNNER;
     if (!runner) return null;
-    return runner.get(runner.newUniqueId()).codexModels(access);
+    if (this.modelRequest?.connectionVersion === access.connectionVersion)
+      return this.modelRequest.result;
+    const request = {
+      connectionVersion: access.connectionVersion,
+      result: runner.get(runner.newUniqueId()).codexModels(access),
+    };
+    this.modelRequest = request;
+    try {
+      return await request.result;
+    } finally {
+      if (this.modelRequest === request) this.modelRequest = undefined;
+    }
   }
 
   async issueClaudeAccess(): Promise<ClaudeAccess | null> {

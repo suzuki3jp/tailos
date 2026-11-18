@@ -67,4 +67,5 @@
 | [PDR-20261118-routine-configuration-validation](records/PDR-20261118-routine-configuration-validation.md) | accepted | triggers.routine-configuration-validation | 接続やモデル情報を確認できない Routine も無効状態で保存する |
 | [PDR-20261118-routine-initial-migration](records/PDR-20261118-routine-initial-migration.md) | accepted | triggers.routine-initial-migration | Routine と呼び、初回移行は Run のない状態で行う |
 | [PDR-20261118-routine-model-options](records/PDR-20261118-routine-model-options.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を選択式にする |
+| [PDR-20261119-routine-model-catalog-cache](records/PDR-20261119-routine-model-catalog-cache.md) | proposed | triggers.routine-model-catalog-cache | Routine のモデル候補取得を所有者・接続ごとにまとめる |
 | [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | accepted | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |

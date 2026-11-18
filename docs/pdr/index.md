@@ -19,13 +19,13 @@
 | [PDR-20261114-001](records/PDR-20261114-001.md) | rejected | planning.issue-conversation | 計画会話は必須入力を保持し古い履歴をバイト予算内で渡す |
 | [PDR-20261114-002](records/PDR-20261114-002.md) | superseded | runner.github-context-acquisition | Issue 本文の送信を当面維持し将来は Agent が GitHub から取得する |
 | [PDR-20261114-003](records/PDR-20261114-003.md) | superseded | runner.github-context-acquisition | Issue の参照情報を JSON で渡し Agent が GitHub から本文を取得する |
-| [PDR-20261114-004](records/PDR-20261114-004.md) | accepted | runner.github-context-acquisition | Issue の参照情報と内容ハッシュを渡し Agent が GitHub から取得する |
+| [PDR-20261114-004](records/PDR-20261114-004.md) | superseded | runner.github-context-acquisition | Issue の参照情報と内容ハッシュを渡し Agent が GitHub から取得する |
 | [PDR-20261114-005](records/PDR-20261114-005.md) | accepted | agent.claude.plan-mode-commands | Claude Code の plan mode ではコマンドを実行させない |
 | [PDR-20261114-006](records/PDR-20261114-006.md) | accepted | agent.claude.authentication-failure | Claude の認証が拒否されても接続は自動で無効にしない |
 | [PDR-20261114-007](records/PDR-20261114-007.md) | accepted | agent.claude.runtime | Claude Code は Agent SDK から実行する |
 | [PDR-20261114-008](records/PDR-20261114-008.md) | accepted | agent.claude.authentication | Claude 接続は長期 OAuth トークンの貼り付けだけを対象にする |
 | [PDR-20261114-009](records/PDR-20261114-009.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
-| [PDR-20261114-010](records/PDR-20261114-010.md) | accepted | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
+| [PDR-20261114-010](records/PDR-20261114-010.md) | superseded | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
 | [PDR-20261114-011](records/PDR-20261114-011.md) | accepted | agent.claude.token-expiry-notice | Claude トークンの期限切れは 30 日前から接続画面で知らせる |
 | [PDR-20261114-project-agent-field-timing](records/PDR-20261114-project-agent-field-timing.md) | accepted | project.configuration.agent-field-timing | 今回の Project 設定管理には agent 項目を追加しない |
 | [PDR-20261114-project-change-history](records/PDR-20261114-project-change-history.md) | accepted | project.configuration.change-history | Project の変更者と変更前後の設定を D1 に残す |
@@ -42,7 +42,7 @@
 | [PDR-20261116-home-design-preview](records/PDR-20261116-home-design-preview.md) | accepted | web.home.design-preview | Figma に合わせたホームをモックデータで先に実装する |
 | [PDR-20261116-project-account-list](records/PDR-20261116-project-account-list.md) | accepted | projects.account-list | アカウントの Project 一覧を名前順にページングして取得する |
 | [PDR-20261116-project-account-ownership](records/PDR-20261116-project-account-ownership.md) | accepted | project.configuration.ownership | Project をアカウントの所有にする |
-| [PDR-20261116-project-editable-fields](records/PDR-20261116-project-editable-fields.md) | accepted | project.configuration.editable-fields | Project に自由な名前を追加しリポジトリの重複を許可する |
+| [PDR-20261116-project-editable-fields](records/PDR-20261116-project-editable-fields.md) | superseded | project.configuration.editable-fields | Project に自由な名前を追加しリポジトリの重複を許可する |
 | [PDR-20261116-project-name-validation](records/PDR-20261116-project-name-validation.md) | accepted | project.name.validation | Project 名は前後の空白を除いて1〜100文字とし同名を許可する |
 | [PDR-20261116-project-owner-assignment](records/PDR-20261116-project-owner-assignment.md) | accepted | project.ownership.assignment | Project の所有者を内部ユーザー ID で保存し既存分を現運用者へ割り当てる |
 | [PDR-20261116-project-webhook-fanout](records/PDR-20261116-project-webhook-fanout.md) | accepted | project.webhook.repository-fanout | 同じリポジトリの複数 Project に Webhook を配信する |
@@ -54,3 +54,10 @@
 | [PDR-20261116-web-icons](records/PDR-20261116-web-icons.md) | accepted | web.design-system.icons | Web の汎用アイコンを Tabler Icons に統一する |
 | [PDR-20261116-web-prototype-styles](records/PDR-20261116-web-prototype-styles.md) | accepted | web.design-system.prototype-migration | デザイン導入で既存プロトタイプの見た目の変更を許容する |
 | [PDR-20261117-api-versioning](records/PDR-20261117-api-versioning.md) | accepted | api.url-versioning | ブラウザー向け API のプレフィックスをバージョン付きにする |
+| [PDR-20261118-configurable-label-prompt](records/PDR-20261118-configurable-label-prompt.md) | accepted | runner.github-context-acquisition | label の依頼は設定から取得し Issue の参照と内容照合を維持する |
+| [PDR-20261118-configurable-triggers](records/PDR-20261118-configurable-triggers.md) | accepted | triggers.configurable-execution | トリガーと実行設定を DB で管理し label 起動から移行する |
+| [PDR-20261118-label-automation-dispatch](records/PDR-20261118-label-routine-dispatch.md) | accepted | triggers.label-automation-dispatch | Project に属する Routine を照合して label Run を独立して受け付ける |
+| [PDR-20261118-project-routine-settings](records/PDR-20261118-project-routine-settings.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、共通の実行制約は Project に置く |
+| [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |
+| [PDR-20261118-routine-configuration-validation](records/PDR-20261118-routine-configuration-validation.md) | proposed | triggers.routine-configuration-validation | 接続やモデル情報を確認できない Routine も無効状態で保存する案 |
+| [PDR-20261118-routine-initial-migration](records/PDR-20261118-routine-initial-migration.md) | accepted | triggers.routine-initial-migration | Routine と呼び、初回移行は Run のない状態で行う |

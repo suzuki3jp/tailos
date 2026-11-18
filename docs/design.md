@@ -8,6 +8,8 @@ GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。W
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 
+今後の [トリガーと実行設定の抽象化計画](plans/trigger-run-abstraction.md) では、トリガー条件と prompt・model・effort を束ねる `Routine` を DB に保存し、label 起動から共通境界へ移行する。初回デプロイは Run のない状態を運用で作って行う。現時点では計画と PDR のみであり、以下に記す既存経路はまだ切り替えていない。
+
 ## 構成と依存の境界
 
 | 配置 | 技術 | 責務 |

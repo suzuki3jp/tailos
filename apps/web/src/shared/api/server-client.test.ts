@@ -50,3 +50,33 @@ test.each([
     });
   },
 );
+
+test.each(["request", "query"])(
+  "combines request and query cancellation when the %s is aborted",
+  async (cancel) => {
+    const { createServerApi } = await import("./server-client");
+    const request = new AbortController();
+    const query = new AbortController();
+    const http = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Missing fetch signal");
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    });
+    vi.stubGlobal("fetch", http);
+    const api = createServerApi("", request.signal);
+    const pending = api.projects.$get(undefined, {
+      init: { signal: query.signal },
+    });
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    (cancel === "request" ? request : query).abort();
+    await rejected;
+    expect(http.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect((cancel === "request" ? query : request).signal.aborted).toBe(false);
+  },
+);

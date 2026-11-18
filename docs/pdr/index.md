@@ -55,5 +55,6 @@
 | [PDR-20261116-web-prototype-styles](records/PDR-20261116-web-prototype-styles.md) | accepted | web.design-system.prototype-migration | デザイン導入で既存プロトタイプの見た目の変更を許容する |
 | [PDR-20261117-api-versioning](records/PDR-20261117-api-versioning.md) | accepted | api.url-versioning | ブラウザー向け API のプレフィックスをバージョン付きにする |
 | [PDR-20261117-home-api-integration](records/PDR-20261117-home-api-integration.md) | superseded | web.home.design-preview | ホームの Project と Session 一覧を実データに接続する |
-| [PDR-20261117-home-server-prefetch](records/PDR-20261117-home-server-prefetch.md) | accepted | web.home.design-preview | ホームの初期データをサーバーで並列取得する |
+| [PDR-20261117-home-server-prefetch](records/PDR-20261117-home-server-prefetch.md) | superseded | web.home.design-preview | ホームの初期データをサーバーで並列取得する |
 | [PDR-20261117-login-cookie-scope](records/PDR-20261117-login-cookie-scope.md) | accepted | auth.login.cookie-scope | SSR のためログイン Cookie を Web と API で共有する |
+| [PDR-20261118-home-prefetch-deadline](records/PDR-20261118-home-prefetch-deadline.md) | accepted | web.home.design-preview | ホームの初期取得に全体10秒の期限を設ける |

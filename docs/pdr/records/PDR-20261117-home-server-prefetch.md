@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261117-home-server-prefetch
 key: web.home.design-preview
-status: accepted
+status: superseded
 date: "2026-11-17"
 decided_by: suzuki3jp
 areas: [web, projects, sessions]

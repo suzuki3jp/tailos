@@ -66,3 +66,4 @@
 | [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |
 | [PDR-20261118-routine-configuration-validation](records/PDR-20261118-routine-configuration-validation.md) | accepted | triggers.routine-configuration-validation | 接続やモデル情報を確認できない Routine も無効状態で保存する |
 | [PDR-20261118-routine-initial-migration](records/PDR-20261118-routine-initial-migration.md) | accepted | triggers.routine-initial-migration | Routine と呼び、初回移行は Run のない状態で行う |
+| [PDR-20261118-routine-model-options](records/PDR-20261118-routine-model-options.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を選択式にする |

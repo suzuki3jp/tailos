@@ -10,6 +10,25 @@ export type RoutineSettings = Omit<
   Routine,
   "id" | "projectId" | "revision" | "deletedAt"
 >;
+export type RoutineModel = InferResponseType<
+  typeof routes.models.$get,
+  200
+>["models"][number];
+
+export function routineModelsQueryOptions(projectId: string) {
+  return queryOptions({
+    queryKey: ["routine-models", projectId],
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const response = await routes.models.$get(
+        { param: { projectId } },
+        { init: { signal } },
+      );
+      if (!response.ok) throw new RoutineRequestError(response.status);
+      return (await response.json()).models;
+    },
+  });
+}
 export const routinesKey = (projectId: string) => [
   "project-routines",
   projectId,

@@ -8,11 +8,23 @@ import {
   routinesKey,
   routineHistoryKey,
   routineHistoryQueryOptions,
+  routineModelsQueryOptions,
   saveRoutine,
   deleteRoutine,
   type Routine,
+  type RoutineModel,
   type RoutineSettings,
 } from "../api/routines";
+
+function availableEfforts(models: RoutineModel[], model?: string) {
+  const candidates = model
+    ? models.filter((item) => item.model === model)
+    : models;
+  return [...new Set(candidates[0]?.efforts)].filter((effort) =>
+    candidates.every((item) => item.efforts.includes(effort)),
+  );
+}
+
 const field = "block w-full rounded-md border border-rule bg-paper px-3 py-2";
 const empty: RoutineSettings = {
   name: "",
@@ -59,11 +71,15 @@ function Snapshot({ settings }: { settings: RoutineSettings | null }) {
 function RoutineEditor({ projectId }: { projectId: string }) {
   const client = useQueryClient();
   const list = useQuery(routinesQueryOptions(projectId));
+  const modelCatalog = useQuery(routineModelsQueryOptions(projectId));
   const [before, setBefore] = useState<number>();
   const history = useQuery(routineHistoryQueryOptions(projectId, before));
   const [editing, setEditing] = useState<Routine>();
   const [settings, setSettings] = useState<RoutineSettings>(empty);
   const [actors, setActors] = useState("");
+  const models = modelCatalog.data ?? [];
+  const modelIds = [...new Set(models.map(({ model }) => model))];
+  const efforts = availableEfforts(models, settings.model);
   const reset = () => {
     setEditing(undefined);
     setSettings(empty);
@@ -232,31 +248,77 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           Agent は Codex。変更がある場合は既存の検証・PR 公開経路で処理します。
         </p>
         <label className="block">
-          モデル（空欄は既定）
-          <input
+          モデル
+          <select
             className={field}
             value={settings.model ?? ""}
-            onChange={(e) =>
+            onChange={(e) => {
+              const model = e.target.value || undefined;
               setSettings({
                 ...settings,
-                model: e.target.value.trim() || undefined,
-              })
-            }
-          />
+                model,
+                effort: availableEfforts(models, model).find(
+                  (effort) => effort === settings.effort,
+                ),
+              });
+            }}
+          >
+            <option value="">既定</option>
+            {settings.model && !modelIds.includes(settings.model) && (
+              <option value={settings.model} disabled>
+                {settings.model}（保存済み）
+              </option>
+            )}
+            {modelIds.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="block">
-          effort（空欄は既定）
-          <input
+          effort
+          <select
             className={field}
             value={settings.effort ?? ""}
             onChange={(e) =>
               setSettings({
                 ...settings,
-                effort: e.target.value.trim() || undefined,
+                effort: e.target.value || undefined,
               })
             }
-          />
+          >
+            <option value="">既定</option>
+            {settings.effort && !efforts.includes(settings.effort) && (
+              <option value={settings.effort} disabled>
+                {settings.effort}（保存済み）
+              </option>
+            )}
+            {efforts.map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
+              </option>
+            ))}
+          </select>
         </label>
+        {modelCatalog.isFetching ? (
+          <p role="status" className="text-sm">
+            モデル候補を読み込んでいます。
+          </p>
+        ) : modelCatalog.isError ? (
+          <div className="space-y-1 text-sm">
+            <p role="status">
+              モデル候補を取得できません。Codex の接続を確認してください。
+            </p>
+            <button
+              className="action"
+              type="button"
+              onClick={() => void modelCatalog.refetch()}
+            >
+              モデル候補を再取得
+            </button>
+          </div>
+        ) : null}
         <label className="flex items-center gap-2">
           <input
             type="checkbox"

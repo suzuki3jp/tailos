@@ -51,6 +51,15 @@ export function createRoutineRoutes(
         ? c.json({ routines })
         : c.json({ error: "not_found" as const }, 404);
     })
+    .get("/models", async (c) => {
+      const ownerId = c.var.operatorUserId;
+      if (!(await store(c.env).list(ownerId, c.req.param("projectId")!)))
+        return c.json({ error: "not_found" as const }, 404);
+      const models = await catalog(c.env)(ownerId);
+      return models?.length
+        ? c.json({ models })
+        : c.json({ error: "configuration_unverified" as const }, 503);
+    })
     .get(
       "/history",
       validator("query", (value, c) => {

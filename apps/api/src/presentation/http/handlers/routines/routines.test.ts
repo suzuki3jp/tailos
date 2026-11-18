@@ -67,6 +67,8 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
       env,
     );
   expect((await send("", undefined, {})).status).toBe(401);
+  expect((await send("/models", undefined, {})).status).toBe(401);
+  expect((await send("/models")).status).toBe(503);
   expect(
     (
       await send("", settings, {
@@ -102,6 +104,11 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
   const saved: { id: string; revision: number } = await created.json();
   expect(await d1Routines(DB).candidates(project.project.id)).toEqual([]);
   catalog.mockResolvedValue([{ model: "test-model", efforts: ["high"] }]);
+  const models = await send("/models");
+  expect(models.status).toBe(200);
+  expect(await models.json()).toEqual({
+    models: [{ model: "test-model", efforts: ["high"] }],
+  });
   expect(
     (await send(`/${saved.id}`, { ...settings, enabled: true, revision: 1 }))
       .status,
@@ -120,6 +127,9 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
     .run();
   expect((await send()).status).toBe(404);
   expect((await send("/history")).status).toBe(404);
+  catalog.mockClear();
+  expect((await send("/models")).status).toBe(404);
+  expect(catalog).not.toHaveBeenCalled();
   expect(
     (await send(`/${saved.id}`, { ...settings, revision: 2 })).status,
   ).toBe(404);

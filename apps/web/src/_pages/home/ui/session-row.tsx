@@ -1,5 +1,9 @@
 import Link from "next/link";
-import { IconMessage, IconMessageDots } from "@tabler/icons-react";
+import {
+  IconMessage,
+  IconMessageDots,
+  IconMessageReport,
+} from "@tabler/icons-react";
 import type { HomeSession } from "../api/queries";
 import { updatedLabel } from "../model/session-presentation";
 
@@ -10,10 +14,14 @@ export function SessionRow({
   session: HomeSession;
   now: number;
 }) {
-  const active =
-    session.latestRun?.status === "running" ||
-    session.latestRun?.status === "queued";
-  const Icon = active ? IconMessageDots : IconMessage;
+  const status = session.latestRun?.status;
+  const active = status === "running" || status === "queued";
+  const failed = status === "failed";
+  const Icon = failed
+    ? IconMessageReport
+    : active
+      ? IconMessageDots
+      : IconMessage;
   return (
     <div className="space-y-1.5 p-3">
       <Link
@@ -41,16 +49,9 @@ export function SessionRow({
           {updatedLabel(session.updatedAt, now)}
         </time>
         {session.latestRun && (
-          <span
-            className={
-              session.latestRun.status === "failed"
-                ? "text-destructive"
-                : undefined
-            }
-          >
+          <span className={failed ? "text-destructive" : undefined}>
             {session.latestRun.status}
-            {session.latestRun.status === "failed" &&
-            session.latestRun.errorCode
+            {failed && session.latestRun.errorCode
               ? ` · ${session.latestRun.errorCode}`
               : ""}
           </span>

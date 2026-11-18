@@ -37,6 +37,8 @@ const event = {
 };
 test("migration preserves label configuration as an enabled Routine and removes the Project label", async (t) => {
   const id = crypto.randomUUID();
+  const deletedId = crypto.randomUUID();
+  let originalHistory: unknown[] = [];
   const { DB } = await createTestBindings(t, {
     beforeMigration: async (db, file) => {
       if (!file.startsWith("0011_")) return;
@@ -51,8 +53,42 @@ test("migration preserves label configuration as an enabled Routine and removes 
           owner,
         )
         .run();
+      await db
+        .prepare(
+          "INSERT INTO projects (id, name, owner_id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, 'Deleted', ?, 43, ?, 1, 1, ?)",
+        )
+        .bind(
+          deletedId,
+          owner,
+          JSON.stringify({
+            ...settings,
+            id: deletedId,
+            repositoryId: 43,
+            triggerLabel: "old",
+          }),
+          owner,
+        )
+        .run();
+      await db
+        .prepare(
+          "UPDATE projects SET deleted_at = 2, updated_at = 2 WHERE id = ?",
+        )
+        .bind(deletedId)
+        .run();
+      originalHistory = (
+        await db.prepare("SELECT * FROM project_changes ORDER BY id").all()
+      ).results;
     },
   });
+  expect(
+    (await DB.prepare("SELECT * FROM project_changes ORDER BY id").all())
+      .results,
+  ).toEqual(originalHistory);
+  expect(
+    await DB.prepare("SELECT count(*) AS n FROM routines WHERE project_id = ?")
+      .bind(deletedId)
+      .first("n"),
+  ).toBe(0);
   const [migrated] = (await d1Routines(DB).list(owner, id))!;
   expect(migrated).toMatchObject({
     id,
@@ -69,7 +105,21 @@ test("migration preserves label configuration as an enabled Routine and removes 
         .first<string>("config"))!,
     ),
   ).not.toHaveProperty("triggerLabel");
-  expect((await d1Routines(DB).history(owner, id))!.changes).toHaveLength(1);
+  const changes = (await d1Routines(DB).history(owner, id))!.changes;
+  expect(changes).toHaveLength(1);
+  expect(changes[0]).toMatchObject({ actorId: "migration:routines" });
+  expect(changes[0].createdAt).toBeGreaterThan(2);
+  const projects = d1Projects(DB);
+  await projects.update(id, 1, { ...settings, name: "Edited" }, owner);
+  const history = (
+    await DB.prepare("SELECT * FROM project_changes ORDER BY id").all()
+  ).results;
+  expect(history).toHaveLength(originalHistory.length + 1);
+  expect(history.at(-1)).toMatchObject({
+    project_id: id,
+    operation: "update",
+    actor_id: owner,
+  });
 });
 test("owned Routine CRUD uses revisions, retains deleted history, and rolls back settings when audit fails", async (t) => {
   const db = await createTestDb(t);

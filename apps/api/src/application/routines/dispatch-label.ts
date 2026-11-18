@@ -9,6 +9,13 @@ import { codexConnectionId } from "@/application/auth/device.ts";
 import type { labelPayload } from "@/application/triggers/github-event.ts";
 import type * as v from "valibot";
 import type { Routine } from "./routines.ts";
+export type LabelIgnoreReason =
+  | "repository"
+  | "installation"
+  | "issue_state"
+  | "pull_request"
+  | "label"
+  | "actor";
 export type LabelResult = Admission & { routineId: string };
 export async function dispatchIssueLabel(
   input: {
@@ -22,6 +29,7 @@ export async function dispatchIssueLabel(
     routines(projectId: string): Promise<Routine[]>;
     replay(deliveryId: string, ownerId: string): Promise<LabelResult[]>;
     admit: AdmitTrigger;
+    ignored?(reason: LabelIgnoreReason): void;
   },
 ) {
   const results = new Map(
@@ -42,23 +50,38 @@ export async function dispatchIssueLabel(
         record.ownerId !== input.ownerId ||
         project.repositoryId !== event.repository.id ||
         project.repository.toLowerCase() !==
-          event.repository.full_name.toLowerCase() ||
-        project.installationId !== event.installation.id ||
-        event.issue.state !== "open" ||
-        event.issue.pull_request
+          event.repository.full_name.toLowerCase()
       )
         continue;
+      if (project.installationId !== event.installation.id) {
+        deps.ignored?.("installation");
+        continue;
+      }
+      if (event.issue.state !== "open") {
+        deps.ignored?.("issue_state");
+        continue;
+      }
+      if (event.issue.pull_request) {
+        deps.ignored?.("pull_request");
+        continue;
+      }
+      deps.ignored?.("label");
       for (const routine of await deps.routines(project.id)) {
         if (
           results.has(routine.id) ||
           !routine.enabled ||
           routine.deletedAt !== null ||
-          routine.trigger.label !== event.label.name ||
+          routine.trigger.label !== event.label.name
+        )
+          continue;
+        if (
           !routine.allowedActors.some(
             (actor) => actor.toLowerCase() === event.sender.login.toLowerCase(),
           )
-        )
+        ) {
+          deps.ignored?.("actor");
           continue;
+        }
         const executionContext: ExecutionContext = {
           version: 1,
           engine: "codex",

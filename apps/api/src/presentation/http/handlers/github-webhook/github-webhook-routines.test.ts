@@ -90,6 +90,8 @@ test.for([false, true])(
     };
     expect((await send(event, "wrong", "wrong-secret")).status).toBe(401);
     for (const payload of [
+      { ...event, repository: { ...event.repository, id: 99 } },
+      { ...event, label: { name: "other" } },
       { ...event, sender: { login: "plan-user" } },
       { ...event, installation: { id: 20 } },
       { ...event, issue: { ...event.issue, state: "closed" } },
@@ -102,6 +104,19 @@ test.for([false, true])(
     expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(
       0,
     );
+    const ignored = await db
+      .prepare(
+        "SELECT json_extract(attributes, '$.reason') AS reason FROM diagnostic_events WHERE name = 'trigger.decided' AND json_extract(attributes, '$.outcome') = 'ignored' ORDER BY ingest_seq",
+      )
+      .all<{ reason: string }>();
+    expect(ignored.results.map((row) => row.reason)).toEqual([
+      "repository",
+      "label",
+      "actor",
+      "installation",
+      "issue_state",
+      "pull_request",
+    ]);
     const response = await send(event);
     expect(response.status).toBe(202);
     const data: {

@@ -43,7 +43,21 @@ SELECT id, id, json_object('name', 'Issue implementation', 'enabled', json('true
   'trigger', json_object('version', 1, 'type', 'github.issue-label', 'label', json_extract(config, '$.triggerLabel')),
   'allowedActors', json_extract(config, '$.allowedActors'), 'engine', 'codex',
   'prompt', 'Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.'),
-  created_at, updated_at, updated_by FROM projects
+  CAST(unixepoch('subsec') * 1000 AS INTEGER), CAST(unixepoch('subsec') * 1000 AS INTEGER),
+  'migration:routines' FROM projects
 WHERE deleted_at IS NULL AND json_type(config, '$.triggerLabel') = 'text';
 --> statement-breakpoint
+-- Structural migration preserves the existing human-authored Project history.
+DROP TRIGGER project_updated;
+--> statement-breakpoint
 UPDATE projects SET config = json_remove(config, '$.triggerLabel') WHERE json_type(config, '$.triggerLabel') IS NOT NULL;
+--> statement-breakpoint
+CREATE TRIGGER project_updated AFTER UPDATE ON projects
+WHEN NEW.revision != OLD.revision OR NEW.config != OLD.config OR NEW.name != OLD.name
+  OR NEW.deleted_at IS NOT OLD.deleted_at
+BEGIN
+  INSERT INTO project_changes (project_id, operation, actor_id, created_at, before_config, after_config)
+  VALUES (NEW.id, CASE WHEN NEW.deleted_at IS NOT NULL THEN 'delete' ELSE 'update' END, NEW.updated_by, NEW.updated_at,
+    json_set(OLD.config, '$.name', OLD.name),
+    CASE WHEN NEW.deleted_at IS NOT NULL THEN NULL ELSE json_set(NEW.config, '$.name', NEW.name) END);
+END;

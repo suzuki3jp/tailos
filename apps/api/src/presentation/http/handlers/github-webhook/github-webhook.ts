@@ -1,6 +1,7 @@
 import {
   dispatchIssueLabel,
   type LabelResult,
+  type LabelIgnoreReason,
 } from "@/application/routines/dispatch-label.ts";
 import type { Routine } from "@/application/routines/routines.ts";
 import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
@@ -122,6 +123,7 @@ export function createGithubWebhook(
       const ownerId = await findOperatorUserId(c.env);
       if (!ownerId) return c.json({ error: "operator_not_initialized" }, 503);
       let result;
+      let ignoredReason: LabelIgnoreReason = "repository";
       try {
         result = await dispatchIssueLabel(
           {
@@ -136,6 +138,9 @@ export function createGithubWebhook(
             replay: (id, owner) =>
               replayLabels(c.env, id, owner, c.get("diagnosticRequest")),
             admit: admit(c.env),
+            ignored: (reason) => {
+              ignoredReason = reason;
+            },
           },
         );
       } catch {
@@ -153,7 +158,7 @@ export function createGithubWebhook(
           await decision("project_config", "failed", routineId);
         return c.json({ ...result, error: "routine_admission_failed" }, 503);
       }
-      if (!result.results.length) return ignore("label");
+      if (!result.results.length) return ignore(ignoredReason);
       return c.json(result, 202);
     }
 

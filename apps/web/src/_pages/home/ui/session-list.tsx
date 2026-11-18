@@ -11,6 +11,8 @@ import { DataRequestState } from "./data-request-state";
 import { SessionRow } from "./session-row";
 import { useProjectSelection } from "./project-selection";
 
+const RECENT_SESSION_LIMIT = 5;
+
 export function SessionList() {
   const query = useInfiniteQuery(homeSessionsQueryOptions());
   const { error: projectError } = useProjectSelection();
@@ -20,7 +22,10 @@ export function SessionList() {
       if (!sessionsById.has(session.id)) sessionsById.set(session.id, session);
     }
   }
-  const sessions = Array.from(sessionsById.values());
+  const sessions = Array.from(sessionsById.values()).slice(
+    0,
+    RECENT_SESSION_LIMIT,
+  );
   if (requestErrorStatus(query.error) === 401) {
     if (requestErrorStatus(projectError) === 401) return null;
     return (
@@ -58,15 +63,17 @@ export function SessionList() {
           }
         />
       )}
-      {query.hasNextPage && !query.isFetchNextPageError && (
-        <Button
-          variant="outline"
-          disabled={query.isFetching}
-          onClick={() => void query.fetchNextPage()}
-        >
-          {query.isFetchingNextPage ? "Loading…" : "Load more sessions"}
-        </Button>
-      )}
+      {sessions.length < RECENT_SESSION_LIMIT &&
+        query.hasNextPage &&
+        !query.isFetchNextPageError && (
+          <Button
+            variant="outline"
+            disabled={query.isFetching}
+            onClick={() => void query.fetchNextPage()}
+          >
+            {query.isFetchingNextPage ? "Loading…" : "Load more sessions"}
+          </Button>
+        )}
     </>
   );
 }

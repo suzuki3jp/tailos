@@ -60,6 +60,7 @@
 | [PDR-20261118-configurable-label-prompt](records/PDR-20261118-configurable-label-prompt.md) | accepted | runner.github-context-acquisition | label の依頼は設定から取得し Issue の参照と内容照合を維持する |
 | [PDR-20261118-configurable-triggers](records/PDR-20261118-configurable-triggers.md) | accepted | triggers.configurable-execution | トリガーと実行設定を DB で管理し label 起動から移行する |
 | [PDR-20261118-home-prefetch-deadline](records/PDR-20261118-home-prefetch-deadline.md) | accepted | web.home.design-preview | ホームの初期取得に全体10秒の期限を設ける |
+| [PDR-20261118-home-recent-sessions-limit](records/PDR-20261118-home-recent-sessions-limit.md) | accepted | web.home.recent-sessions-limit | ホームの Recent Sessions を最大5件表示する |
 | [PDR-20261118-label-automation-dispatch](records/PDR-20261118-label-routine-dispatch.md) | accepted | triggers.label-automation-dispatch | Project に属する Routine を照合して label Run を独立して受け付ける |
 | [PDR-20261118-project-routine-settings](records/PDR-20261118-project-routine-settings.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、共通の実行制約は Project に置く |
 | [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |

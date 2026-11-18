@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./auth": "./src/auth.ts",
     "./runner": "./src/runner.ts",
     "./diagnostics": "./src/diagnostics.ts"
   },

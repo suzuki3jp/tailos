@@ -8,7 +8,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/shared/ui/input-group";
-import { ProjectSelect } from "./project-select";
+import { HomeProjectSelect } from "./project-select";
 
 export function LoopComposer() {
   const [draft, setDraft] = useState("");
@@ -40,7 +40,7 @@ export function LoopComposer() {
           align="block-end"
           className="justify-between px-3 pt-0 pb-3"
         >
-          <ProjectSelect compact />
+          <HomeProjectSelect compact />
           <InputGroupButton
             type="submit"
             aria-label="Preview loop"
@@ -56,8 +56,8 @@ export function LoopComposer() {
           id="composer-preview-notice"
           className="mt-3 text-sm text-muted-foreground"
         >
-          This is a preview. Your message hasn’t been sent and no loop has
-          started.
+          Loop creation is not connected yet. Your message hasn’t been sent and
+          no loop has started.
         </p>
       )}
     </form>

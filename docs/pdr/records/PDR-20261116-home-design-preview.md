@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261116-home-design-preview
 key: web.home.design-preview
-status: accepted
+status: superseded
 date: "2026-11-16"
 decided_by: suzuki3jp
 areas: [web, design-system]

@@ -1,0 +1,64 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ComponentProps } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, expect, test, vi } from "vitest";
+import {
+  homeProjectsQueryOptions,
+  homeSessionsQueryOptions,
+} from "../api/queries";
+import { ProjectSelectionProvider } from "./project-selection";
+import { ProjectStatus } from "./project-status";
+import { SessionList } from "./session-list";
+
+vi.mock("next/link", () => ({
+  default: ({ children, ...props }: ComponentProps<"a">) => (
+    <a {...props}>{children}</a>
+  ),
+}));
+
+afterEach(() => vi.unstubAllGlobals());
+
+test.each([
+  { projects: 401, sessions: 401 },
+  { projects: 200, sessions: 401 },
+  { projects: 503, sessions: 401 },
+  { projects: 401, sessions: 200 },
+])(
+  "shows one login action for Projects $projects and Sessions $sessions",
+  async ({ projects, sessions }) => {
+    const http = vi.fn<typeof fetch>(async (input) => {
+      const status = new URL(String(input)).pathname.endsWith("/projects")
+        ? projects
+        : sessions;
+      return status === 200
+        ? Response.json({ items: [], nextCursor: null })
+        : new Response(null, { status });
+    });
+    vi.stubGlobal("fetch", http);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    try {
+      await Promise.all([
+        client.prefetchQuery(homeProjectsQueryOptions()),
+        client.prefetchInfiniteQuery(homeSessionsQueryOptions()),
+      ]);
+      const html = renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <ProjectSelectionProvider>
+            <ProjectStatus />
+            <SessionList />
+          </ProjectSelectionProvider>
+        </QueryClientProvider>,
+      );
+      expect(html.match(/GitHub でログイン/g)).toHaveLength(1);
+      if (projects === 503) {
+        expect(html).toContain('role="alert"');
+        expect(html).toContain("再試行");
+      }
+      expect(http).toHaveBeenCalledTimes(2);
+    } finally {
+      client.clear();
+    }
+  },
+);

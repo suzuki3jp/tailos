@@ -1,0 +1,61 @@
+import Link from "next/link";
+import { IconMessage, IconMessageDots } from "@tabler/icons-react";
+import type { HomeSession } from "../api/queries";
+import { updatedLabel } from "../model/session-presentation";
+
+export function SessionRow({
+  session,
+  now,
+}: {
+  session: HomeSession;
+  now: number;
+}) {
+  const active =
+    session.latestRun?.status === "running" ||
+    session.latestRun?.status === "queued";
+  const Icon = active ? IconMessageDots : IconMessage;
+  return (
+    <div className="space-y-1.5 p-3">
+      <Link
+        href={`/sessions/${encodeURIComponent(session.id)}`}
+        className="flex items-start gap-3 rounded-sm text-foreground-strong hover:underline"
+      >
+        <Icon aria-hidden="true" size={20} className="shrink-0" />
+        <span className="min-w-0 text-body wrap-anywhere">{session.title}</span>
+      </Link>
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-8 text-caption text-muted-foreground">
+        {session.trigger && (
+          <a
+            href={session.trigger.url}
+            className="rounded-sm hover:underline"
+            title={session.trigger.repository}
+          >
+            Triggered by Issue #{session.trigger.number} ·{" "}
+            {session.trigger.repository}
+          </a>
+        )}
+        <time
+          dateTime={new Date(session.updatedAt).toISOString()}
+          title={new Date(session.updatedAt).toISOString()}
+        >
+          {updatedLabel(session.updatedAt, now)}
+        </time>
+        {session.latestRun && (
+          <span
+            className={
+              session.latestRun.status === "failed"
+                ? "text-destructive"
+                : undefined
+            }
+          >
+            {session.latestRun.status}
+            {session.latestRun.status === "failed" &&
+            session.latestRun.errorCode
+              ? ` · ${session.latestRun.errorCode}`
+              : ""}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}

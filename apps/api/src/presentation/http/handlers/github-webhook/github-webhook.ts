@@ -54,6 +54,7 @@ export function createGithubWebhook(
     env: Bindings,
     deliveryId: string,
     ownerId: string,
+    diagnostics?: { traceId: string; requestId: string },
   ) => Promise<LabelResult[]> = async () => [],
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
@@ -132,7 +133,8 @@ export function createGithubWebhook(
           {
             projects: () => readProjects(c.env),
             routines: (id) => readRoutines(c.env, id),
-            replay: (id, owner) => replayLabels(c.env, id, owner),
+            replay: (id, owner) =>
+              replayLabels(c.env, id, owner, c.get("diagnosticRequest")),
             admit: admit(c.env),
           },
         );

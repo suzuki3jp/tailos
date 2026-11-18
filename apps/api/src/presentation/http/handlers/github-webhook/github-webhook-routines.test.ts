@@ -111,6 +111,21 @@ test.for([false, true])(
     expect(data.results[0].routineId).toBe(routine.id);
     expect(await (await send(event)).json()).toEqual(data);
     expect(schedule).toHaveBeenCalledTimes(2);
+    expect(
+      await db
+        .prepare(
+          "SELECT count(*) AS n FROM diagnostic_links WHERE relation = 'replays'",
+        )
+        .first("n"),
+    ).toBe(1);
+    expect(
+      await db
+        .prepare(
+          "SELECT count(DISTINCT t.id) AS n FROM diagnostic_traces t JOIN diagnostic_links l ON l.from_trace = t.id WHERE t.source = 'github.issue-label' AND t.delivery_id = 'one' ",
+        )
+        .first("n"),
+    ).toBe(2);
+
     const stored = await db
       .prepare(
         "SELECT execution_context AS context, deadline_at - created_at AS duration FROM runs WHERE id = ?",

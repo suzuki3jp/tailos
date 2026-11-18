@@ -75,7 +75,8 @@ const githubWebhook = createGithubWebhook(
   (env, input) => acceptPlanningInput(env.DB, input),
   processPlanningInputs,
   (env, id) => d1Routines(env.DB).candidates(id),
-  (env, delivery, owner) => replayLabelDelivery(env.DB, delivery, owner),
+  (env, delivery, owner, diagnostics) =>
+    replayLabelDelivery(env.DB, delivery, owner, diagnostics),
 );
 
 const runRoutes = createRunRoutes(

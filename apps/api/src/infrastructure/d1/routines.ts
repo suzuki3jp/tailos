@@ -1,3 +1,4 @@
+import { diagnosticRetentionMs } from "@tailos/core/diagnostics";
 import type { D1Database } from "@cloudflare/workers-types";
 import * as v from "valibot";
 import {
@@ -126,6 +127,7 @@ export async function replayLabelDelivery(
   db: D1Database,
   deliveryId: string,
   ownerId: string,
+  diagnostics?: { traceId: string; requestId: string },
 ) {
   const rows = await db
     .prepare(`SELECT e.routine_id AS routineId, e.run_id AS runId, r.session_id AS sessionId, e.disposition
@@ -133,5 +135,46 @@ export async function replayLabelDelivery(
     WHERE e.source = 'github.issue-label' AND e.delivery_id = ? AND s.owner_id = ? AND e.routine_id IS NOT NULL`)
     .bind(deliveryId, ownerId)
     .all<import("@/application/routines/dispatch-label.ts").LabelResult>();
+  if (diagnostics && rows.results.length) {
+    const now = Date.now();
+    const { traceId, requestId } = diagnostics;
+    await db
+      .batch([
+        db
+          .prepare(`INSERT INTO diagnostic_traces (id, owner_id, session_id, source, delivery_id, request_id, created_at, expires_at)
+        VALUES (?, ?, ?, 'github.issue-label', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+          .bind(
+            traceId,
+            ownerId,
+            rows.results[0].sessionId,
+            deliveryId,
+            requestId,
+            now,
+            now + diagnosticRetentionMs,
+          ),
+        ...rows.results.flatMap((row) => [
+          db
+            .prepare(`INSERT INTO diagnostic_links (from_trace, to_trace, relation)
+          VALUES (?, ?, 'replays') ON CONFLICT DO NOTHING`)
+            .bind(traceId, `run/${row.runId}`),
+          db
+            .prepare(`INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, request_id, occurred_at, received_at, name, attributes)
+          VALUES (?, ?, ?, 'api', ?, ?, ?, 'trigger.decided', ?)`)
+            .bind(
+              crypto.randomUUID(),
+              traceId,
+              traceId,
+              requestId,
+              now,
+              now,
+              JSON.stringify({ outcome: "replayed", routineId: row.routineId }),
+            ),
+        ]),
+      ])
+      .catch(() => {
+        // oxlint-disable-next-line no-console -- IDs only; diagnostics do not change a committed replay result.
+        console.warn("Replay diagnostic write failed", { traceId, requestId });
+      });
+  }
   return rows.results;
 }

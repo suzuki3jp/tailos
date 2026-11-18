@@ -4,7 +4,7 @@ Tailos は GitHub Issue を起点に Codex を実行し、変更を PR として
 
 - 変更の検証には [CI](.github/workflows/ci.yml) と同じコマンドを使う。
 - レビューには [review スキル](.agents/skills/review/SKILL.md) の観点を使う。
-- Web の配置・依存関係を設計、実装、レビューするときは [fsd スキル](.agents/skills/fsd/SKILL.md) の配置・lint 方針に従う。
+- Web の配置・依存関係・データ取得・Loading・Server/Client 境界を設計、実装、レビューするときは [fsd スキル](.agents/skills/fsd/SKILL.md) に従う。
 
 ## Product Decision Records
 

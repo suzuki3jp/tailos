@@ -1,6 +1,6 @@
 ---
 name: fsd
-description: Tailos Web の実装・設計・レビューで Feature-Sliced Design のレイヤー、slice、公開 API、依存方向を判断する。API・Runner だけの変更には適用しない。
+description: Tailos Web の設計・実装・レビューで、FSD の配置・依存、Server/Client 境界、データ取得と prefetch、Loading の要否・境界を判断する。API・Runner だけの変更には適用しない。
 ---
 
 # Feature-Sliced Design
@@ -8,6 +8,8 @@ description: Tailos Web の実装・設計・レビューで Feature-Sliced Desi
 Web の配置や依存を決めるときに使う。まず [Tailos 固有の構成と lint](references/tailos.md) を読み、現行コードと合わせて確認する。
 
 Tailos の配置方針は `src/app` にルートと App の責務、`src/_pages` に画面本体。ソースは `src` 内に収め、独立した `_app` は作らない。App の一般的な segment 規約よりフレームワークのファイル規約を優先する。
+
+Web の fetch、初期表示、Loading、`"use client"` の境界を扱う場合は、実装・レビュー前に [データ取得と Loading の設計](references/fetch-and-loading.md) を必ず読む。画面全体を Client Component にして取得後に Loading を切り替える形を既定にしない。サーバーでの初期取得・prefetch と必要最小限の Client 境界を先に検討する。
 
 ## 配置を判断する
 

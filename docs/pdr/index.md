@@ -39,7 +39,7 @@
 | [PDR-20261114-project-uuid](records/PDR-20261114-project-uuid.md) | accepted | project.identity.uuid | D1 移行時に Project ID を UUID に変える |
 | [PDR-20261114-project-webhook-conflict](records/PDR-20261114-project-webhook-conflict.md) | accepted | project.configuration.webhook-conflict | Project 編集と重なった Webhook は最新条件で一度だけ再試行する |
 | [PDR-20261116-csp-style-attributes](records/PDR-20261116-csp-style-attributes.md) | accepted | web.csp.style-attributes | JavaScript の制限を維持し、style 属性だけを許可する |
-| [PDR-20261116-home-design-preview](records/PDR-20261116-home-design-preview.md) | accepted | web.home.design-preview | Figma に合わせたホームをモックデータで先に実装する |
+| [PDR-20261116-home-design-preview](records/PDR-20261116-home-design-preview.md) | superseded | web.home.design-preview | Figma に合わせたホームをモックデータで先に実装する |
 | [PDR-20261116-project-account-list](records/PDR-20261116-project-account-list.md) | accepted | projects.account-list | アカウントの Project 一覧を名前順にページングして取得する |
 | [PDR-20261116-project-account-ownership](records/PDR-20261116-project-account-ownership.md) | accepted | project.configuration.ownership | Project をアカウントの所有にする |
 | [PDR-20261116-project-editable-fields](records/PDR-20261116-project-editable-fields.md) | superseded | project.configuration.editable-fields | Project に自由な名前を追加しリポジトリの重複を許可する |
@@ -54,8 +54,12 @@
 | [PDR-20261116-web-icons](records/PDR-20261116-web-icons.md) | accepted | web.design-system.icons | Web の汎用アイコンを Tabler Icons に統一する |
 | [PDR-20261116-web-prototype-styles](records/PDR-20261116-web-prototype-styles.md) | accepted | web.design-system.prototype-migration | デザイン導入で既存プロトタイプの見た目の変更を許容する |
 | [PDR-20261117-api-versioning](records/PDR-20261117-api-versioning.md) | accepted | api.url-versioning | ブラウザー向け API のプレフィックスをバージョン付きにする |
+| [PDR-20261117-home-api-integration](records/PDR-20261117-home-api-integration.md) | superseded | web.home.design-preview | ホームの Project と Session 一覧を実データに接続する |
+| [PDR-20261117-home-server-prefetch](records/PDR-20261117-home-server-prefetch.md) | superseded | web.home.design-preview | ホームの初期データをサーバーで並列取得する |
+| [PDR-20261117-login-cookie-scope](records/PDR-20261117-login-cookie-scope.md) | accepted | auth.login.cookie-scope | SSR のためログイン Cookie を Web と API で共有する |
 | [PDR-20261118-configurable-label-prompt](records/PDR-20261118-configurable-label-prompt.md) | accepted | runner.github-context-acquisition | label の依頼は設定から取得し Issue の参照と内容照合を維持する |
 | [PDR-20261118-configurable-triggers](records/PDR-20261118-configurable-triggers.md) | accepted | triggers.configurable-execution | トリガーと実行設定を DB で管理し label 起動から移行する |
+| [PDR-20261118-home-prefetch-deadline](records/PDR-20261118-home-prefetch-deadline.md) | accepted | web.home.design-preview | ホームの初期取得に全体10秒の期限を設ける |
 | [PDR-20261118-label-automation-dispatch](records/PDR-20261118-label-routine-dispatch.md) | accepted | triggers.label-automation-dispatch | Project に属する Routine を照合して label Run を独立して受け付ける |
 | [PDR-20261118-project-routine-settings](records/PDR-20261118-project-routine-settings.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、共通の実行制約は Project に置く |
 | [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |

@@ -1,8 +1,25 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  HydrationBoundary,
+  QueryClient,
+  QueryClientProvider,
+  type DehydratedState,
+} from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { CSPProvider } from "@base-ui/react/csp-provider";
+
+// Keep hydration on the same client import path as the provider. Vinext dev can
+// otherwise load a second Query context for a direct Server Component import.
+export function QueryHydration({
+  children,
+  state,
+}: {
+  children: ReactNode;
+  state: DehydratedState;
+}) {
+  return <HydrationBoundary state={state}>{children}</HydrationBoundary>;
+}
 
 export function Providers({
   children,

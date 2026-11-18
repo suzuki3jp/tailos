@@ -25,6 +25,10 @@ import {
   type RepositoryJob,
 } from "@/agent-turns.ts";
 import { createGitHubReader, githubTool } from "@/github-tool.ts";
+import {
+  diagnosticErrorBody,
+  withDiagnosticSpan,
+} from "@/diagnostic-operations.ts";
 
 type ClaudeJob = Extract<RepositoryJob, { engine: "claude" }>;
 type GitHubRead = ReturnType<typeof createGitHubReader>["read"];
@@ -331,7 +335,12 @@ export function createClaudeAgent(
           diagnostics,
         );
       } finally {
-        await rm(root, { recursive: true, force: true });
+        await withDiagnosticSpan(
+          diagnostics,
+          "cleanup",
+          () => rm(root, { recursive: true, force: true }),
+          JSON.stringify({ target: "claude_environment" }),
+        );
       }
     },
   };
@@ -440,6 +449,7 @@ async function runTurns(
   const fileGuard = createFileGuard(cwd, [cwd, environment]);
   let sessionId: string | undefined;
   let agentSucceeded = false;
+  let agentError: unknown;
   try {
     if (implementation && !(await runtime.sandboxAvailable(signal))) {
       signal.throwIfAborted();
@@ -553,11 +563,16 @@ async function runTurns(
     });
     agentSucceeded = true;
     return result;
+  } catch (error) {
+    agentError = error;
+    throw error;
   } finally {
     if (agentSpan)
-      diagnostics?.end(agentSpan, {
-        outcome: agentSucceeded ? "succeeded" : "failed",
-      });
+      diagnostics?.end(
+        agentSpan,
+        { outcome: agentSucceeded ? "succeeded" : "failed" },
+        agentSucceeded ? undefined : diagnosticErrorBody(agentError),
+      );
   }
 }
 

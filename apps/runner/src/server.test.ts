@@ -5,7 +5,10 @@ import {
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { assert, expect, test, vi, type TestContext } from "vitest";
-import { parseDiagnosticBatch } from "@tailos/core/diagnostics";
+import {
+  parseDiagnosticBatch,
+  type DiagnosticRecord,
+} from "@tailos/core/diagnostics";
 import { RunnerStatus, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
@@ -16,6 +19,7 @@ import {
 import { claudeAgent } from "@/claude-agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
 import { createRunnerServer } from "@/server.ts";
+import { withDiagnosticSpan } from "@/diagnostic-operations.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
   const server = createRunnerServer({
@@ -229,6 +233,87 @@ test("reports out-of-contract replies as agent failures", async (t) => {
     "job_started",
     "job_failed",
   ]);
+});
+
+test("records cleanup failures with redacted system details before exposing failed status", async (t) => {
+  const nativeFetch = globalThis.fetch;
+  const records: DiagnosticRecord[] = [];
+  const job = diagnosticJob(Date.now() + 10_000);
+  const bearer = job.diagnostics!.bearer;
+  const token = "ghp_" + "b".repeat(36);
+  let marker: unknown;
+  const spy = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input, init) => {
+      if (String(input) !== "https://diag.example/diagnostics")
+        return nativeFetch(input, init);
+      const batch = parseDiagnosticBatch(JSON.parse(String(init?.body)));
+      records.push(...batch.records);
+      if (batch.completed) marker = batch.completed;
+      return new Response(null, { status: 204 });
+    });
+  t.onTestFinished(() => spy.mockRestore());
+  const failure = Object.assign(
+    new Error(`Cannot remove ${bearer}`, {
+      cause: Object.assign(new Error(`Directory not empty ${token}`), {
+        code: "ENOTEMPTY",
+        errno: -39,
+        syscall: "rmdir",
+        path: "/tmp/tailos-test/cache",
+      }),
+    }),
+    {
+      stdout: "private subprocess output",
+      env: { SECRET: "private environment" },
+    },
+  );
+  const origin = await listen(t, {
+    async run(_job, _signal, _cwd, diagnostics) {
+      const agentSpan = diagnostics?.start("agent");
+      if (agentSpan) diagnostics?.end(agentSpan);
+      return withDiagnosticSpan(
+        diagnostics,
+        "cleanup",
+        async () => {
+          throw failure;
+        },
+        JSON.stringify({ target: "codex_environment" }),
+      );
+    },
+  });
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect(await terminalStatus(origin, job.runId)).toMatchObject({
+    status: "failed",
+    errorCode: "agent_failed",
+  });
+  const finishes = records.filter((record) => record.name === "span.finished");
+  expect(
+    finishes.map((record) => [
+      record.attributes.operation,
+      record.attributes.outcome,
+    ]),
+  ).toEqual([
+    ["agent", "succeeded"],
+    ["cleanup", "failed"],
+    ["runner", "failed"],
+  ]);
+  const body = JSON.parse(finishes[1]!.body!);
+  expect(body.errors[0].stack).toContain("Cannot remove");
+  expect(body.errors[1]).toMatchObject({
+    code: "ENOTEMPTY",
+    errno: -39,
+    syscall: "rmdir",
+    path: "/tmp/tailos-test/cache",
+  });
+  const saved = JSON.stringify(records);
+  for (const secret of [
+    bearer,
+    token,
+    "private subprocess output",
+    "private environment",
+  ])
+    expect(saved).not.toContain(secret);
+  expect(marker).toEqual({ lastSeq: 6, dropped: 0 });
 });
 
 test("reports a sandbox startup failure as a failed job", async (t) => {

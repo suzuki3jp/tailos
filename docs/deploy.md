@@ -67,7 +67,7 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 2. 通常の Deploy で `0008_project_settings.sql` を含む D1 マイグレーションと API・Runner・Web を反映する。既存の Run は保存済みの実行設定で続行する。旧設定へのフォールバックは行わない。
 3. 運用者でログインし、`/projects` の「既存設定を初回インポート」を開く。退避した JSON 配列を貼り付けてインポートする。入力形式の例は [projects.example.json](../config/projects.example.json)。新規追加を行う前に移行を実施する。
 4. API は全件の制約と GitHub App からのリポジトリアクセスを確認する。旧 ID ごとに UUID を一つ発行し、Project、旧 ID と UUID の対応、既存 Session の `project_id`、計画会話と inbox の識別キー、移行履歴を同じ D1 トランザクションで確定する。失敗時はすべてロールバックする。登録履歴のある環境や完了済みのインポートへの再実行は拒否する。空配列のインポートも完了として記録する。
-5. 一覧の全 Project、起動ラベル、許可ユーザー、通信許可、上限時間と変更履歴を確認する。既存 Session が参照する UUID を次の読み取り専用 SQL でも照合できる。移行設定に存在しなかった旧 ID は推測で変換せず、そのまま残す。
+5. 一覧の全 Project と、移行で作成された Routine の起動ラベル・許可ユーザー、Project の通信許可・上限時間、変更履歴を確認する。既存 Session が参照する UUID を次の読み取り専用 SQL でも照合できる。移行設定に存在しなかった旧 ID は推測で変換せず、そのまま残す。
 
    ```sql
    SELECT id, legacy_id, repository_id FROM projects ORDER BY legacy_id;
@@ -81,6 +81,12 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 以後は `/projects` で追加・編集・削除する。リポジトリは App の installation から取得した select の候補から選択し、保存時にもアクセスを再確認する。GitHub 障害時には保存せず、再試行する。候補一覧・設定・履歴は運用者だけが閲覧でき、変更には Web の Origin も必要になる。
 
 削除は新規起動を止める論理削除であり、queued・running の Run を取り消さない。Session・会話・Run・変更履歴は保持する。削除済み Project の復元は提供せず、同じリポジトリを再登録する場合は新しい UUID になる。編集中に別の変更が確定した場合は競合エラーになるため、一覧を更新してから編集し直す。Webhook の設定読み取りと受付が競合した場合は、最新の Project で起動条件を確認し直して一度だけ再試行する。再び競合した場合や D1 障害時は 503 と診断を返す。GitHub は失敗した配送を自動再送しないため、必要な配送は配信履歴から手動で再送する。
+
+## label 設定の Routine 移行
+
+初回は queued / running の Run がない状態を運用者が作り、設定編集や起動操作を控えて migration `0011_routines.sql` と API・Runner・Web の公開を行う。既存 Project の label・許可ユーザー・固定プロンプトは有効な Routine に引き継がれ、Project の現行設定から `triggerLabel` を削除する。plan 用の許可ユーザー設定は Project に残す。過去の Session・Run・設定履歴は書き換えない。
+
+同じイベントに複数の有効な Routine が一致すれば、それぞれ Run・PR・通知が作られる。同じ Routine・Issue の実行中の配送は既存 Run にまとめる。一部だけ受付に失敗した場合は 503 と `failed` の Routine ID を確認し、移行後の配送を手動再送する。受付済み分は再実行しない。移行前の旧配送の再送や新旧 Worker の並行稼働のための互換層は追加しない。判断の範囲は [初回移行の PDR](pdr/records/PDR-20261118-routine-initial-migration.md) に従う。
 
 ## Web のデプロイ
 
@@ -112,7 +118,7 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents・Issues・Pull requests の読み取りに限定される。Agent は Runner のツールを使って Issue と PR を番号で参照できる。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 
-デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、`/projects` でリポジトリを選び、起動ラベルと許可ユーザーを登録する。その後、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果に含まれる `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。
+デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、`/projects` でリポジトリを選び、「Routine を管理」から起動ラベル・許可ユーザー・プロンプト・必要な model / effort を保存して有効にする。無効状態なら接続やモデル情報を検証できなくても保存できるが、有効化には検証が必要になる。その後、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果の `results` 配列に含まれる各 `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。
 
 
 Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設定を参照し、作業ディレクトリで適用できる整形・lint・テストなどを実行する。実行結果と、実行できなかった検証の理由を返答に記載する。Runner イメージには Tailos 自体を検証するための pnpm・oxfmt・oxlint を組み込む。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。

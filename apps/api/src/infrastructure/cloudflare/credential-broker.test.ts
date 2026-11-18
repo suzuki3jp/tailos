@@ -9,7 +9,11 @@ import {
   convertV4MiniflareOptions,
 } from "miniflare";
 
-async function createBroker(t: TestContext, openAIStatus = 530) {
+async function createBroker(
+  t: TestContext,
+  openAIStatus = 530,
+  catalog?: unknown,
+) {
   const bundled = await build({
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
@@ -106,6 +110,20 @@ async function createBroker(t: TestContext, openAIStatus = 530) {
       script: bundled.outputFiles[0].text,
       compatibilityDate: "2026-10-06",
       outboundService(request) {
+        if (new URL(request.url).pathname === "/backend-api/codex/models") {
+          expect(new URL(request.url).searchParams.get("client_version")).toBe(
+            "0.166.0",
+          );
+          expect(request.headers.get("Authorization")).toBe(
+            "Bearer secret-access",
+          );
+          expect(request.headers.get("ChatGPT-Account-Id")).toBe(
+            "test-account",
+          );
+          return new MiniflareResponse(JSON.stringify(catalog), {
+            status: catalog ? 200 : 503,
+          });
+        }
         expect(request.url).toBe(
           "https://auth.openai.com/api/accounts/deviceauth/usercode",
         );
@@ -261,4 +279,24 @@ test("stores a pasted Claude token encrypted and hands it out until disconnected
   expect(await rpc("claudeStatus")).toStrictEqual({ state: "disconnected" });
   expect(await rpc("issueClaudeAccess")).toBe(null);
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
+});
+
+test("model catalog lookup uses the owner's connection and returns only validated capability metadata", async (t) => {
+  const rpc = await createBroker(t, 530, {
+    models: [
+      {
+        slug: "test-model",
+        supported_reasoning_levels: [{ effort: "high" }],
+        token: "secret-not-public",
+      },
+    ],
+  });
+  expect(await rpc("codexModels")).toBeNull();
+  await rpc("begin");
+  await rpc("tick", "approved");
+  expect(await rpc("codexModels")).toEqual([
+    { model: "test-model", efforts: ["high"] },
+  ]);
+  await rpc("disconnect");
+  expect(await rpc("codexModels")).toBeNull();
 });

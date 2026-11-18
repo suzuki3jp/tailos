@@ -1,5 +1,8 @@
 export type TriggerAdmission = {
   source: string;
+  routineId?: string;
+  routineRevision?: number;
+  deliveryId?: string;
   idempotencyKey: string;
   ownerId: string;
   projectId?: string;

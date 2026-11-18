@@ -13,7 +13,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  triggerLabel: "tailos:run",
   allowedActors: ["operator"],
   agentNetworkAccess: false,
   maxRunMinutes: 30,

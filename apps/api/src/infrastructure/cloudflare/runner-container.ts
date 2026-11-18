@@ -448,6 +448,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return {
       ...base,
       engine: "codex",
+      ...(context.model && { model: context.model }),
+      ...(context.effort && { effort: context.effort }),
       access,
       refresh: { url: origin + `/_runner/runs/${runId}/credentials`, bearer },
     };

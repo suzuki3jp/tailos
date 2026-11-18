@@ -1,3 +1,9 @@
+import {
+  d1Routines,
+  replayLabelDelivery,
+} from "@/infrastructure/d1/routines.ts";
+import { createRoutineRoutes } from "@/presentation/http/handlers/routines/routines.ts";
+import { codexConnectionId } from "@/application/auth/device.ts";
 import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
 import { processPlanningInputs } from "@/bootstrap/planning.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
@@ -68,6 +74,9 @@ const githubWebhook = createGithubWebhook(
   deliverIssueNotifications,
   (env, input) => acceptPlanningInput(env.DB, input),
   processPlanningInputs,
+  (env, id) => d1Routines(env.DB).candidates(id),
+  (env, delivery, owner, diagnostics) =>
+    replayLabelDelivery(env.DB, delivery, owner, diagnostics),
 );
 
 const runRoutes = createRunRoutes(
@@ -125,6 +134,19 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
           privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
         }).projectRepositories();
       },
+      operatorAuth,
+    ),
+  )
+  .route(
+    "/projects/:projectId/routines",
+    createRoutineRoutes(
+      (env) => d1Routines(env.DB),
+      (env) => async (ownerId) =>
+        env.CREDENTIALS && env.CREDENTIAL_ENCRYPTION_KEY
+          ? (env.CREDENTIALS.getByName(
+              codexConnectionId(ownerId),
+            ).codexModels?.() ?? null)
+          : null,
       operatorAuth,
     ),
   )

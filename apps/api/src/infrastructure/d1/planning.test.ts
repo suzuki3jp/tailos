@@ -54,7 +54,6 @@ async function planningDb(t: TestContext) {
       repository: "owner/repo",
       repositoryId,
       installationId: 2,
-      triggerLabel: "tailos:run",
       allowedActors: ["allowed"],
       agentNetworkAccess: false,
       maxRunMinutes: 1,

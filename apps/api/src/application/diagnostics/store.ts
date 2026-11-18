@@ -11,6 +11,7 @@ export type TriggerDiagnostic = {
   requestId: string;
   source: string;
   deliveryId?: string;
+  routineId?: string;
   reason: NonNullable<DiagnosticAttributes["reason"]>;
   outcome?: "ignored" | "failed" | "unknown";
 };

@@ -403,10 +403,50 @@ async function runTurn(
       type: "chatgptAuthTokens",
       ...loginParams(),
     });
+    if (job.model || job.effort) {
+      const modelSchema = v.object({
+        model: v.string(),
+        isDefault: v.boolean(),
+        supportedReasoningEfforts: v.array(
+          v.object({
+            reasoningEffort: v.string(),
+          }),
+        ),
+      });
+      const models: v.InferOutput<typeof modelSchema>[] = [];
+      let cursor: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const page = v.parse(
+          v.object({
+            data: v.array(modelSchema),
+            nextCursor: v.optional(v.nullable(v.string())),
+          }),
+          await rpc.call("model/list", cursor ? { cursor } : {}),
+        );
+        models.push(...page.data);
+        cursor = page.nextCursor ?? undefined;
+        if (cursor && seen.has(cursor))
+          throw new Error("Model catalog pagination failed");
+        if (cursor) seen.add(cursor);
+      } while (cursor);
+      const selected = models.find((m) =>
+        job.model ? m.model === job.model : m.isDefault,
+      );
+      if (
+        !selected ||
+        (job.effort &&
+          !selected.supportedReasoningEfforts.some(
+            (e) => e.reasoningEffort === job.effort,
+          ))
+      )
+        throw new Error("Requested model or effort is unavailable");
+    }
     const thread = v.parse(
       threadSchema,
       await rpc.call("thread/start", {
         cwd,
+        ...(job.model && { model: job.model }),
         ephemeral: true,
         approvalPolicy: "never",
         sandbox:
@@ -450,6 +490,8 @@ async function runTurn(
         try {
           await rpc.call("turn/start", {
             threadId,
+            ...(job.model && { model: job.model }),
+            ...(job.effort && { effort: job.effort }),
             // Revisions may only summarize the existing answer, never edit code.
             sandboxPolicy:
               revision === 0 ? sandboxPolicy : { type: "readOnly" },

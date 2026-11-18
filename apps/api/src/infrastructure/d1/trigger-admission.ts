@@ -24,6 +24,17 @@ export async function admitTrigger(
   const active = "concurrency_key = ? AND status IN ('queued', 'running')";
   const delivery = "source = ? AND idempotency_key = ?";
   const created = "EXISTS (SELECT 1 FROM sessions WHERE id = ?)";
+  const routineGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM routines r JOIN projects p ON p.id = r.project_id
+    WHERE r.id = ? AND r.revision = ? AND r.project_id = ? AND r.deleted_at IS NULL
+    AND json_extract(r.config, '$.enabled') = 1 AND p.owner_id = ? AND p.revision = ? AND p.deleted_at IS NULL))`;
+  const routineBindings = [
+    input.routineId ?? null,
+    input.routineId ?? null,
+    input.routineRevision ?? null,
+    input.projectId ?? null,
+    input.ownerId,
+    input.projectRevision ?? null,
+  ];
 
   const results = await db.batch<Admission | { projectCurrent: number }>([
     db
@@ -32,7 +43,7 @@ export async function admitTrigger(
        SELECT ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM trigger_events WHERE ${delivery})
          AND NOT EXISTS (SELECT 1 FROM runs WHERE ${active})
-         AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL))`,
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AND ${routineGuard}`,
       )
       .bind(
         sessionId,
@@ -48,6 +59,7 @@ export async function admitTrigger(
         input.projectRevision ?? null,
         input.projectId ?? null,
         input.projectRevision ?? null,
+        ...routineBindings,
       ),
     db
       .prepare(
@@ -85,12 +97,23 @@ export async function admitTrigger(
       .bind(runId),
     db
       .prepare(
-        `INSERT INTO trigger_events (id, run_id, source, idempotency_key, disposition, received_at)
-       SELECT ?, id, ?, ?, CASE WHEN id = ? THEN 'started' ELSE 'coalesced' END, ?
-       FROM runs WHERE ${active}
+        `INSERT INTO trigger_events (id, run_id, source, idempotency_key, disposition, received_at, routine_id, routine_revision, delivery_id)
+       SELECT ?, id, ?, ?, CASE WHEN id = ? THEN 'started' ELSE 'coalesced' END, ?, ?, ?, ?
+       FROM runs WHERE ${active} AND ${routineGuard}
        ON CONFLICT (source, idempotency_key) DO NOTHING`,
       )
-      .bind(triggerId, input.source, input.idempotencyKey, runId, now, scope),
+      .bind(
+        triggerId,
+        input.source,
+        input.idempotencyKey,
+        runId,
+        now,
+        input.routineId ?? null,
+        input.routineRevision ?? null,
+        input.deliveryId ?? null,
+        scope,
+        ...routineBindings,
+      ),
     db
       .prepare(`INSERT INTO issue_notifications (run_id, next_attempt_at)
       SELECT id, ? FROM runs
@@ -119,7 +142,7 @@ export async function admitTrigger(
     db
       .prepare(`INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, occurred_at, received_at, name, attributes)
       SELECT 'trigger/' || e.id, 'run/' || e.run_id, 'run/' || e.run_id, 'database', e.received_at, e.received_at, 'trigger.admitted',
-      json_object('source', e.source, 'deliveryId', e.idempotency_key, 'outcome', e.disposition)
+      json_object('source', e.source, 'deliveryId', coalesce(e.delivery_id, e.idempotency_key), 'outcome', e.disposition)
       FROM trigger_events e JOIN runs r ON r.id = e.run_id JOIN sessions s ON s.id = r.session_id
       WHERE e.source = ? AND e.idempotency_key = ? AND s.owner_id = ? ON CONFLICT(event_id) DO NOTHING`)
       .bind(input.source, input.idempotencyKey, input.ownerId),
@@ -133,7 +156,7 @@ export async function admitTrigger(
       .bind(
         traceId,
         input.source,
-        input.idempotencyKey,
+        input.deliveryId ?? input.idempotencyKey,
         requestId,
         now,
         now + diagnosticRetentionMs,
@@ -184,12 +207,13 @@ export async function admitTrigger(
       .bind(input.source, input.idempotencyKey, input.ownerId),
     db
       .prepare(
-        `SELECT (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AS projectCurrent`,
+        `SELECT ((? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AND ${routineGuard}) AS projectCurrent`,
       )
       .bind(
         input.projectRevision ?? null,
         input.projectId ?? null,
         input.projectRevision ?? null,
+        ...routineBindings,
       ),
   ]);
   const row = results.at(-2)?.results[0];

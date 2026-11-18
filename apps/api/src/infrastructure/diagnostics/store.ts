@@ -244,6 +244,7 @@ export async function recordTriggerDecision(
         JSON.stringify({
           outcome: input.outcome ?? "ignored",
           reason: input.reason,
+          ...(input.routineId && { routineId: input.routineId }),
         }),
       ),
   ]);

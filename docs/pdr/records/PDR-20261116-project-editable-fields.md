@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261116-project-editable-fields
 key: project.configuration.editable-fields
-status: accepted
+status: superseded
 date: "2026-11-16"
 areas: [projects, api, database]
 keywords: [Project名, 自由な名前, name, migration, repository, リポジトリ重複]

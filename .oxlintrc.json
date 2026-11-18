@@ -9,7 +9,8 @@
     "typescript/no-this-alias": "off",
     "unicorn/no-empty-file": "off",
     "tailos/api-layers": "error",
-    "tailos-web/boundaries": "error"
+    "tailos-web/boundaries": "error",
+    "tailos-style/no-nested-ternary": "error"
   },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -19,5 +20,9 @@
     "**/temp/**",
     ".claude/worktrees/**"
   ],
-  "jsPlugins": ["./lint/api-layers.mjs", "./lint/web-boundaries.mjs"]
+  "jsPlugins": [
+    "./lint/api-layers.mjs",
+    "./lint/web-boundaries.mjs",
+    "./lint/no-nested-ternary.mjs"
+  ]
 }

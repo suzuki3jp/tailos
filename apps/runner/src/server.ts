@@ -149,12 +149,13 @@ async function execute(
     diagnostics.end(span, { outcome: "succeeded" }, result.reply);
   } catch (error) {
     events.push({ type: "job_failed", at: Date.now() });
-    const errorCode =
-      error instanceof AgentSandboxUnavailable
-        ? "sandbox_unavailable"
-        : error instanceof PublicationFailed
-          ? error.code
-          : "agent_failed";
+    let errorCode:
+      | PublicationFailed["code"]
+      | "agent_failed"
+      | "sandbox_unavailable" = "agent_failed";
+    if (error instanceof AgentSandboxUnavailable)
+      errorCode = "sandbox_unavailable";
+    else if (error instanceof PublicationFailed) errorCode = error.code;
     terminal = {
       status: "failed",
       errorCode: signal.aborted ? "deadline_exceeded" : errorCode,

@@ -82,16 +82,21 @@ async function check(response: {
     body && typeof body === "object" && "error" in body
       ? body.error
       : undefined;
+  if (error === "configuration_unverified")
+    throw new Error(
+      "接続またはモデル情報を確認できません。有効にするには接続を確認してください。無効状態なら保存できます。",
+    );
+  if (error === "unsupported_model" || error === "unsupported_effort")
+    throw new Error(
+      "選択したモデルまたは effort は利用できません。対応する設定を確認してください。",
+    );
+  const messages: Partial<Record<number, string>> = {
+    409: "設定が変更されています。一覧を更新してから保存してください。",
+    401: "ログインし直してください。",
+  };
   throw new Error(
-    error === "configuration_unverified"
-      ? "接続またはモデル情報を確認できません。有効にするには接続を確認してください。無効状態なら保存できます。"
-      : error === "unsupported_model" || error === "unsupported_effort"
-        ? "選択したモデルまたは effort は利用できません。対応する設定を確認してください。"
-        : response.status === 409
-          ? "設定が変更されています。一覧を更新してから保存してください。"
-          : response.status === 401
-            ? "ログインし直してください。"
-            : "Routine を保存できませんでした。入力や接続を確認してください。",
+    messages[response.status] ??
+      "Routine を保存できませんでした。入力や接続を確認してください。",
   );
 }
 export async function saveRoutine(

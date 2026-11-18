@@ -7,6 +7,14 @@ import {
 import type { HomeSession } from "../api/queries";
 import { updatedLabel } from "../model/session-presentation";
 
+const statusIcons: Partial<
+  Record<NonNullable<HomeSession["latestRun"]>["status"], typeof IconMessage>
+> = {
+  failed: IconMessageReport,
+  queued: IconMessageDots,
+  running: IconMessageDots,
+};
+
 export function SessionRow({
   session,
   now,
@@ -15,13 +23,8 @@ export function SessionRow({
   now: number;
 }) {
   const status = session.latestRun?.status;
-  const active = status === "running" || status === "queued";
   const failed = status === "failed";
-  const Icon = failed
-    ? IconMessageReport
-    : active
-      ? IconMessageDots
-      : IconMessage;
+  const Icon = (status ? statusIcons[status] : undefined) ?? IconMessage;
   return (
     <div className="space-y-1.5 p-3">
       <Link

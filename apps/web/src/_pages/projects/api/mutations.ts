@@ -2,16 +2,17 @@ import { api } from "@/shared/api";
 import type { ProjectSettings } from "./queries";
 
 async function check(response: { ok: boolean; status: number }) {
-  if (!response.ok)
+  if (!response.ok) {
+    const messages: Partial<Record<number, string>> = {
+      409: "設定が変更されたか、リポジトリの重複・件数上限・移行済みのため保存できません。一覧を更新して確認してください。",
+      400: "入力内容を確認してください。",
+      401: "ログインし直してください。",
+    };
     throw new Error(
-      response.status === 409
-        ? "設定が変更されたか、リポジトリの重複・件数上限・移行済みのため保存できません。一覧を更新して確認してください。"
-        : response.status === 400
-          ? "入力内容を確認してください。"
-          : response.status === 401
-            ? "ログインし直してください。"
-            : "処理できませんでした。GitHub App の接続を確認して、もう一度お試しください。",
+      messages[response.status] ??
+        "処理できませんでした。GitHub App の接続を確認して、もう一度お試しください。",
     );
+  }
 }
 export async function saveProject(
   settings: ProjectSettings,

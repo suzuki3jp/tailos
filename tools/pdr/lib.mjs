@@ -83,11 +83,8 @@ function filesIn(directory) {
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink())
         throw new Error(`PDR symlinks are not supported: ${path}`);
-      return entry.isDirectory()
-        ? filesIn(path)
-        : entry.name.endsWith(".md")
-          ? [path]
-          : [];
+      if (entry.isDirectory()) return filesIn(path);
+      return entry.name.endsWith(".md") ? [path] : [];
     })
     .sort();
 }

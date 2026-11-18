@@ -77,19 +77,15 @@ async function requestError(response: Response) {
     (response.status === 403 &&
       (retryAfter !== null || exhausted || secondary));
   const now = Date.now();
-  const deadline =
-    retryAfter !== null
-      ? now + Number(retryAfter) * 1000
-      : exhausted
-        ? Number(response.headers.get("x-ratelimit-reset")) * 1000
-        : NaN;
+  let deadline = NaN;
+  if (retryAfter !== null) deadline = now + Number(retryAfter) * 1000;
+  else if (exhausted)
+    deadline = Number(response.headers.get("x-ratelimit-reset")) * 1000;
   return new GitHubRequestError(
     response.status,
     rateLimited,
-    rateLimited
-      ? Number.isFinite(deadline) && deadline > now
-        ? deadline
-        : undefined
+    rateLimited && Number.isFinite(deadline) && deadline > now
+      ? deadline
       : undefined,
   );
 }
@@ -284,19 +280,19 @@ export class GitHubApp {
     try {
       return await this.writeIssueComment(target, marker, body, commentId);
     } catch (error) {
-      if (error instanceof GitHubRequestError)
+      if (error instanceof GitHubRequestError) {
+        const { status, retryAt } = error;
+        if (error.rateLimited)
+          throw new NotificationError("rate_limit", retryAt);
+        if ([401, 403, 404].includes(status))
+          throw new NotificationError("permission", retryAt);
+        const permanent =
+          status >= 400 && status < 500 && ![408, 409, 422].includes(status);
         throw new NotificationError(
-          error.rateLimited
-            ? "rate_limit"
-            : [401, 403, 404].includes(error.status)
-              ? "permission"
-              : error.status >= 400 &&
-                  error.status < 500 &&
-                  ![408, 409, 422].includes(error.status)
-                ? "permanent"
-                : "transient",
-          error.retryAt,
+          permanent ? "permanent" : "transient",
+          retryAt,
         );
+      }
       throw error;
     }
   }

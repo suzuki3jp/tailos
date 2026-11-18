@@ -239,14 +239,14 @@ async function storeOutcome(
     return failRun(store, runId, outcome.errorCode, finishedAt, result);
   }
 
+  const publicationResult =
+    "publicationResult" in outcome ? outcome.publicationResult : undefined;
   const storedResult = JSON.stringify({
     version: 1,
     ...(outcome.sessionTitle && { sessionTitle: outcome.sessionTitle }),
     ...(outcome.plan
       ? { kind: "plan", ...outcome.plan }
-      : "publicationResult" in outcome && outcome.publicationResult
-        ? outcome.publicationResult
-        : { kind: "completed" }),
+      : (publicationResult ?? { kind: "completed" })),
   });
   try {
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))

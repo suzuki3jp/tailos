@@ -288,6 +288,16 @@ async function runTurn(
     diagnostics?.addSecret(next.accessToken);
     return loginParams();
   };
+  const itemOperations: ReadonlyMap<
+    string,
+    "command" | "file_change" | "reply" | "tool"
+  > = new Map([
+    ["commandExecution", "command"],
+    ["fileChange", "file_change"],
+    ["agentMessage", "reply"],
+    ["mcpToolCall", "tool"],
+    ["webSearch", "tool"],
+  ] as const);
   rpc.onNotification = (method, params) => {
     if (
       diagnostics &&
@@ -296,16 +306,7 @@ async function runTurn(
       const parsed = v.safeParse(diagnosticItemSchema, params);
       if (parsed.success && parsed.output.threadId === threadId) {
         const item = parsed.output.item;
-        const operation =
-          item.type === "commandExecution"
-            ? "command"
-            : item.type === "fileChange"
-              ? "file_change"
-              : item.type === "agentMessage"
-                ? "reply"
-                : item.type === "mcpToolCall" || item.type === "webSearch"
-                  ? "tool"
-                  : undefined;
+        const operation = itemOperations.get(item.type);
         if (operation) {
           const id = item.id ?? "reply";
           let span = itemSpans.get(id);
@@ -320,19 +321,16 @@ async function runTurn(
             itemSpans.set(id, span);
           }
           if (span && method === "item/completed") {
+            let outcome: "succeeded" | "failed" | "unknown" = "unknown";
+            if (item.exitCode != null)
+              outcome = item.exitCode === 0 ? "succeeded" : "failed";
+            else if (item.status === "failed") outcome = "failed";
+            else if (operation === "reply" || item.status === "completed")
+              outcome = "succeeded";
             diagnostics.end(
               span,
               {
-                outcome:
-                  item.exitCode != null
-                    ? item.exitCode === 0
-                      ? "succeeded"
-                      : "failed"
-                    : item.status === "failed"
-                      ? "failed"
-                      : operation === "reply" || item.status === "completed"
-                        ? "succeeded"
-                        : "unknown",
+                outcome,
                 ...(item.exitCode == null ? {} : { exitCode: item.exitCode }),
               },
               JSON.stringify({

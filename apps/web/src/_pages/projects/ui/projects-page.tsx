@@ -143,6 +143,111 @@ export function ProjectsPage() {
         retry={() => void projects.refetch()}
       />
     );
+  function renderProjectHistory() {
+    if (history.isPending) return <p role="status">履歴を読み込んでいます。</p>;
+    if (history.isError || !history.data || "error" in history.data)
+      return (
+        <RequestState
+          status={
+            history.data && "error" in history.data
+              ? history.data.error
+              : undefined
+          }
+          missing="変更履歴を取得できません。"
+          retry={() => void history.refetch()}
+        />
+      );
+    return (
+      <>
+        {history.data.changes.length === 0 && (
+          <p className="text-muted-foreground">変更履歴はまだありません。</p>
+        )}
+        {history.data.changes.map((change) => (
+          <details className="surface" key={change.id}>
+            <summary className="cursor-pointer break-words text-sm">
+              {new Date(change.createdAt).toLocaleString("ja-JP")} ·{" "}
+              {
+                {
+                  create: "追加",
+                  update: "変更",
+                  delete: "削除",
+                  import: "移行",
+                }[change.operation]
+              }{" "}
+              · {change.after?.repository ?? change.before?.repository}
+            </summary>
+            <p className="my-3 break-all text-xs text-muted-foreground">
+              Project {change.projectId} · 変更者 {change.actorId}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <h3 className="mb-2 font-medium">変更前</h3>
+                <Snapshot project={change.before} />
+              </div>
+              <div>
+                <h3 className="mb-2 font-medium">変更後</h3>
+                <Snapshot project={change.after} />
+              </div>
+            </div>
+          </details>
+        ))}
+        <div className="flex gap-3">
+          {before !== undefined && (
+            <button
+              type="button"
+              className="action"
+              onClick={() => setBefore(undefined)}
+            >
+              最新の履歴
+            </button>
+          )}
+          {history.data.nextCursor !== null && (
+            <button
+              type="button"
+              className="action"
+              onClick={() =>
+                setBefore(
+                  history.data && !("error" in history.data)
+                    ? (history.data.nextCursor ?? undefined)
+                    : undefined,
+                )
+              }
+            >
+              以前の履歴
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+  function renderRepositories() {
+    if (repositories.isPending)
+      return <p role="status">GitHub のリポジトリを読み込んでいます。</p>;
+    if (
+      repositories.isError ||
+      !repositories.data ||
+      "error" in repositories.data
+    )
+      return (
+        <RequestState
+          status={
+            repositories.data && "error" in repositories.data
+              ? repositories.data.error
+              : undefined
+          }
+          missing="GitHub App のリポジトリを取得できません。"
+          retry={() => void repositories.refetch()}
+        />
+      );
+    if (choices.length === 0)
+      return (
+        <p className="text-muted-foreground">
+          選択できるリポジトリがありません。GitHub App の installation
+          とリポジトリへのアクセスを確認してください。
+        </p>
+      );
+    return null;
+  }
   return (
     <section className="space-y-8">
       <div className="space-y-2">
@@ -287,26 +392,7 @@ export function ProjectsPage() {
             ))}
           </select>
         </label>
-        {repositories.isPending ? (
-          <p role="status">GitHub のリポジトリを読み込んでいます。</p>
-        ) : repositories.isError ||
-          !repositories.data ||
-          "error" in repositories.data ? (
-          <RequestState
-            status={
-              repositories.data && "error" in repositories.data
-                ? repositories.data.error
-                : undefined
-            }
-            missing="GitHub App のリポジトリを取得できません。"
-            retry={() => void repositories.refetch()}
-          />
-        ) : choices.length === 0 ? (
-          <p className="text-muted-foreground">
-            選択できるリポジトリがありません。GitHub App の installation
-            とリポジトリへのアクセスを確認してください。
-          </p>
-        ) : null}
+        {renderRepositories()}
         <button
           type="button"
           className="action"
@@ -433,82 +519,7 @@ export function ProjectsPage() {
       )}
       <div className="space-y-3">
         <h2 className="text-lg font-medium">変更履歴</h2>
-        {history.isPending ? (
-          <p role="status">履歴を読み込んでいます。</p>
-        ) : history.isError || !history.data || "error" in history.data ? (
-          <RequestState
-            status={
-              history.data && "error" in history.data
-                ? history.data.error
-                : undefined
-            }
-            missing="変更履歴を取得できません。"
-            retry={() => void history.refetch()}
-          />
-        ) : (
-          <>
-            {history.data.changes.length === 0 && (
-              <p className="text-muted-foreground">
-                変更履歴はまだありません。
-              </p>
-            )}
-            {history.data.changes.map((change) => (
-              <details className="surface" key={change.id}>
-                <summary className="cursor-pointer break-words text-sm">
-                  {new Date(change.createdAt).toLocaleString("ja-JP")} ·{" "}
-                  {
-                    {
-                      create: "追加",
-                      update: "変更",
-                      delete: "削除",
-                      import: "移行",
-                    }[change.operation]
-                  }{" "}
-                  · {change.after?.repository ?? change.before?.repository}
-                </summary>
-                <p className="my-3 break-all text-xs text-muted-foreground">
-                  Project {change.projectId} · 変更者 {change.actorId}
-                </p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <h3 className="mb-2 font-medium">変更前</h3>
-                    <Snapshot project={change.before} />
-                  </div>
-                  <div>
-                    <h3 className="mb-2 font-medium">変更後</h3>
-                    <Snapshot project={change.after} />
-                  </div>
-                </div>
-              </details>
-            ))}
-            <div className="flex gap-3">
-              {before !== undefined && (
-                <button
-                  type="button"
-                  className="action"
-                  onClick={() => setBefore(undefined)}
-                >
-                  最新の履歴
-                </button>
-              )}
-              {history.data.nextCursor !== null && (
-                <button
-                  type="button"
-                  className="action"
-                  onClick={() =>
-                    setBefore(
-                      history.data && !("error" in history.data)
-                        ? (history.data.nextCursor ?? undefined)
-                        : undefined,
-                    )
-                  }
-                >
-                  以前の履歴
-                </button>
-              )}
-            </div>
-          </>
-        )}
+        {renderProjectHistory()}
       </div>
     </section>
   );

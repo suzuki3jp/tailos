@@ -33,16 +33,13 @@ export function claudeConnectionStatus(
 ): ClaudeConnectionStatus {
   if (savedAt === undefined) return { state: "disconnected" };
   const expiresAt = savedAt + tokenLifetime;
+  const nearingExpiry = now >= expiresAt - expiryNotice;
+  const upcomingExpiry = nearingExpiry ? "soon" : "valid";
   return {
     state: "connected",
     savedAt,
     expiresAt,
-    expiry:
-      now >= expiresAt
-        ? "passed"
-        : now >= expiresAt - expiryNotice
-          ? "soon"
-          : "valid",
+    expiry: now >= expiresAt ? "passed" : upcomingExpiry,
   };
 }
 

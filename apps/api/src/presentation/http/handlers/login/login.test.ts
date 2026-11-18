@@ -19,7 +19,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
     TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
     TAILOS_OPERATOR_GITHUB_ID: "123",
   };
-  const callback = origin + "/api/auth/callback/github";
+  const callback = origin + "/v1/auth/callback/github";
   const fetch = globalThis.fetch;
   let githubId = 999;
   let exchanges = 0;
@@ -64,7 +64,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   const request = (path: string, init?: RequestInit) =>
     app.request(origin + path, init, env);
   const start = async () => {
-    const response = await request("/api/auth/login", {
+    const response = await request("/v1/auth/login", {
       method: "POST",
       headers: { Origin: webOrigin },
     });
@@ -95,7 +95,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   expect((await app.request(origin + "/login")).status).toBe(404);
   expect(
     (
-      await request("/api/auth/login", {
+      await request("/v1/auth/login", {
         method: "POST",
         headers: { Origin: "null" },
       })
@@ -103,7 +103,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   ).toBe(403);
   expect(
     (
-      await request("/api/auth/login", {
+      await request("/v1/auth/login", {
         method: "POST",
         headers: { Origin: "https://other.example" },
       })
@@ -126,7 +126,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   expect(granted.headers.get("Location")).toBe(webOrigin + "/login");
   expect(granted.headers.get("Cache-Control")).toBe("private, no-store");
   const sessionCookie = cookieHeader(granted);
-  const account = await request("/api/account", {
+  const account = await request("/v1/account", {
     headers: { Cookie: sessionCookie, Origin: webOrigin },
   });
   expect(account.status).toBe(200);
@@ -147,7 +147,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   );
   expect(
     (
-      await request("/api/account", {
+      await request("/v1/account", {
         headers: {
           Cookie: sessionCookie.replaceAll(
             "tailos.session_token",
@@ -178,13 +178,13 @@ test("GitHub login authenticates the configured account and persists only the Ta
 
   expect(
     (
-      await request("/api/auth/logout", {
+      await request("/v1/auth/logout", {
         method: "POST",
         headers: { Origin: "https://other.example", Cookie: sessionCookie },
       })
     ).status,
   ).toBe(403);
-  const logout = await request("/api/auth/logout", {
+  const logout = await request("/v1/auth/logout", {
     method: "POST",
     headers: { Origin: webOrigin, Cookie: sessionCookie },
   });

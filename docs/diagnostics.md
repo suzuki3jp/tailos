@@ -71,7 +71,7 @@ Agent の成功と Run の成功を分ける。外部へのリクエストがタ
 
 起動対象外の判定やスケジュール失敗の補足は best effort とし、診断ストアが失敗しても元の HTTP 応答を変えない。失敗時は ID と許可済みの判定コードだけを Workers Logs に残す。Run を新規受理する際の起動理由・関係は、業務上の受理と同じ batch で保証する。
 
-Codex Adapter は対応する item の開始・完了と、Tailos の GitHub ツールを記録する。プロバイダが通知しない処理や内部の推論は記録できない。未知の raw RPC、認証 RPC、app-server の stderr 全文は保存しない。
+Codex Adapter は対応する item の開始・完了と、Tailos の GitHub ツールを記録する。開始前の sandbox 起動チェックは、コマンド、終了コード、標準出力・標準エラーを sandbox Span に記録し、既存の秘匿・容量制限を適用する。プロバイダが通知しない処理や内部の推論は記録できない。未知の raw RPC、認証 RPC、app-server の stderr 全文は保存しない。
 
 ## 保存先と保証
 
@@ -150,11 +150,11 @@ Cron は期限切れの本文を50件ずつ、未参照 object も含む R2 pref
 
 | API | 用途 |
 | --- | --- |
-| `GET /api/diagnostics/traces?runId=...` | Run と関連する受付 Trace を取得 |
-| `GET /api/diagnostics/traces?source=...&deliveryId=...` | 起動しなかった配送も検索 |
-| `GET /api/diagnostics/traces/:id/events?after=...` | 受信順のカーソルで最大100件ずつ取得 |
-| `GET /api/diagnostics/traces/:id/artifacts?after=...` | Artifact の一覧と期限を最大100件ずつ取得 |
-| `GET /api/diagnostics/artifacts/:id` | 対象の上限付きバッチ本文を取得 |
+| `GET /v1/diagnostics/traces?runId=...` | Run と関連する受付 Trace を取得 |
+| `GET /v1/diagnostics/traces?source=...&deliveryId=...` | 起動しなかった配送も検索 |
+| `GET /v1/diagnostics/traces/:id/events?after=...` | 受信順のカーソルで最大100件ずつ取得 |
+| `GET /v1/diagnostics/traces/:id/artifacts?after=...` | Artifact の一覧と期限を最大100件ずつ取得 |
+| `GET /v1/diagnostics/artifacts/:id` | 対象の上限付きバッチ本文を取得 |
 
 Trace の一覧は最大50件で、`nextCursor` を次の `before` に渡す。Trace ID に含まれる `/` はパスパラメータとしてエンコードする。
 

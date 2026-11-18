@@ -14,7 +14,7 @@ import {
 import type { Bindings } from "@/bindings.ts";
 
 const providerId = "github";
-const authPath = "/api/auth";
+const authPath = "/v1/auth";
 const loginPath = "/login";
 
 export function createLoginAuth(env: Bindings) {

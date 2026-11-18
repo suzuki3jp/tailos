@@ -16,7 +16,7 @@ test("project choices follow every cursor and retain IDs, names, and repositorie
   const second = { id: "p2", name: "Alpha", repository: "owner/second" };
   const http = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
-    expect(url.pathname).toBe("/api/projects");
+    expect(url.pathname).toBe("/v1/projects");
     expect(init).toMatchObject({
       credentials: "include",
       signal: expect.any(AbortSignal),

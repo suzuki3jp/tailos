@@ -5,7 +5,7 @@ import { apiOrigin } from "../config";
 export function createApiClient(
   request: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ) {
-  return hc<BrowserApi>(new URL("/api", apiOrigin).href, { fetch: request });
+  return hc<BrowserApi>(new URL("/v1", apiOrigin).href, { fetch: request });
 }
 
 export const api = createApiClient((input, init) =>

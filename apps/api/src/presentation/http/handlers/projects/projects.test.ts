@@ -32,7 +32,7 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
     { repository: "owner/repo", repositoryId: 42, installationId: 19 },
   ]);
   const app = new Hono<{ Bindings: Bindings }>().route(
-    "/api/projects",
+    "/v1/projects",
     createProjectRoutes(
       (env) => d1Projects(env.DB),
       () => ({ verify, list }),
@@ -48,7 +48,7 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
     },
   ) =>
     app.request(
-      `${env.TAILOS_PUBLIC_ORIGIN}/api/projects${path}`,
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/projects${path}`,
       {
         method: body === undefined ? "GET" : "POST",
         headers: { "Content-Type": "application/json", ...headers },
@@ -155,7 +155,7 @@ test("imports only valid unique legacy projects and verifies all GitHub targets 
   const operator = await createTestOperator(env);
   const verify = vi.fn(async (_target: unknown) => {});
   const app = new Hono<{ Bindings: Bindings }>().route(
-    "/api/projects",
+    "/v1/projects",
     createProjectRoutes(
       (env) => d1Projects(env.DB),
       () => ({ verify, list: async () => [] }),
@@ -164,7 +164,7 @@ test("imports only valid unique legacy projects and verifies all GitHub targets 
   );
   const send = (body: unknown) =>
     app.request(
-      `${env.TAILOS_PUBLIC_ORIGIN}/api/projects/import`,
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/projects/import`,
       {
         method: "POST",
         headers: {

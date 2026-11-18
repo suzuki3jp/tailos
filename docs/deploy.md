@@ -92,13 +92,15 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 
 ドメイン割り当てが失敗した場合は、Cloudflare の **Domains & Routes** と DNS を確認する。旧 API Worker や prototype に紐づいたままなら解除し、最新の `main` に対する **Deploy** の失敗ジョブを再実行する。
 
-ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @tailos/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/api/auth/callback/github` を設定する。
+ローカルでは `pnpm dev` で API を起動し、別のターミナルで `pnpm --filter @tailos/web dev` を実行して `http://localhost:3000` を開く。ローカル用の GitHub OAuth App のコールバックには `http://localhost:8787/v1/auth/callback/github` を設定する。
 
 ## 運用者の GitHub ログイン
 
 ホームの SSR に対応した版では、API を先に、次に Web をデプロイし、`/login` で再ログインする。ログイン Cookie は新しい `tailos.session_token`（HTTPS では `__Secure-` 接頭辞付き）へ切り替わり、本番では `Domain=tailos.app` で Web と API に共有される。旧 API 専用 Cookie は新しい認証では使わない。HttpOnly・Secure・SameSite=Lax と既存の Origin 検査は維持する。`tailos.app` 配下のサブドメインには信頼できないサービスを置かない。詳細は [Cookie の共有方針](pdr/records/PDR-20261117-login-cookie-scope.md) を参照する。ローカルは Web と API が同じ `localhost` を使い、Domain を付けずにポート間で共有する。
 
-GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/api/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
+既存環境を `/api` から `/v1` へ更新する際も、GitHub OAuth App の Authorization callback URL を新しい `/v1/auth/callback/github` に変更する。
+
+GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/v1/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
 ## GitHub App
 
@@ -118,6 +120,8 @@ Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設�
 Codex の Run は `standard-3`（8 GiB、2 vCPU）で起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
 
 チェックアウトを伴う Run では、ホーム・一時領域・キャッシュ・pnpm のロック用領域・ユーザー用ツールの配置先を Run ごとに作成し、作業ディレクトリと合わせて書き込みを許可する。これらの環境変数はサンドボックス内のコマンドに渡し、app-server 自身は Agent のホームや一時領域を使用しない。領域は Codex の認証用ディレクトリと分け、Run 終了時に削除する。
+
+Runner イメージは `codex-linux-sandbox` を Codex のネイティブ実行ファイルへのリンクとして `/usr/local/bin` に配置する。Codex は `/tmp` 配下の使い捨て `CODEX_HOME` には helper の別名を作成しないため、外部の bubblewrap が PATH から helper を起動できるようにする。Codex の更新でパッケージ内の配置が変わった場合はイメージのビルドを失敗させ、配置を見直す。
 
 Agent のコマンドによるネットワーク利用は既定で無効。依存取得などで必要なプロジェクトは、運用者が `/projects` の対象 Project で「Agent のコマンドによる通信を許可する」を有効にする。設定は Run 作成時に保存され、Issue 本文やリポジトリ内の設定からは変更できない。有効にした Run では、依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信でき、非公開ソースや読み取り可能なデータが外部に送信される可能性がある。この条件を許容できるプロジェクトに限って有効にする。
 

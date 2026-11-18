@@ -38,8 +38,8 @@ test("starts both protected lists before awaiting either and hydrates without a 
   );
   await vi.waitFor(() =>
     expect([...pending.keys()].sort()).toEqual([
-      "/api/projects",
-      "/api/sessions",
+      "/v1/projects",
+      "/v1/sessions",
     ]),
   );
   const project = {
@@ -47,12 +47,10 @@ test("starts both protected lists before awaiting either and hydrates without a 
     name: "Server project",
     repository: "owner/repo",
   };
-  pending.get("/api/projects")?.(
+  pending.get("/v1/projects")?.(
     Response.json({ items: [project], nextCursor: null }),
   );
-  pending.get("/api/sessions")?.(
-    Response.json({ items: [], nextCursor: null }),
-  );
+  pending.get("/v1/sessions")?.(Response.json({ items: [], nextCursor: null }));
   const state = await result;
   const serialized = JSON.stringify(state);
   expect(serialized).not.toContain("test-session");

@@ -9,9 +9,11 @@ import {
 } from "../api/queries";
 import { DataRequestState } from "./data-request-state";
 import { SessionRow } from "./session-row";
+import { useProjectSelection } from "./project-selection";
 
 export function SessionList() {
   const query = useInfiniteQuery(homeSessionsQueryOptions());
+  const { error: projectError } = useProjectSelection();
   const sessionsById = new Map<string, HomeSession>();
   for (const page of query.data?.pages ?? []) {
     for (const session of page.items) {
@@ -19,13 +21,15 @@ export function SessionList() {
     }
   }
   const sessions = Array.from(sessionsById.values());
-  if (requestErrorStatus(query.error) === 401)
+  if (requestErrorStatus(query.error) === 401) {
+    if (requestErrorStatus(projectError) === 401) return null;
     return (
       <DataRequestState
         error={query.error}
         retry={() => void query.refetch()}
       />
     );
+  }
   return (
     <>
       {sessions.length > 0 && (

@@ -33,6 +33,7 @@ export function homeProjectsQueryOptions(client = api) {
     retryOnMount: false,
     queryFn: async ({ signal }) => {
       const projects = new Map<string, HomeProject>();
+      const visitedCursors = new Set<string>();
       let cursor: string | null = null;
       do {
         const response = await client.projects.$get(
@@ -43,6 +44,11 @@ export function homeProjectsQueryOptions(client = api) {
         const page = await response.json();
         for (const project of page.items) projects.set(project.id, project);
         cursor = page.nextCursor;
+        if (cursor !== null) {
+          if (visitedCursors.has(cursor))
+            throw new Error("Invalid projects pagination");
+          visitedCursors.add(cursor);
+        }
       } while (cursor !== null);
       return Array.from(projects.values());
     },

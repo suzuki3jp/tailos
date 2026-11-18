@@ -44,6 +44,30 @@ test("project choices follow every cursor and retain IDs, names, and repositorie
   }
 });
 
+test.each([
+  { cursors: ["first", "first"] },
+  { cursors: ["first", "second", "first"] },
+])("project loading rejects a cursor cycle ($cursors)", async ({ cursors }) => {
+  let page = 0;
+  const http = vi.fn<typeof fetch>(async () => {
+    if (page >= cursors.length) throw new Error("Unexpected page request");
+    return Response.json({ items: [], nextCursor: cursors[page++] });
+  });
+  vi.stubGlobal("fetch", http);
+  const client = queryClient();
+  try {
+    await expect(client.fetchQuery(homeProjectsQueryOptions())).rejects.toThrow(
+      "Invalid projects pagination",
+    );
+    expect(http).toHaveBeenCalledTimes(cursors.length);
+    expect(
+      client.getQueryData(homeProjectsQueryOptions().queryKey),
+    ).toBeUndefined();
+  } finally {
+    client.clear();
+  }
+});
+
 test("session pagination keeps existing rows after a next-page failure and retries the same cursor", async () => {
   const http = vi
     .fn<typeof fetch>()

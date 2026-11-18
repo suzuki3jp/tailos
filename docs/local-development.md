@@ -1,6 +1,6 @@
 # ローカル開発
 
-以下は Web を `http://localhost:3000`、API を `http://localhost:8788` で動かす手順。リポジトリのルートで実行する。
+以下は Web を `http://localhost:3000`、API を `http://localhost:8787` で動かす手順。リポジトリのルートで実行する。
 
 ## 認証設定
 
@@ -15,7 +15,7 @@ API は Wrangler が `apps/api/.dev.vars` を読み込み、Web は Vite が `ap
 GitHub の [Settings → Developer settings → OAuth Apps](https://github.com/settings/developers) でローカル用 OAuth App を登録する。
 
 - Homepage URL: `http://localhost:3000`
-- Authorization callback URL: `http://localhost:8788/v1/auth/callback/github`
+- Authorization callback URL: `http://localhost:8787/v1/auth/callback/github`
 
 発行された値と次のコマンドの出力を `apps/api/.dev.vars` の空欄に設定する。
 
@@ -33,7 +33,7 @@ GitHub の [Settings → Developer settings → OAuth Apps](https://github.com/s
 API を起動する。起動スクリプトがローカル D1 のマイグレーションも適用する。
 
 ```sh
-pnpm --filter @tailos/api run dev --port 8788
+pnpm --filter @tailos/api run dev --port 8787
 ```
 
 別のターミナルで Web を起動する。

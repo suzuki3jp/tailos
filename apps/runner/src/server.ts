@@ -19,6 +19,7 @@ import { claudeAgent } from "@/claude-agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
 import { runInGitWorkspace } from "@/git-workspace.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
+import { diagnosticErrorBody } from "@/diagnostic-operations.ts";
 
 type CurrentJob = { input: RunnerJob; state: RunnerStatus };
 
@@ -160,10 +161,14 @@ async function execute(
       errorCode: signal.aborted ? "deadline_exceeded" : errorCode,
       events,
     };
-    diagnostics.end(span, {
-      outcome: "failed",
-      ...(signal.aborted ? { reason: "deadline" as const } : {}),
-    });
+    diagnostics.end(
+      span,
+      {
+        outcome: "failed",
+        ...(signal.aborted ? { reason: "deadline" as const } : {}),
+      },
+      diagnosticErrorBody(error),
+    );
   } finally {
     // Do not expose a terminal status until its bounded final flush has had a
     // chance to finish: the controller destroys the container after that status.

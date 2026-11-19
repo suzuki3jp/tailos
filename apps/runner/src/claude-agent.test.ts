@@ -333,6 +333,7 @@ test("records commands, file changes, tools and replies without an exit code", a
     ["file_change", "succeeded"],
     ["tool", "succeeded"],
     ["reply", "succeeded"],
+    ["cleanup", "succeeded"],
   ]);
   expect(spans[2]).toMatchObject({
     body: JSON.stringify({ command: "pnpm test" }),

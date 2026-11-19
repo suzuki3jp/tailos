@@ -12,6 +12,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, test, vi, type TestContext } from "vitest";
 import { runInGitWorkspace } from "@/git-workspace.ts";
+import {
+  parseDiagnosticBatch,
+  type Diagnostics,
+} from "@tailos/core/diagnostics";
+import { RunnerDiagnostics } from "@/diagnostics.ts";
 
 async function repository(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "tailos-git-test-"));
@@ -54,6 +59,7 @@ async function repository(t: TestContext) {
       work: Parameters<typeof runInGitWorkspace>[2],
       stage: Parameters<typeof runInGitWorkspace>[3],
       mode?: "plan",
+      diagnostics?: Diagnostics,
     ) {
       return runInGitWorkspace(
         {
@@ -66,7 +72,7 @@ async function repository(t: TestContext) {
         work,
         stage,
         pathToFileURL(seed).href,
-        undefined,
+        diagnostics,
         mode,
       );
     },
@@ -75,6 +81,69 @@ async function repository(t: TestContext) {
 }
 
 const result = { reply: "Renamed README", headline: "docs: rename readme" };
+
+test("records the failing publication stage and completes workspace cleanup", async (t) => {
+  const repo = await repository(t);
+  const packets: string[] = [];
+  const diagnostics = new RunnerDiagnostics(
+    {
+      version: 1,
+      engine: "fake",
+      runId: crypto.randomUUID(),
+      prompt: "test",
+      deadlineAt: Date.now() + 60_000,
+      diagnostics: {
+        traceId: "run/test",
+        parentSpanId: "run/test",
+        producerId: crypto.randomUUID(),
+        url: "https://diag.example/diagnostics",
+        bearer: "a".repeat(64),
+        expiresAt: Date.now() + 60_000,
+      },
+    },
+    async (_url, init) => {
+      packets.push(String(init?.body));
+      return new Response(null, { status: 204 });
+    },
+  );
+  const failure = new Error("Publication checkpoint unavailable");
+  await expect(
+    repo.run(
+      async (cwd) => {
+        await writeFile(join(cwd, "README.md"), "updated\n");
+        return result;
+      },
+      async () => {
+        throw failure;
+      },
+      undefined,
+      diagnostics,
+    ),
+  ).rejects.toBe(failure);
+  await diagnostics.finish();
+  const batches = packets.map((packet) =>
+    parseDiagnosticBatch(JSON.parse(packet)),
+  );
+  const finishes = batches
+    .flatMap((batch) => batch.records)
+    .filter((record) => record.name === "span.finished");
+  expect(
+    finishes.map((record) => [
+      record.attributes.operation,
+      record.attributes.outcome,
+    ]),
+  ).toEqual([
+    ["checkout", "succeeded"],
+    ["workspace", "succeeded"],
+    ["publication", "failed"],
+    ["cleanup", "succeeded"],
+    ["cleanup", "succeeded"],
+  ]);
+  expect(JSON.parse(finishes[2]!.body!).errors[0].message).toBe(
+    failure.message,
+  );
+  expect(batches.at(-1)?.completed?.dropped).toBe(0);
+});
 
 test("stages changes without a package manifest, pushing, or storing credentials", async (t) => {
   const repo = await repository(t);

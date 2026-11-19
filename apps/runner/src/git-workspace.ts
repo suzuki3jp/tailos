@@ -14,6 +14,11 @@ import {
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { PublicationFailed, type AgentResult } from "@/agent.ts";
+import {
+  diagnosticErrorBody,
+  systemErrorDetails,
+  withDiagnosticSpan,
+} from "@/diagnostic-operations.ts";
 
 const exec = promisify(execFile);
 type Checkout = NonNullable<
@@ -40,7 +45,12 @@ export async function runInGitWorkspace(
   );
   const cwd = await mkdtemp(join(tmpdir(), "tailos-repo-")).catch(
     async (error) => {
-      await rm(metadata, { recursive: true, force: true });
+      await withDiagnosticSpan(
+        diagnostics,
+        "cleanup",
+        () => rm(metadata, { recursive: true, force: true }),
+        JSON.stringify({ target: "git_metadata" }),
+      );
       throw error;
     },
   );
@@ -92,13 +102,17 @@ export async function runInGitWorkspace(
           },
         )
       ).stdout;
-    } catch {
+    } catch (error) {
       // Git errors can carry transport headers or private repository data.
-      throw new Error("Repository operation failed");
+      throw Object.assign(
+        new Error(`Repository operation failed: git ${args[0]}`),
+        systemErrorDetails(error),
+      );
     }
   };
+  let activeSpan: string | undefined;
   try {
-    const checkoutSpan = diagnostics?.start(
+    activeSpan = diagnostics?.start(
       "checkout",
       JSON.stringify({
         repository: checkout.repository,
@@ -121,7 +135,8 @@ export async function runInGitWorkspace(
       true,
     );
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
-    if (checkoutSpan) diagnostics?.end(checkoutSpan);
+    if (activeSpan) diagnostics?.end(activeSpan);
+    activeSpan = undefined;
     const configPath = join(metadata, "config");
     const trustedConfig = await readFile(configPath);
     const { reply, headline, plan, sessionTitle } = await work(cwd);
@@ -131,7 +146,7 @@ export async function runInGitWorkspace(
       if (!plan) throw new Error("Missing plan result");
       return { reply, plan, ...title };
     }
-    const inspectSpan = diagnostics?.start("workspace");
+    activeSpan = diagnostics?.start("workspace");
     if (!(await readFile(configPath)).equals(trustedConfig))
       throw new Error("Git metadata configuration changed");
 
@@ -148,7 +163,8 @@ export async function runInGitWorkspace(
       tree,
     ]);
     if (!paths.length) {
-      if (inspectSpan) diagnostics?.end(inspectSpan, {}, "no_changes");
+      if (activeSpan) diagnostics?.end(activeSpan, {}, "no_changes");
+      activeSpan = undefined;
       return { reply, publication: { kind: "no_changes" }, ...title };
     }
     const validatedHeadline = v.safeParse(changeHeadline, headline);
@@ -186,9 +202,9 @@ export async function runInGitWorkspace(
     }
 
     signal.throwIfAborted();
-    if (inspectSpan)
+    if (activeSpan)
       diagnostics?.end(
-        inspectSpan,
+        activeSpan,
         {},
         JSON.stringify({
           additions: changes.additions.map((file) => file.path),
@@ -196,7 +212,7 @@ export async function runInGitWorkspace(
           tree,
         }),
       );
-    const publicationSpan = diagnostics?.start("publication");
+    activeSpan = diagnostics?.start("publication");
     await stage({
       branch: checkout.branch,
       baseSha: checkout.baseSha,
@@ -206,12 +222,36 @@ export async function runInGitWorkspace(
       changes,
       ...title,
     });
-    if (publicationSpan) diagnostics?.end(publicationSpan);
+    if (activeSpan) diagnostics?.end(activeSpan);
+    activeSpan = undefined;
     return { reply, publication: { kind: "checked" }, ...title };
+  } catch (error) {
+    if (activeSpan)
+      diagnostics?.end(
+        activeSpan,
+        { outcome: "failed" },
+        diagnosticErrorBody(error),
+      );
+    throw error;
   } finally {
-    await Promise.all([
-      rm(cwd, { recursive: true, force: true }),
-      rm(metadata, { recursive: true, force: true }),
-    ]);
+    const cleanup = [
+      withDiagnosticSpan(
+        diagnostics,
+        "cleanup",
+        () => rm(cwd, { recursive: true, force: true }),
+        JSON.stringify({ target: "workspace" }),
+      ),
+      withDiagnosticSpan(
+        diagnostics,
+        "cleanup",
+        () => rm(metadata, { recursive: true, force: true }),
+        JSON.stringify({ target: "git_metadata" }),
+      ),
+    ];
+    // Finish both cleanup spans before the server flushes final diagnostics.
+    await Promise.all(cleanup).catch(async (error: unknown) => {
+      await Promise.allSettled(cleanup);
+      throw error;
+    });
   }
 }

@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261119-routine-model-catalog-cache
 key: triggers.routine-model-catalog-cache
-status: proposed
+status: accepted
 date: "2026-11-19"
 areas: [triggers, agent, auth]
 keywords: [Routine, モデル候補, キャッシュ, コンテナ, 同時取得]
@@ -10,13 +10,14 @@ paths:
   - apps/api/src/infrastructure/cloudflare/credential-broker.ts
 symbols: [codexModels]
 supersedes: []
+decided_by: suzuki3jp
 ---
 
 # Routine のモデル候補取得を所有者・接続ごとにまとめる
 
 ## 決定
 
-提案：同じ所有者・接続のモデル候補取得を同時には一回にまとめ、成功した非空の一覧を取得完了から5分間キャッシュする。失敗はキャッシュしない。接続解除・変更時にはキャッシュを破棄し、接続が存在しなければキャッシュも返さない。
+同じ所有者・接続のモデル候補取得を同時には一回にまとめ、成功した非空の一覧を取得完了から5分間キャッシュする。失敗はキャッシュしない。接続解除・変更時にはキャッシュを破棄し、接続が存在しなければキャッシュも返さない。
 
 ## 理由
 

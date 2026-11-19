@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "@/bindings.ts";
 import type { ClaudeAccess, CodexAccess } from "@tailos/core/runner";
+import type { CodexModel } from "@/application/routines/routines.ts";
 import {
   CodexDeviceAuth,
   CodexDeviceError,
@@ -30,6 +31,7 @@ import * as v from "valibot";
 const pendingContext = "meguri:codex:default:pending:v1";
 const credentialContext = "meguri:codex:default:credentials:v1";
 const claudeContext = "tailos:claude:token:v1";
+const modelCatalogCacheMs = 5 * 60_000;
 
 const pendingSchema = v.strictObject({
   id: v.string(),
@@ -72,6 +74,15 @@ export class CredentialBroker
   extends DurableObject<Bindings>
   implements ClaudeConnectionControl
 {
+  private modelRequest?: {
+    connectionVersion: string;
+    result: Promise<CodexModel[] | null>;
+  };
+  private modelCache?: {
+    connectionVersion: string;
+    expiresAt: number;
+    models: CodexModel[];
+  };
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
     new CodexDeviceAuth();
 
@@ -152,6 +163,8 @@ export class CredentialBroker
         "claude",
       ]);
       await this.ctx.storage.deleteAlarm();
+      this.modelRequest = undefined;
+      this.modelCache = undefined;
     });
   }
 
@@ -177,43 +190,40 @@ export class CredentialBroker
     });
   }
 
-  async codexModels(): Promise<
-    import("@/application/routines/routines.ts").CodexModel[] | null
-  > {
+  async codexModels(): Promise<CodexModel[] | null> {
     const access = await this.issueAccess();
-    if (!access) return null;
-    const response = await fetch(
-      "https://chatgpt.com/backend-api/codex/models?client_version=0.166.0",
-      {
-        redirect: "manual",
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          Authorization: `Bearer ${access.accessToken}`,
-          "ChatGPT-Account-Id": access.accountId,
-          originator: "codex_cli_rs",
-        },
-      },
-    );
-    if (!response.ok) {
-      await response.body?.cancel();
+    if (!access) {
+      this.modelRequest = undefined;
+      this.modelCache = undefined;
       return null;
     }
-    const modelSchema = v.object({
-      slug: v.pipe(v.string(), v.minLength(1)),
-      supported_reasoning_levels: v.array(
-        v.object({ effort: v.pipe(v.string(), v.minLength(1)) }),
-      ),
-    });
-    const parsed = v.safeParse(
-      v.object({ models: v.array(modelSchema) }),
-      await response.json(),
-    );
-    return parsed.success
-      ? parsed.output.models.map((m) => ({
-          model: m.slug,
-          efforts: m.supported_reasoning_levels.map((e) => e.effort),
-        }))
-      : null;
+    if (
+      this.modelCache?.connectionVersion === access.connectionVersion &&
+      this.modelCache.expiresAt > Date.now()
+    )
+      return this.modelCache.models;
+    this.modelCache = undefined;
+    const runner = this.env.RUNNER;
+    if (!runner) return null;
+    if (this.modelRequest?.connectionVersion === access.connectionVersion)
+      return this.modelRequest.result;
+    const request = {
+      connectionVersion: access.connectionVersion,
+      result: runner.get(runner.newUniqueId()).codexModels(access),
+    };
+    this.modelRequest = request;
+    try {
+      const models = await request.result;
+      if (this.modelRequest === request && models?.length)
+        this.modelCache = {
+          connectionVersion: access.connectionVersion,
+          expiresAt: Date.now() + modelCatalogCacheMs,
+          models,
+        };
+      return models;
+    } finally {
+      if (this.modelRequest === request) this.modelRequest = undefined;
+    }
   }
 
   async issueClaudeAccess(): Promise<ClaudeAccess | null> {

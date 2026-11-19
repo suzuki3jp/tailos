@@ -88,6 +88,59 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 
+test.each(["success", "unavailable", "invalid", "transport"])(
+  "model catalog %s uses the private Runner endpoint and always destroys its container",
+  async (mode) => {
+    const access = {
+      accessToken: "private-access",
+      accountId: "account",
+      connectionVersion: crypto.randomUUID(),
+      accessVersion: crypto.randomUUID(),
+    };
+    const container = {
+      images: { runner: "runner-image" },
+      start: vi.fn(),
+      setInactivityTimeout: vi.fn(async () => {}),
+      destroy: vi.fn(async () => {}),
+      getTcpPort: () => ({
+        async fetch(url: string, init?: RequestInit) {
+          if (url.endsWith("/health"))
+            return Response.json({ status: "ok", service: "runner" });
+          expect(url).toBe("http://runner/codex/models");
+          expect(init?.method).toBe("POST");
+          expect(JSON.parse(String(init?.body))).toEqual({ access });
+          if (mode === "transport") throw new Error("Unavailable");
+          if (mode === "unavailable")
+            return new Response(null, { status: 503 });
+          return Response.json(
+            mode === "invalid"
+              ? [{ model: "m" }]
+              : [{ model: "m", efforts: ["high"], token: "private" }],
+          );
+        },
+      }),
+    };
+    const runner = new RunnerContainer(
+      { container } as unknown as ConstructorParameters<
+        typeof RunnerContainer
+      >[0],
+      {} as ConstructorParameters<typeof RunnerContainer>[1],
+    );
+    if (mode === "invalid" || mode === "transport")
+      await expect(runner.codexModels(access)).rejects.toThrow();
+    else
+      expect(await runner.codexModels(access)).toEqual(
+        mode === "success" ? [{ model: "m", efforts: ["high"] }] : null,
+      );
+    expect(container.start).toHaveBeenCalledWith({
+      image: "runner-image",
+      instance: "standard-3",
+      enableInternet: true,
+    });
+    expect(container.destroy).toHaveBeenCalledOnce();
+  },
+);
+
 test("a failed container cleanup preserves the runner health result", async (t) => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   t.onTestFinished(() => {

@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import {
   CheckedPublication,
+  CodexModels,
+  CodexModelsRequest,
   maxPublicationBytes,
   maxRunnerJobBytes,
   RunnerJob,
@@ -16,7 +18,7 @@ import {
   type AgentAdapter,
 } from "@/agent.ts";
 import { claudeAgent } from "@/claude-agent.ts";
-import { codexAgent } from "@/codex-agent.ts";
+import { codexAgent, codexModelCatalog } from "@/codex-agent.ts";
 import { runInGitWorkspace } from "@/git-workspace.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
 import { diagnosticErrorBody } from "@/diagnostic-operations.ts";
@@ -185,14 +187,42 @@ export function createRunnerServer(
     codex: codexAgent,
     claude: claudeAgent,
   },
+  modelCatalog = codexModelCatalog,
 ) {
   let current: CurrentJob | undefined;
+  let catalogActive = false;
   return createServer(async (request, response) => {
     const requestId = crypto.randomUUID();
     response.setHeader("X-Request-ID", requestId);
     try {
       if (request.method === "GET" && request.url === "/health") {
         json(response, 200, { status: "ok", service: "runner" });
+        return;
+      }
+      if (request.method === "POST" && request.url === "/codex/models") {
+        const parsed = v.safeParse(CodexModelsRequest, await readJson(request));
+        if (!parsed.success) {
+          json(response, 400, { error: "invalid_request" });
+          return;
+        }
+        if (current || catalogActive) {
+          json(response, 409, { error: "runner_already_assigned" });
+          return;
+        }
+        catalogActive = true;
+        const disconnected = new AbortController();
+        const abort = () => disconnected.abort();
+        response.once("close", abort);
+        try {
+          const models = await modelCatalog(
+            parsed.output.access,
+            AbortSignal.any([disconnected.signal, AbortSignal.timeout(15_000)]),
+          );
+          json(response, 200, v.parse(CodexModels, models));
+        } finally {
+          response.removeListener("close", abort);
+          catalogActive = false;
+        }
         return;
       }
       if (request.method === "POST" && request.url === "/job") {
@@ -202,6 +232,10 @@ export function createRunnerServer(
           parsed.output.deadlineAt > Date.now() + 30 * 60_000
         ) {
           json(response, 400, { error: "invalid_job" });
+          return;
+        }
+        if (catalogActive) {
+          json(response, 409, { error: "runner_already_assigned" });
           return;
         }
 

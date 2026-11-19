@@ -8,6 +8,7 @@ import type { Diagnostics } from "@tailos/core/diagnostics";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
 import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
+import { listCodexModels } from "@/codex-models.ts";
 import {
   diagnosticErrorBody,
   withDiagnosticSpan,
@@ -144,6 +145,38 @@ async function initialize(rpc: CodexRpc) {
   });
   rpc.notify("initialized");
 }
+
+export function createCodexModelCatalog(launch = launchCodex) {
+  return async (access: CodexAccess, signal: AbortSignal) => {
+    const directory = await mkdtemp(join(tmpdir(), "tailos-models-"));
+    let rpc: CodexRpc | undefined;
+    const abort = () => rpc?.close();
+    try {
+      signal.throwIfAborted();
+      rpc = new CodexRpc(launch(directory, directory));
+      signal.addEventListener("abort", abort, { once: true });
+      await initialize(rpc);
+      await rpc.call("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: access.accessToken,
+        chatgptAccountId: access.accountId,
+        chatgptPlanType: access.planType,
+      });
+      const models = await listCodexModels(rpc);
+      signal.throwIfAborted();
+      return models.map((m) => ({
+        model: m.model,
+        efforts: m.supportedReasoningEfforts.map((e) => e.reasoningEffort),
+      }));
+    } finally {
+      signal.removeEventListener("abort", abort);
+      rpc?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  };
+}
+
+export const codexModelCatalog = createCodexModelCatalog();
 
 async function runTurn(
   child: CodexProcess,
@@ -414,32 +447,7 @@ async function runTurn(
       ...loginParams(),
     });
     if (job.model || job.effort) {
-      const modelSchema = v.object({
-        model: v.string(),
-        isDefault: v.boolean(),
-        supportedReasoningEfforts: v.array(
-          v.object({
-            reasoningEffort: v.string(),
-          }),
-        ),
-      });
-      const models: v.InferOutput<typeof modelSchema>[] = [];
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      do {
-        const page = v.parse(
-          v.object({
-            data: v.array(modelSchema),
-            nextCursor: v.optional(v.nullable(v.string())),
-          }),
-          await rpc.call("model/list", cursor ? { cursor } : {}),
-        );
-        models.push(...page.data);
-        cursor = page.nextCursor ?? undefined;
-        if (cursor && seen.has(cursor))
-          throw new Error("Model catalog pagination failed");
-        if (cursor) seen.add(cursor);
-      } while (cursor);
+      const models = await listCodexModels(rpc);
       const selected = models.find((m) =>
         job.model ? m.model === job.model : m.isDefault,
       );

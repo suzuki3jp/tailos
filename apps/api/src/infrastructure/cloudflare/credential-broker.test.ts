@@ -9,11 +9,7 @@ import {
   convertV4MiniflareOptions,
 } from "miniflare";
 
-async function createBroker(
-  t: TestContext,
-  openAIStatus = 530,
-  catalog?: unknown,
-) {
+async function createBroker(t: TestContext, openAIStatus = 530) {
   const bundled = await build({
     stdin: {
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
@@ -21,6 +17,15 @@ async function createBroker(
         import { CodexDeviceAuth, ReauthenticationRequired } from "@/infrastructure/auth/codex-device.ts";
         import { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
         import { TransientDevicePollError } from "@/application/auth/device.ts";
+        import { DurableObject } from "cloudflare:workers";
+
+        export class TestRunner extends DurableObject {
+          async codexModels(access) {
+            if (access.accessToken !== "secret-access" || access.accountId !== "test-account" ||
+                "refreshToken" in access) throw new Error("Unexpected credentials");
+            return [{ model: "test-model", efforts: ["high"] }];
+          }
+        }
 
         export class TestBroker extends CredentialBroker {
           decision = "pending";
@@ -110,20 +115,6 @@ async function createBroker(
       script: bundled.outputFiles[0].text,
       compatibilityDate: "2026-10-06",
       outboundService(request) {
-        if (new URL(request.url).pathname === "/backend-api/codex/models") {
-          expect(new URL(request.url).searchParams.get("client_version")).toBe(
-            "0.166.0",
-          );
-          expect(request.headers.get("Authorization")).toBe(
-            "Bearer secret-access",
-          );
-          expect(request.headers.get("ChatGPT-Account-Id")).toBe(
-            "test-account",
-          );
-          return new MiniflareResponse(JSON.stringify(catalog), {
-            status: catalog ? 200 : 503,
-          });
-        }
         expect(request.url).toBe(
           "https://auth.openai.com/api/accounts/deviceauth/usercode",
         );
@@ -141,6 +132,7 @@ async function createBroker(
       },
       durableObjects: {
         TEST_BROKER: { className: "TestBroker", useSQLite: true },
+        RUNNER: { className: "TestRunner", useSQLite: true },
       },
     }),
   );
@@ -182,6 +174,18 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("tick", "pending")).toStrictEqual({ state: "expired" });
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
+});
+
+test("model catalog lookup uses the owner's connection through Runner RPC", async (t) => {
+  const rpc = await createBroker(t);
+  expect(await rpc("codexModels")).toBeNull();
+  await rpc("begin");
+  await rpc("tick", "approved");
+  expect(await rpc("codexModels")).toEqual([
+    { model: "test-model", efforts: ["high"] },
+  ]);
+  await rpc("disconnect");
+  expect(await rpc("codexModels")).toBeNull();
 });
 
 test.for([530, 302])(
@@ -279,24 +283,4 @@ test("stores a pasted Claude token encrypted and hands it out until disconnected
   expect(await rpc("claudeStatus")).toStrictEqual({ state: "disconnected" });
   expect(await rpc("issueClaudeAccess")).toBe(null);
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
-});
-
-test("model catalog lookup uses the owner's connection and returns only validated capability metadata", async (t) => {
-  const rpc = await createBroker(t, 530, {
-    models: [
-      {
-        slug: "test-model",
-        supported_reasoning_levels: [{ effort: "high" }],
-        token: "secret-not-public",
-      },
-    ],
-  });
-  expect(await rpc("codexModels")).toBeNull();
-  await rpc("begin");
-  await rpc("tick", "approved");
-  expect(await rpc("codexModels")).toEqual([
-    { model: "test-model", efforts: ["high"] },
-  ]);
-  await rpc("disconnect");
-  expect(await rpc("codexModels")).toBeNull();
 });

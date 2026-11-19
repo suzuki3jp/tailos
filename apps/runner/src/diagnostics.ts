@@ -265,11 +265,8 @@ export class RunnerDiagnostics implements Diagnostics {
         ),
       });
       await response.body?.cancel();
-      return response.status === 204
-        ? "accepted"
-        : response.status === 413
-          ? "limit"
-          : "retry";
+      if (response.status === 204) return "accepted";
+      return response.status === 413 ? "limit" : "retry";
     } catch {
       return "retry";
     }

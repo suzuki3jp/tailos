@@ -38,6 +38,33 @@ const completedSchema = v.object({
   turn: v.object({ status: v.string() }),
 });
 
+function diagnosticOperation(itemType: string) {
+  switch (itemType) {
+    case "commandExecution":
+      return "command";
+    case "fileChange":
+      return "file_change";
+    case "agentMessage":
+      return "reply";
+    case "mcpToolCall":
+    case "webSearch":
+      return "tool";
+    default:
+      return undefined;
+  }
+}
+
+function diagnosticOutcome(
+  item: { exitCode?: number | null; status?: string },
+  operation: NonNullable<ReturnType<typeof diagnosticOperation>>,
+) {
+  if (item.exitCode != null)
+    return item.exitCode === 0 ? "succeeded" : "failed";
+  if (item.status === "failed") return "failed";
+  if (operation === "reply" || item.status === "completed") return "succeeded";
+  return "unknown";
+}
+
 type LaunchCodex = (
   directory: string,
   workspace: string,
@@ -339,16 +366,7 @@ async function runTurn(
       const parsed = v.safeParse(diagnosticItemSchema, params);
       if (parsed.success && parsed.output.threadId === threadId) {
         const item = parsed.output.item;
-        const operation =
-          item.type === "commandExecution"
-            ? "command"
-            : item.type === "fileChange"
-              ? "file_change"
-              : item.type === "agentMessage"
-                ? "reply"
-                : item.type === "mcpToolCall" || item.type === "webSearch"
-                  ? "tool"
-                  : undefined;
+        const operation = diagnosticOperation(item.type);
         if (operation) {
           const id = item.id ?? "reply";
           let span = itemSpans.get(id);
@@ -366,16 +384,7 @@ async function runTurn(
             diagnostics.end(
               span,
               {
-                outcome:
-                  item.exitCode != null
-                    ? item.exitCode === 0
-                      ? "succeeded"
-                      : "failed"
-                    : item.status === "failed"
-                      ? "failed"
-                      : operation === "reply" || item.status === "completed"
-                        ? "succeeded"
-                        : "unknown",
+                outcome: diagnosticOutcome(item, operation),
                 ...(item.exitCode == null ? {} : { exitCode: item.exitCode }),
               },
               JSON.stringify({

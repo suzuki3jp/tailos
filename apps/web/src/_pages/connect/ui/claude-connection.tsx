@@ -35,20 +35,23 @@ export function ClaudeConnection() {
     if (!save.isPending && token.trim()) save.mutate();
   }
   const status = connection.data;
-  return (
-    <div className="surface space-y-4">
-      <h2 className="text-lg font-medium">Claude</h2>
-      {connection.isPending ? (
+  function renderConnection() {
+    if (connection.isPending)
+      return (
         <p role="status" className="text-muted-foreground">
           接続状態を確認しています。
         </p>
-      ) : !status || "error" in status ? (
+      );
+    if (!status || "error" in status)
+      return (
         <RequestState
           status={status?.error}
           missing="Claude 接続は現在利用できません。"
           retry={() => void connection.refetch()}
         />
-      ) : status.state === "connected" ? (
+      );
+    if (status.state === "connected")
+      return (
         <>
           <p>Claude のトークンを保存済みです。</p>
           <p className="text-sm text-muted-foreground">
@@ -81,39 +84,45 @@ export function ClaudeConnection() {
             </p>
           )}
         </>
-      ) : (
-        <form className="space-y-4" onSubmit={submit}>
-          <p className="text-sm text-muted-foreground">
-            手元で <code>claude setup-token</code>{" "}
-            を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
+      );
+    return (
+      <form className="space-y-4" onSubmit={submit}>
+        <p className="text-sm text-muted-foreground">
+          手元で <code>claude setup-token</code>{" "}
+          を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
+        </p>
+        <label className="block space-y-2 text-sm">
+          トークン
+          <input
+            required
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="sk-ant-oat01-…"
+            className="block w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono"
+          />
+        </label>
+        <button
+          type="submit"
+          className="action action-primary"
+          disabled={save.isPending || !token.trim()}
+        >
+          {save.isPending ? "保存しています…" : "トークンを保存"}
+        </button>
+        {save.isError && (
+          <p role="alert" className="text-danger">
+            {save.error.message}
           </p>
-          <label className="block space-y-2 text-sm">
-            トークン
-            <input
-              required
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="sk-ant-oat01-…"
-              className="block w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono"
-            />
-          </label>
-          <button
-            type="submit"
-            className="action action-primary"
-            disabled={save.isPending || !token.trim()}
-          >
-            {save.isPending ? "保存しています…" : "トークンを保存"}
-          </button>
-          {save.isError && (
-            <p role="alert" className="text-danger">
-              {save.error.message}
-            </p>
-          )}
-        </form>
-      )}
+        )}
+      </form>
+    );
+  }
+  return (
+    <div className="surface space-y-4">
+      <h2 className="text-lg font-medium">Claude</h2>
+      {renderConnection()}
     </div>
   );
 }

@@ -62,6 +62,14 @@ export class GitHubRequestError extends Error {
   }
 }
 
+function rateLimitDeadline(headers: Headers, now: number) {
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) return now + Number(retryAfter) * 1000;
+  if (headers.get("x-ratelimit-remaining") === "0")
+    return Number(headers.get("x-ratelimit-reset")) * 1000;
+  return NaN;
+}
+
 async function requestError(response: Response) {
   const details = v.safeParse(
     v.object({ message: v.optional(v.string()) }),
@@ -77,19 +85,12 @@ async function requestError(response: Response) {
     (response.status === 403 &&
       (retryAfter !== null || exhausted || secondary));
   const now = Date.now();
-  const deadline =
-    retryAfter !== null
-      ? now + Number(retryAfter) * 1000
-      : exhausted
-        ? Number(response.headers.get("x-ratelimit-reset")) * 1000
-        : NaN;
+  const deadline = rateLimitDeadline(response.headers, now);
   return new GitHubRequestError(
     response.status,
     rateLimited,
-    rateLimited
-      ? Number.isFinite(deadline) && deadline > now
-        ? deadline
-        : undefined
+    rateLimited && Number.isFinite(deadline) && deadline > now
+      ? deadline
       : undefined,
   );
 }
@@ -284,19 +285,19 @@ export class GitHubApp {
     try {
       return await this.writeIssueComment(target, marker, body, commentId);
     } catch (error) {
-      if (error instanceof GitHubRequestError)
+      if (error instanceof GitHubRequestError) {
+        const { status, retryAt } = error;
+        if (error.rateLimited)
+          throw new NotificationError("rate_limit", retryAt);
+        if ([401, 403, 404].includes(status))
+          throw new NotificationError("permission", retryAt);
+        const permanent =
+          status >= 400 && status < 500 && ![408, 409, 422].includes(status);
         throw new NotificationError(
-          error.rateLimited
-            ? "rate_limit"
-            : [401, 403, 404].includes(error.status)
-              ? "permission"
-              : error.status >= 400 &&
-                  error.status < 500 &&
-                  ![408, 409, 422].includes(error.status)
-                ? "permanent"
-                : "transient",
-          error.retryAt,
+          permanent ? "permanent" : "transient",
+          retryAt,
         );
+      }
       throw error;
     }
   }

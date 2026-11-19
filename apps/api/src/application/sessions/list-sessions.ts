@@ -34,8 +34,8 @@ export function sessionListInput(query: URLSearchParams) {
   const cursors = query.getAll("cursor");
   if (limits.length > 1 || cursors.length > 1) return null;
   const raw = limits[0];
-  const limit =
-    raw === undefined ? 50 : /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (raw !== undefined && !/^[0-9]+$/.test(raw)) return null;
+  const limit = raw === undefined ? 50 : Number(raw);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return null;
   let before: SessionPosition | undefined;
   if (cursors.length) {

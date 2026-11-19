@@ -116,17 +116,93 @@ function RoutineEditor({ projectId }: { projectId: string }) {
     event.preventDefault();
     if (!busy) save.mutate();
   }
-  return (
-    <section className="space-y-4 border-t border-rule pt-4">
-      <h3 className="text-lg font-medium">Routine</h3>
-      <p className="text-sm text-muted-foreground">
-        Issue にラベルが付くと実行します。一致する有効な Routine
-        はすべて起動し、複数の PR や通知が作られる場合があります。同じ
-        Routine・Issue の実行中の起動は、その Run にまとめられます。
-      </p>
-      {list.isPending ? (
-        <p role="status">Routine を読み込んでいます。</p>
-      ) : list.isError ? (
+  function renderRoutineHistory() {
+    if (history.isPending) return <p role="status">履歴を読み込んでいます。</p>;
+    if (history.isError)
+      return (
+        <RequestState
+          status={
+            history.error instanceof RoutineRequestError
+              ? history.error.status
+              : undefined
+          }
+          missing="Routine の履歴を取得できません。"
+          retry={() => void history.refetch()}
+        />
+      );
+    return (
+      <div className="space-y-3">
+        {history.data.changes.map((change) => (
+          <details className="rounded border border-rule p-3" key={change.id}>
+            <summary>
+              {new Date(change.createdAt).toLocaleString("ja-JP")} ·{" "}
+              {change.after?.name ?? change.before?.name}
+            </summary>
+            <p className="text-xs text-muted-foreground">
+              変更者 {change.actorId}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <h5>変更前</h5>
+                <Snapshot settings={change.before} />
+              </div>
+              <div>
+                <h5>変更後</h5>
+                <Snapshot settings={change.after} />
+              </div>
+            </div>
+          </details>
+        ))}
+        {before !== undefined && (
+          <button
+            className="action"
+            type="button"
+            onClick={() => setBefore(undefined)}
+          >
+            最新の履歴
+          </button>
+        )}
+        {history.data.nextCursor !== null && (
+          <button
+            className="action"
+            type="button"
+            onClick={() => setBefore(history.data.nextCursor ?? undefined)}
+          >
+            以前の履歴
+          </button>
+        )}
+      </div>
+    );
+  }
+  function renderModelCatalogStatus() {
+    if (modelCatalog.isFetching)
+      return (
+        <p role="status" className="text-sm">
+          モデル候補を読み込んでいます。
+        </p>
+      );
+    if (modelCatalog.isError)
+      return (
+        <div className="space-y-1 text-sm">
+          <p role="status">
+            モデル候補を取得できません。Codex の接続を確認してください。
+          </p>
+          <button
+            className="action"
+            type="button"
+            onClick={() => void modelCatalog.refetch()}
+          >
+            モデル候補を再取得
+          </button>
+        </div>
+      );
+    return null;
+  }
+  function renderRoutines() {
+    if (list.isPending)
+      return <p role="status">Routine を読み込んでいます。</p>;
+    if (list.isError)
+      return (
         <RequestState
           status={
             list.error instanceof RoutineRequestError
@@ -136,52 +212,63 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           missing="Routine を利用できません。"
           retry={() => void list.refetch()}
         />
-      ) : (
-        <ul className="space-y-3">
-          {list.data.routines.map((item) => (
-            <li className="rounded border border-rule p-3" key={item.id}>
-              <Snapshot settings={item} />
-              <div className="mt-2 flex gap-2">
-                <button
-                  className="action"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    const {
-                      id: _id,
-                      revision: _revision,
-                      projectId: _projectId,
-                      deletedAt: _deletedAt,
-                      ...value
-                    } = item;
-                    setEditing(item);
-                    setSettings(value);
-                    setActors(item.allowedActors.join(", "));
-                    save.reset();
-                  }}
-                >
-                  編集
-                </button>
-                <button
-                  className="action text-danger"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `「${item.name}」を削除しますか？受付済みの Run は続行し、履歴は残ります。`,
-                      )
+      );
+    return (
+      <ul className="space-y-3">
+        {list.data.routines.map((item) => (
+          <li className="rounded border border-rule p-3" key={item.id}>
+            <Snapshot settings={item} />
+            <div className="mt-2 flex gap-2">
+              <button
+                className="action"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const {
+                    id: _id,
+                    revision: _revision,
+                    projectId: _projectId,
+                    deletedAt: _deletedAt,
+                    ...value
+                  } = item;
+                  setEditing(item);
+                  setSettings(value);
+                  setActors(item.allowedActors.join(", "));
+                  save.reset();
+                }}
+              >
+                編集
+              </button>
+              <button
+                className="action text-danger"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `「${item.name}」を削除しますか？受付済みの Run は続行し、履歴は残ります。`,
                     )
-                      remove.mutate(item);
-                  }}
-                >
-                  削除
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+                  )
+                    remove.mutate(item);
+                }}
+              >
+                削除
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <section className="space-y-4 border-t border-rule pt-4">
+      <h3 className="text-lg font-medium">Routine</h3>
+      <p className="text-sm text-muted-foreground">
+        Issue にラベルが付くと実行します。一致する有効な Routine
+        はすべて起動し、複数の PR や通知が作られる場合があります。同じ
+        Routine・Issue の実行中の起動は、その Run にまとめられます。
+      </p>
+      {renderRoutines()}
       <button
         className="action"
         type="button"
@@ -301,24 +388,7 @@ function RoutineEditor({ projectId }: { projectId: string }) {
             ))}
           </select>
         </label>
-        {modelCatalog.isFetching ? (
-          <p role="status" className="text-sm">
-            モデル候補を読み込んでいます。
-          </p>
-        ) : modelCatalog.isError ? (
-          <div className="space-y-1 text-sm">
-            <p role="status">
-              モデル候補を取得できません。Codex の接続を確認してください。
-            </p>
-            <button
-              className="action"
-              type="button"
-              onClick={() => void modelCatalog.refetch()}
-            >
-              モデル候補を再取得
-            </button>
-          </div>
-        ) : null}
+        {renderModelCatalogStatus()}
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -361,64 +431,7 @@ function RoutineEditor({ projectId }: { projectId: string }) {
         <summary className="cursor-pointer font-medium">
           Routine の変更履歴
         </summary>
-        {history.isPending ? (
-          <p role="status">履歴を読み込んでいます。</p>
-        ) : history.isError ? (
-          <RequestState
-            status={
-              history.error instanceof RoutineRequestError
-                ? history.error.status
-                : undefined
-            }
-            missing="Routine の履歴を取得できません。"
-            retry={() => void history.refetch()}
-          />
-        ) : (
-          <div className="space-y-3">
-            {history.data.changes.map((change) => (
-              <details
-                className="rounded border border-rule p-3"
-                key={change.id}
-              >
-                <summary>
-                  {new Date(change.createdAt).toLocaleString("ja-JP")} ·{" "}
-                  {change.after?.name ?? change.before?.name}
-                </summary>
-                <p className="text-xs text-muted-foreground">
-                  変更者 {change.actorId}
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <h5>変更前</h5>
-                    <Snapshot settings={change.before} />
-                  </div>
-                  <div>
-                    <h5>変更後</h5>
-                    <Snapshot settings={change.after} />
-                  </div>
-                </div>
-              </details>
-            ))}
-            {before !== undefined && (
-              <button
-                className="action"
-                type="button"
-                onClick={() => setBefore(undefined)}
-              >
-                最新の履歴
-              </button>
-            )}
-            {history.data.nextCursor !== null && (
-              <button
-                className="action"
-                type="button"
-                onClick={() => setBefore(history.data.nextCursor ?? undefined)}
-              >
-                以前の履歴
-              </button>
-            )}
-          </div>
-        )}
+        {renderRoutineHistory()}
       </details>
     </section>
   );

@@ -27,6 +27,12 @@ export type ClaudeConnectionStatus =
       expiry: "valid" | "soon" | "passed";
     };
 
+function tokenExpiry(now: number, expiresAt: number) {
+  if (now >= expiresAt) return "passed";
+  if (now >= expiresAt - expiryNotice) return "soon";
+  return "valid";
+}
+
 export function claudeConnectionStatus(
   savedAt: number | undefined,
   now: number,
@@ -37,12 +43,7 @@ export function claudeConnectionStatus(
     state: "connected",
     savedAt,
     expiresAt,
-    expiry:
-      now >= expiresAt
-        ? "passed"
-        : now >= expiresAt - expiryNotice
-          ? "soon"
-          : "valid",
+    expiry: tokenExpiry(now, expiresAt),
   };
 }
 

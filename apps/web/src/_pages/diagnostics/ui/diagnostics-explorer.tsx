@@ -24,6 +24,28 @@ function DiagnosticBody({
       ? query.data.batch?.records.find((record) => record.eventId === eventId)
           ?.body
       : undefined;
+  function renderBody() {
+    if (query.isPending) return <p role="status">本文を読み込んでいます。</p>;
+    if (query.data && "error" in query.data && query.data.error === 410)
+      return (
+        <p className="text-muted-foreground">本文の保管期限が過ぎています。</p>
+      );
+    if (body !== undefined)
+      return (
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-anywhere text-sm">
+          {body}
+        </pre>
+      );
+    return (
+      <RequestState
+        missing="記録が見つかりません。"
+        status={
+          query.data && "error" in query.data ? query.data.error : undefined
+        }
+        retry={() => void query.refetch()}
+      />
+    );
+  }
   return (
     <div className="space-y-2">
       <button
@@ -34,26 +56,7 @@ function DiagnosticBody({
       >
         {open ? "本文を閉じる" : "本文を読む"}
       </button>
-      {open &&
-        (query.isPending ? (
-          <p role="status">本文を読み込んでいます。</p>
-        ) : query.data && "error" in query.data && query.data.error === 410 ? (
-          <p className="text-muted-foreground">
-            本文の保管期限が過ぎています。
-          </p>
-        ) : body !== undefined ? (
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-anywhere text-sm">
-            {body}
-          </pre>
-        ) : (
-          <RequestState
-            missing="記録が見つかりません。"
-            status={
-              query.data && "error" in query.data ? query.data.error : undefined
-            }
-            retry={() => void query.refetch()}
-          />
-        ))}
+      {open && renderBody()}
     </div>
   );
 }
@@ -100,6 +103,62 @@ export function DiagnosticsExplorer() {
     }
     return seen.size;
   };
+  function renderEvents() {
+    if (events.isError)
+      return (
+        <RequestState
+          missing="記録が見つかりません。"
+          status={Number(events.error.message)}
+          retry={() => void events.refetch()}
+        />
+      );
+    if (events.isPending) return <p role="status">履歴を読み込んでいます。</p>;
+    return (
+      <ol className="divide-y divide-rule">
+        {allEvents.map((event) => (
+          <li
+            key={event.eventId}
+            className="space-y-2 py-4"
+            style={{ paddingLeft: `${depth(event.spanId)}rem` }}
+          >
+            <div className="flex flex-wrap items-baseline gap-3">
+              <time className="font-mono text-xs text-muted-foreground">
+                {new Date(event.occurredAt).toISOString()}
+              </time>
+              <span className="font-medium">{event.name}</span>
+              <span className="text-sm text-signal">
+                {typeof event.attributes.operation === "string"
+                  ? event.attributes.operation
+                  : ""}{" "}
+                {typeof event.attributes.outcome === "string"
+                  ? event.attributes.outcome
+                  : ""}
+              </span>
+            </div>
+            {event.requestId && (
+              <p className="break-all font-mono text-xs text-muted-foreground">
+                request: {event.requestId}
+              </p>
+            )}
+            <details>
+              <summary className="cursor-pointer text-sm text-muted-foreground">
+                詳細
+              </summary>
+              <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere text-xs">
+                {JSON.stringify(event.attributes, null, 2)}
+              </pre>
+            </details>
+            {event.artifactId && (
+              <DiagnosticBody
+                artifactId={event.artifactId}
+                eventId={event.eventId}
+              />
+            )}
+          </li>
+        ))}
+      </ol>
+    );
+  }
   return (
     <section className="space-y-7">
       <header className="space-y-2">
@@ -192,59 +251,7 @@ export function DiagnosticsExplorer() {
                   </p>
                 )}
               </header>
-              {events.isError ? (
-                <RequestState
-                  missing="記録が見つかりません。"
-                  status={Number(events.error.message)}
-                  retry={() => void events.refetch()}
-                />
-              ) : events.isPending ? (
-                <p role="status">履歴を読み込んでいます。</p>
-              ) : (
-                <ol className="divide-y divide-rule">
-                  {allEvents.map((event) => (
-                    <li
-                      key={event.eventId}
-                      className="space-y-2 py-4"
-                      style={{ paddingLeft: `${depth(event.spanId)}rem` }}
-                    >
-                      <div className="flex flex-wrap items-baseline gap-3">
-                        <time className="font-mono text-xs text-muted-foreground">
-                          {new Date(event.occurredAt).toISOString()}
-                        </time>
-                        <span className="font-medium">{event.name}</span>
-                        <span className="text-sm text-signal">
-                          {typeof event.attributes.operation === "string"
-                            ? event.attributes.operation
-                            : ""}{" "}
-                          {typeof event.attributes.outcome === "string"
-                            ? event.attributes.outcome
-                            : ""}
-                        </span>
-                      </div>
-                      {event.requestId && (
-                        <p className="break-all font-mono text-xs text-muted-foreground">
-                          request: {event.requestId}
-                        </p>
-                      )}
-                      <details>
-                        <summary className="cursor-pointer text-sm text-muted-foreground">
-                          詳細
-                        </summary>
-                        <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere text-xs">
-                          {JSON.stringify(event.attributes, null, 2)}
-                        </pre>
-                      </details>
-                      {event.artifactId && (
-                        <DiagnosticBody
-                          artifactId={event.artifactId}
-                          eventId={event.eventId}
-                        />
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              )}
+              {renderEvents()}
               {events.hasNextPage && (
                 <button
                   type="button"

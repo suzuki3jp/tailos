@@ -84,6 +84,12 @@ async function stagePublication(
     throw new Error("Publication checkpoint unavailable");
 }
 
+function jobErrorCode(error: unknown) {
+  if (error instanceof AgentSandboxUnavailable) return "sandbox_unavailable";
+  if (error instanceof PublicationFailed) return error.code;
+  return "agent_failed";
+}
+
 async function execute(
   job: CurrentJob,
   agent: AgentAdapter,
@@ -152,15 +158,9 @@ async function execute(
     diagnostics.end(span, { outcome: "succeeded" }, result.reply);
   } catch (error) {
     events.push({ type: "job_failed", at: Date.now() });
-    const errorCode =
-      error instanceof AgentSandboxUnavailable
-        ? "sandbox_unavailable"
-        : error instanceof PublicationFailed
-          ? error.code
-          : "agent_failed";
     terminal = {
       status: "failed",
-      errorCode: signal.aborted ? "deadline_exceeded" : errorCode,
+      errorCode: signal.aborted ? "deadline_exceeded" : jobErrorCode(error),
       events,
     };
     diagnostics.end(

@@ -69,3 +69,4 @@
 | [PDR-20261118-routine-model-options](records/PDR-20261118-routine-model-options.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を選択式にする |
 | [PDR-20261119-routine-model-catalog-cache](records/PDR-20261119-routine-model-catalog-cache.md) | accepted | triggers.routine-model-catalog-cache | Routine のモデル候補取得を所有者・接続ごとにまとめる |
 | [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | accepted | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |
+| [PDR-20261119-runner-failure-diagnostics](records/PDR-20261119-runner-failure-diagnostics.md) | accepted | diagnostics.runner-failure-details | Runner の失敗段階と例外の詳細を diagnostics に記録する |

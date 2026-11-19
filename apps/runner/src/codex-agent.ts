@@ -10,6 +10,10 @@ import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import { listCodexModels } from "@/codex-models.ts";
 import {
+  diagnosticErrorBody,
+  withDiagnosticSpan,
+} from "@/diagnostic-operations.ts";
+import {
   createGitHubReader,
   githubTool,
   githubToolCallSchema,
@@ -123,7 +127,12 @@ export function createCodexAgent(
           diagnostics,
         );
       } finally {
-        await rm(root, { recursive: true, force: true });
+        await withDiagnosticSpan(
+          diagnostics,
+          "cleanup",
+          () => rm(root, { recursive: true, force: true }),
+          JSON.stringify({ target: "codex_environment" }),
+        );
       }
     },
   };
@@ -217,6 +226,7 @@ async function runTurn(
     }),
   );
   let agentSucceeded = false;
+  let agentError: unknown;
   const itemSpans = new Map<string, string>();
   const diagnosticItemSchema = v.object({
     threadId: v.string(),
@@ -521,11 +531,16 @@ async function runTurn(
     });
     agentSucceeded = true;
     return result;
+  } catch (error) {
+    agentError = error;
+    throw error;
   } finally {
     if (agentSpan)
-      diagnostics?.end(agentSpan, {
-        outcome: agentSucceeded ? "succeeded" : "failed",
-      });
+      diagnostics?.end(
+        agentSpan,
+        { outcome: agentSucceeded ? "succeeded" : "failed" },
+        agentSucceeded ? undefined : diagnosticErrorBody(agentError),
+      );
     signal.removeEventListener("abort", abort);
     rpc.close();
   }

@@ -1,6 +1,12 @@
 import type { RepositoryTarget } from "@tailos/core/runner";
 
 export type NotificationState = "processing" | "succeeded" | "failed";
+const notificationLabels = {
+  processing: "処理中",
+  succeeded: "完了",
+  failed: "失敗",
+} satisfies Record<NotificationState, string>;
+
 export type IssueNotification = {
   run_id: string;
   input_id?: number;
@@ -44,9 +50,7 @@ export function commentBody(
     return `${text}\n\n[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n${notificationMarker(n)}`;
   }
   const state = n.desired_state;
-  const alt = { processing: "処理中", succeeded: "完了", failed: "失敗" }[
-    state
-  ];
+  const alt = notificationLabels[state];
   const asset =
     state === "processing" ? "tailos-rolling-v1.gif" : `tailos-${state}-v1.png`;
   return `![Tailos が${alt}](${new URL(`/assets/${asset}`, origin)})\n\n[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n<!-- tailos:run:${n.run_id}:v1 -->`;
@@ -60,6 +64,20 @@ export type NotificationStore = {
     retryAt: number | null,
   ): Promise<void>;
 };
+
+function notificationRetryAt(
+  category: NotificationError["category"],
+  error: unknown,
+  attempts: number,
+): number | null {
+  if (category === "permission" || category === "permanent") return null;
+  if (error instanceof NotificationError && error.retryAt) return error.retryAt;
+  const initialDelay = category === "rate_limit" ? 60_000 : 1000;
+  return (
+    Date.now() + Math.min(3_600_000, initialDelay * 2 ** Math.min(attempts, 12))
+  );
+}
+
 export async function sendIssueNotifications(
   store: NotificationStore,
   origin: string,
@@ -95,19 +113,7 @@ export async function sendIssueNotifications(
         error instanceof NotificationError ? error.category : "transient";
       const category =
         failure === "transient" && n.attempts >= 20 ? "permanent" : failure;
-      let retryAt = null;
-      if (category !== "permission" && category !== "permanent") {
-        const explicitRetryAt =
-          error instanceof NotificationError ? error.retryAt : undefined;
-        retryAt =
-          explicitRetryAt ||
-          Date.now() +
-            Math.min(
-              3_600_000,
-              (category === "rate_limit" ? 60_000 : 1000) *
-                2 ** Math.min(n.attempts, 12),
-            );
-      }
+      const retryAt = notificationRetryAt(category, error, n.attempts);
       await store.fail(n, category, retryAt);
       // oxlint-disable-next-line no-console -- never include provider errors or credentials
       console.warn("Issue notification", {

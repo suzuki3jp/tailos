@@ -171,6 +171,15 @@ async function dispatchNewRun(
     .catch(() => ({ status: "running" as const }));
 }
 
+function completionResult(
+  outcome: Extract<RunnerStatus | RunOutcome, { status: "succeeded" }>,
+) {
+  if (outcome.plan) return { kind: "plan", ...outcome.plan };
+  if ("publicationResult" in outcome && outcome.publicationResult)
+    return outcome.publicationResult;
+  return { kind: "completed" };
+}
+
 async function storeOutcome(
   store: RunStore,
   runId: string,
@@ -239,14 +248,10 @@ async function storeOutcome(
     return failRun(store, runId, outcome.errorCode, finishedAt, result);
   }
 
-  const publicationResult =
-    "publicationResult" in outcome ? outcome.publicationResult : undefined;
   const storedResult = JSON.stringify({
     version: 1,
     ...(outcome.sessionTitle && { sessionTitle: outcome.sessionTitle }),
-    ...(outcome.plan
-      ? { kind: "plan", ...outcome.plan }
-      : (publicationResult ?? { kind: "completed" })),
+    ...completionResult(outcome),
   });
   try {
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))

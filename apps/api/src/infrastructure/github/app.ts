@@ -62,6 +62,14 @@ export class GitHubRequestError extends Error {
   }
 }
 
+function rateLimitDeadline(headers: Headers, now: number) {
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) return now + Number(retryAfter) * 1000;
+  if (headers.get("x-ratelimit-remaining") === "0")
+    return Number(headers.get("x-ratelimit-reset")) * 1000;
+  return NaN;
+}
+
 async function requestError(response: Response) {
   const details = v.safeParse(
     v.object({ message: v.optional(v.string()) }),
@@ -77,10 +85,7 @@ async function requestError(response: Response) {
     (response.status === 403 &&
       (retryAfter !== null || exhausted || secondary));
   const now = Date.now();
-  let deadline = NaN;
-  if (retryAfter !== null) deadline = now + Number(retryAfter) * 1000;
-  else if (exhausted)
-    deadline = Number(response.headers.get("x-ratelimit-reset")) * 1000;
+  const deadline = rateLimitDeadline(response.headers, now);
   return new GitHubRequestError(
     response.status,
     rateLimited,

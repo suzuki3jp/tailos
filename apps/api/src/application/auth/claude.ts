@@ -27,19 +27,23 @@ export type ClaudeConnectionStatus =
       expiry: "valid" | "soon" | "passed";
     };
 
+function tokenExpiry(now: number, expiresAt: number) {
+  if (now >= expiresAt) return "passed";
+  if (now >= expiresAt - expiryNotice) return "soon";
+  return "valid";
+}
+
 export function claudeConnectionStatus(
   savedAt: number | undefined,
   now: number,
 ): ClaudeConnectionStatus {
   if (savedAt === undefined) return { state: "disconnected" };
   const expiresAt = savedAt + tokenLifetime;
-  const nearingExpiry = now >= expiresAt - expiryNotice;
-  const upcomingExpiry = nearingExpiry ? "soon" : "valid";
   return {
     state: "connected",
     savedAt,
     expiresAt,
-    expiry: now >= expiresAt ? "passed" : upcomingExpiry,
+    expiry: tokenExpiry(now, expiresAt),
   };
 }
 

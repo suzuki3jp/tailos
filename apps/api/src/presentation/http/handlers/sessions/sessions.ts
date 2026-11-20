@@ -9,6 +9,7 @@ import type {
 } from "@/presentation/http/middlewares/operator.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { validator } from "hono/validator";
 import * as v from "valibot";
 import {
   listSessions,
@@ -38,7 +39,10 @@ const sessionInput = v.strictObject({
 });
 
 export function createSessionRoutes<Detail>(
-  store: (env: Bindings) => SessionStore<Detail> & SessionListStore,
+  store: (env: Bindings) => SessionStore<Detail> &
+    SessionListStore & {
+      projectName(id: string, ownerId: string): Promise<string | null>;
+    },
   operatorAuth: ReturnType<typeof createOperatorAuth>,
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
@@ -82,5 +86,40 @@ export function createSessionRoutes<Detail>(
         : c.json({ error: "not_found" as const }, 404);
     });
 
-  return { sessionRoutes, userSessionRoutes };
+  const projectSessionRoutes = new Hono<OperatorEnv>()
+    .get(
+      "/",
+      operatorAuth,
+      validator("query", (query: { limit?: string; cursor?: string }) => query),
+      async (c) => {
+        // Preserve repeated keys so the shared parser can reject them.
+        const input = sessionListInput(new URL(c.req.url).searchParams);
+        const projectId = c.req.param("projectId");
+        if (!input || !projectId)
+          return c.json({ error: "invalid_input" as const }, 400);
+        return c.json(
+          await listSessions(
+            store(c.env),
+            c.var.operatorUserId,
+            input,
+            projectId,
+          ),
+        );
+      },
+    )
+    .get("/:id", operatorAuth, async (c) => {
+      const projectId = c.req.param("projectId");
+      if (!projectId) return c.json({ error: "not_found" as const }, 404);
+      const owner = c.var.operatorUserId;
+      const sessions = store(c.env);
+      const [detail, projectName] = await Promise.all([
+        sessions.read(c.req.param("id"), owner, projectId),
+        sessions.projectName(projectId, owner),
+      ]);
+      return detail
+        ? c.json({ detail, projectName })
+        : c.json({ error: "not_found" as const }, 404);
+    });
+
+  return { sessionRoutes, userSessionRoutes, projectSessionRoutes };
 }

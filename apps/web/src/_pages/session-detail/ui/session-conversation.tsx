@@ -1,0 +1,69 @@
+import { Fragment } from "react";
+import type { ProjectSession } from "../api/queries";
+import { RunActivity } from "./run-activity";
+
+const authorLabels = {
+  agent: "Agent",
+  automation: "GitHub",
+  user: "You",
+} satisfies Record<ProjectSession["messages"][number]["authorKind"], string>;
+
+export function SessionConversation({ detail }: { detail: ProjectSession }) {
+  const byReply = new Map(detail.runs.map((run) => [run.id, run]));
+  const replied = new Set(
+    detail.messages
+      .filter((message) => message.authorKind === "agent")
+      .map((message) => message.runId),
+  );
+  const byStart = new Map(
+    detail.runs
+      .filter((run) => !replied.has(run.id))
+      .map((run) => [run.startMessageId, run]),
+  );
+
+  return (
+    <section
+      aria-label="Conversation"
+      className="mx-auto w-full max-w-172 px-3"
+    >
+      <h1 className="sr-only">{detail.session.title}</h1>
+      {detail.messages.length === 0 && (
+        <p className="px-4.5 py-6 text-muted-foreground">No messages yet.</p>
+      )}
+      <ol>
+        {detail.messages.map((message) => {
+          const agent = message.authorKind === "agent";
+          const replyRun =
+            agent && message.runId ? byReply.get(message.runId) : undefined;
+          const pendingRun = byStart.get(message.id);
+          return (
+            <Fragment key={message.id}>
+              <li className={agent ? "py-6" : "flex justify-end py-6"}>
+                <div
+                  className={
+                    agent
+                      ? "space-y-3 p-4.5"
+                      : "max-w-[90%] rounded-[18px] bg-message p-4.5"
+                  }
+                >
+                  <span className="sr-only">
+                    {authorLabels[message.authorKind]}
+                  </span>
+                  {replyRun && <RunActivity run={replyRun} />}
+                  <p className="whitespace-pre-wrap wrap-anywhere leading-relaxed">
+                    {message.body}
+                  </p>
+                </div>
+              </li>
+              {pendingRun && (
+                <li className="px-4.5 py-6">
+                  <RunActivity run={pendingRun} />
+                </li>
+              )}
+            </Fragment>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}

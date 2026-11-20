@@ -53,10 +53,8 @@ import { createProjectRoutes } from "@/presentation/http/handlers/projects/proje
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
-const { sessionRoutes, userSessionRoutes } = createSessionRoutes(
-  (env) => d1Sessions(env.DB),
-  operatorAuth,
-);
+const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
+  createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth);
 
 const triggerRoutes = createTriggerRoutes(
   (env) => runStarter(env.RUNNER),
@@ -122,6 +120,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     }),
   )
   .route("/connect", connectRoutes)
+  .route("/projects/:projectId/sessions", projectSessionRoutes)
   .route(
     "/projects",
     createProjectRoutes(

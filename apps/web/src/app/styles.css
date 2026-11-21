@@ -35,8 +35,11 @@
   }
 }
 
-/* Keep keyboard focus visible even on primitives with outline-none utilities. */
-:focus-visible {
+/* Draw the focus outline around the group when its input control is focused. */
+:focus-visible:where(:not([data-slot="input-group-control"])),
+[data-slot="input-group"]:has(
+  > [data-slot="input-group-control"]:focus-visible
+) {
   outline: 2px solid var(--primary);
   outline-offset: 4px;
 }

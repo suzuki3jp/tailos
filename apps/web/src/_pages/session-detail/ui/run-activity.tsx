@@ -28,6 +28,7 @@ export function RunActivity({
   return (
     <div className="space-y-2">
       <Disclosure
+        inlineChevron
         open={open}
         onOpenChange={setOpen}
         label={

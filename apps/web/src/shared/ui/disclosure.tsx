@@ -28,7 +28,7 @@ export function Disclosure({
       <summary
         className={cn(
           "flex cursor-pointer list-none items-center rounded-sm text-control marker:hidden [&::-webkit-details-marker]:hidden",
-          inlineChevron ? "gap-[6px]" : "gap-2",
+          inlineChevron ? "gap-1.5" : "gap-2",
         )}
       >
         <span className={cn("min-w-0", !inlineChevron && "flex-1")}>

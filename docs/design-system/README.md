@@ -49,6 +49,23 @@ Run `pnpm --filter @tailos/web ui:add <component>` using the pinned workspace CL
 
 The icon library is Tabler Icons (`iconLibrary: "tabler"`). Import individual icons from `@tabler/icons-react`; do not add Lucide. Use `currentColor` and explicit sizes, and hide decorative icons from assistive technology. Accessible names belong on the control. See [the icon decision](../pdr/records/PDR-20261116-web-icons.md) and [Tabler's React documentation](https://docs.tabler.io/icons/libraries/react).
 
+## Session execution timeline
+
+The session page places progress and tool activity in the conversation, immediately before the Run's final answer. An active Run starts expanded; a completed Run can be expanded from its recorded `Worked for …` summary. The final answer remains outside the history. No fabricated completion percentage or private reasoning is shown.
+
+| Element | Appearance and behavior |
+| --- | --- |
+| Progress message | Plain `text-control`, relaxed line height, preserved line breaks. Completed and inspected messages arrive as a unit. No speech bubble or duplicate final answer. |
+| Activity Item | `bg-card`, `border-border`, `rounded-lg`, 12px horizontal padding and 10px vertical padding. Command names use `font-mono`; other labels use the body face. Long labels wrap on narrow screens. |
+| State | 16px Tabler mark with a text label. `muted-foreground` for normal states, `destructive` for failure. Running marks animate only when reduced motion is not requested. A finished Run's unfinished Item is shown as result unknown. |
+| Disclosure | Shared `shared/ui/disclosure` uses native `details` / `summary`, keyboard behavior and the existing focus outline. The chevron rotates on open; no custom keyboard handling or new color is introduced. |
+| Output | Loaded only on expansion. `bg-muted`, `rounded-md`, `font-mono`, `text-control-xs`, 12px padding, bounded scrolling. Exit code and measured duration appear with the Item. Missing, expired and failed requests have distinct text; request failures offer Retry. |
+| Connection | A small separate status distinguishes live/reconnecting/authentication from Agent execution. Saved content stays visible while reconnecting. |
+
+The page hydrates the initial timeline alongside Session and list data. WebSocket attachment does not block rendering. History is paginated, output bodies are excluded from the initial payload, and updates change the affected Item rather than refetching the whole conversation. Auto-follow applies while the reader is at the bottom; otherwise a New activity action brings them back. The session composer continues to have submission disabled.
+
+The first implementation streams message and tool lifecycle events. Command output becomes available on completion; character-by-character output and Agent control are later stages. See the [session display decision](../pdr/records/PDR-20261121-project-session-timeline.md), [timeline contract](../pdr/records/PDR-20261121-session-execution-timeline.md) and [transport](../pdr/records/PDR-20261121-session-realtime-transport.md).
+
 ## Assets
 
 Project-specific Figma imagery and decorations are downloaded under `apps/web/public/assets/design-system`. Temporary Figma asset URLs are not runtime sources. Generic icons are rendered with Tabler components instead of duplicated SVG exports.

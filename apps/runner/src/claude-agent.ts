@@ -258,7 +258,12 @@ function recordMessage(
       const span = diagnostics.start("reply", undefined, agentSpan);
       diagnostics.end(
         span,
-        { outcome: "succeeded" },
+        {
+          outcome: "succeeded",
+          messagePhase: content.some((item) => item.type === "tool_use")
+            ? "commentary"
+            : "unknown",
+        },
         JSON.stringify({ text: block.text }),
       );
     } else if (

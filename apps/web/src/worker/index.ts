@@ -18,7 +18,7 @@ export default {
       "style-src-attr 'unsafe-inline'",
       "img-src 'self'",
       "font-src 'self'",
-      `connect-src 'self' ${apiOrigin}${import.meta.env.DEV ? " ws: wss:" : ""}`,
+      `connect-src 'self' ${apiOrigin} ${apiOrigin.replace(/^http/, "ws")}${import.meta.env.DEV ? " ws: wss:" : ""}`,
       `form-action 'self' ${apiOrigin} https://github.com`,
       "base-uri 'none'",
       "frame-ancestors 'none'",

@@ -3,6 +3,10 @@ import * as v from "valibot";
 import { sessionTitleStatement } from "@/infrastructure/d1/session-title.ts";
 import type { D1Database } from "@cloudflare/workers-types";
 import {
+  timelineMarker,
+  timelineNotification,
+} from "@/infrastructure/d1/timeline.ts";
+import {
   advanceRun as execute,
   type RunInput,
   type RunStatus,
@@ -23,6 +27,15 @@ function d1RunStore(db: D1Database): RunStore {
       const results = await db.batch<RunInput>([
         ...ensureRunTrace(db, runId, now),
         executionTransition(db, runId, "queued", "running", now),
+        timelineMarker(
+          db,
+          runId,
+          `run/${runId}/running`,
+          "session",
+          now,
+          "queued",
+        ),
+        timelineNotification(db, runId),
         // Use the Worker timestamp consistently with creation and completion.
         db
           .prepare(`UPDATE sessions SET updated_at = max(updated_at, ?)
@@ -85,6 +98,15 @@ function d1RunStore(db: D1Database): RunStore {
           null,
           result,
         ),
+        timelineMarker(
+          db,
+          runId,
+          `run/${runId}/succeeded`,
+          "session",
+          finishedAt,
+          "running",
+        ),
+        timelineNotification(db, runId),
         db
           .prepare(
             `INSERT INTO session_messages (id, session_id, seq, author_kind, body, run_id, created_at)
@@ -117,7 +139,7 @@ function d1RunStore(db: D1Database): RunStore {
     ) {
       // issue_notification_terminal also advances failed notifications here,
       // including timeouts and other failure paths that use this store.
-      const [, failed] = await db.batch<{ status: "failed" }>([
+      const results = await db.batch<{ status: "failed" }>([
         executionTransition(
           db,
           runId,
@@ -127,13 +149,22 @@ function d1RunStore(db: D1Database): RunStore {
           code,
           result,
         ),
+        timelineMarker(
+          db,
+          runId,
+          `run/${runId}/failed`,
+          "session",
+          finishedAt,
+          "running",
+        ),
+        timelineNotification(db, runId),
         db
           .prepare(
             "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
           )
           .bind(code, finishedAt, result, runId),
       ]);
-      return failed?.results[0]?.status;
+      return results.at(-1)?.results[0]?.status;
     },
   };
 }

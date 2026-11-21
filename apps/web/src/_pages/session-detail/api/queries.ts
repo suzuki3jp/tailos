@@ -58,10 +58,9 @@ export function projectSessionQueryOptions(
       if (!response.ok) throw new SessionRequestError(response.status);
       return response.json();
     },
-    refetchInterval: (query) =>
-      query.state.data && query.state.data.detail.runs.some(isActiveRun)
-        ? 5000
-        : false,
+    // Business-state transitions arrive through the Session stream. Reconnect
+    // and focus still reconcile via the HTTP snapshot.
+    refetchInterval: false,
   });
 }
 

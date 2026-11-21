@@ -6,6 +6,7 @@ export async function createTestBindings(
   t: TestContext,
   options: {
     script?: string;
+    durableObjects?: Record<string, { className: string; useSQLite: boolean }>;
     bindings?: Record<string, string>;
     migrationsThrough?: string;
     beforeMigration?: (
@@ -23,6 +24,7 @@ export async function createTestBindings(
       modules: true,
       script:
         options.script ?? "export default { fetch: () => new Response(null) }",
+      durableObjects: options.durableObjects,
       bindings: options.bindings,
       compatibilityDate: "2026-10-06",
       compatibilityFlags: ["nodejs_compat"],

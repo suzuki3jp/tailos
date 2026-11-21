@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import type { TimelineSnapshot } from "@tailos/core/timeline";
 import type { ProjectSession } from "../api/queries";
 import { RunActivity } from "./run-activity";
 
@@ -8,7 +9,15 @@ const authorLabels = {
   user: "You",
 } satisfies Record<ProjectSession["messages"][number]["authorKind"], string>;
 
-export function SessionConversation({ detail }: { detail: ProjectSession }) {
+export function SessionConversation({
+  detail,
+  timeline,
+  projectId,
+}: {
+  detail: ProjectSession;
+  timeline?: TimelineSnapshot;
+  projectId?: string;
+}) {
   const byReply = new Map(detail.runs.map((run) => [run.id, run]));
   const replied = new Set(
     detail.messages
@@ -49,7 +58,19 @@ export function SessionConversation({ detail }: { detail: ProjectSession }) {
                   <span className="sr-only">
                     {authorLabels[message.authorKind]}
                   </span>
-                  {replyRun && <RunActivity run={replyRun} />}
+                  {replyRun && (
+                    <RunActivity
+                      run={replyRun}
+                      items={timeline?.items.filter(
+                        (item) => item.runId === replyRun.id,
+                      )}
+                      capture={timeline?.captures.find(
+                        (capture) => capture.runId === replyRun.id,
+                      )}
+                      sessionId={detail.session.id}
+                      projectId={projectId}
+                    />
+                  )}
                   <p className="whitespace-pre-wrap wrap-anywhere leading-relaxed">
                     {message.body}
                   </p>
@@ -57,7 +78,17 @@ export function SessionConversation({ detail }: { detail: ProjectSession }) {
               </li>
               {pendingRun && (
                 <li className="px-4.5 py-6">
-                  <RunActivity run={pendingRun} />
+                  <RunActivity
+                    run={pendingRun}
+                    items={timeline?.items.filter(
+                      (item) => item.runId === pendingRun.id,
+                    )}
+                    capture={timeline?.captures.find(
+                      (capture) => capture.runId === pendingRun.id,
+                    )}
+                    sessionId={detail.session.id}
+                    projectId={projectId}
+                  />
                 </li>
               )}
             </Fragment>

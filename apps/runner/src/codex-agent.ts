@@ -260,6 +260,7 @@ async function runTurn(
     item: v.object({
       id: v.optional(v.string()),
       type: v.string(),
+      phase: v.optional(v.nullable(v.string())),
       command: v.optional(v.string()),
       cwd: v.optional(v.string()),
       aggregatedOutput: v.optional(v.nullable(v.string())),
@@ -373,10 +374,18 @@ async function runTurn(
           if (!span && itemSpans.size < 1000) {
             span = diagnostics.start(
               operation,
-              item.command === undefined
-                ? undefined
-                : JSON.stringify({ command: item.command, cwd: item.cwd }),
+              JSON.stringify({
+                command: item.command,
+                cwd: item.cwd,
+                tool: item.tool,
+                server: item.server,
+                arguments: item.arguments,
+                query: item.query,
+              }),
               agentSpan,
+              {
+                ...(item.type === "webSearch" && { toolKind: "web" as const }),
+              },
             );
             itemSpans.set(id, span);
           }
@@ -385,6 +394,12 @@ async function runTurn(
               span,
               {
                 outcome: diagnosticOutcome(item, operation),
+                ...(operation === "reply" && {
+                  messagePhase:
+                    item.phase === "commentary"
+                      ? ("commentary" as const)
+                      : ("unknown" as const),
+                }),
                 ...(item.exitCode == null ? {} : { exitCode: item.exitCode }),
               },
               JSON.stringify({

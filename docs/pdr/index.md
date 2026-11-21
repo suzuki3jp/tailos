@@ -71,6 +71,9 @@
 | [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | accepted | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |
 | [PDR-20261119-runner-failure-diagnostics](records/PDR-20261119-runner-failure-diagnostics.md) | accepted | diagnostics.runner-failure-details | Runner の失敗段階と例外の詳細を diagnostics に記録する |
 | [PDR-20261121-project-session-detail](records/PDR-20261121-project-session-detail.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と Agent の実行ログを読む |
-| [PDR-20261121-project-session-preview](records/PDR-20261121-project-session-preview.md) | accepted | web.project.session-detail | Project のセッション画面で保存済みの会話と実行時間を表示する |
+| [PDR-20261121-project-session-preview](records/PDR-20261121-project-session-preview.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と実行時間を表示する |
+| [PDR-20261121-project-session-timeline](records/PDR-20261121-project-session-timeline.md) | accepted | web.project.session-detail | 会話内の実行タイムラインと展開できる履歴をデザインシステムに沿って表示する |
+| [PDR-20261121-session-execution-timeline](records/PDR-20261121-session-execution-timeline.md) | accepted | sessions.execution-timeline | セッション向けの実行タイムラインを保存し実行中も配信する |
 | [PDR-20261121-session-list-resize](records/PDR-20261121-session-list-resize.md) | superseded | web.project.session-list-resize | セッション一覧とチャットの境界を動かして幅を調整する |
 | [PDR-20261121-session-list-width-persistence](records/PDR-20261121-session-list-width-persistence.md) | accepted | web.project.session-list-resize | セッション一覧の調整済みの幅を保存する |
+| [PDR-20261121-session-realtime-transport](records/PDR-20261121-session-realtime-transport.md) | accepted | sessions.realtime-transport | Session 単位の WebSocket 配信で履歴の後から更新を受け取る |

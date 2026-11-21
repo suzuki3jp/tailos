@@ -12,9 +12,16 @@ vi.mock("next/link", () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
-test("renders session data from SSR with escaped messages and an unpressed runtime control", async () => {
+test("renders prefetched session and execution history without waiting for the live connection", async () => {
   const http = vi.fn<typeof fetch>(async (input) => {
     const path = new URL(String(input)).pathname;
+    if (path.endsWith("/timeline"))
+      return Response.json({
+        items: [],
+        captures: [],
+        cursor: 0,
+        before: null,
+      });
     if (path === "/v1/projects/project/sessions")
       return Response.json({
         items: [{ id: "session", title: "Sample session" }],
@@ -24,7 +31,7 @@ test("renders session data from SSR with escaped messages and an unpressed runti
       return Response.json({
         projectName: "Sample project",
         detail: {
-          session: { title: "Sample session" },
+          session: { id: "session", title: "Sample session" },
           messages: [
             { id: "prompt", authorKind: "user", body: "**Prompt**" },
             {
@@ -44,6 +51,7 @@ test("renders session data from SSR with escaped messages and an unpressed runti
               errorCode: null,
             },
           ],
+          timeline: { items: [], captures: [], cursor: 0, before: null },
         },
       });
     throw new Error(`Unexpected request to ${path}`);
@@ -63,6 +71,7 @@ test("renders session data from SSR with escaped messages and an unpressed runti
   expect(html).toContain("**Prompt**");
   expect(html).toContain("&lt;b&gt;Reply&lt;/b&gt;");
   expect(html).toContain("Worked for 12m 32s");
-  expect(html).toContain('aria-pressed="false"');
+  expect(html).toContain("<summary");
+  expect(html).not.toContain("Execution history could not be loaded.");
   expect(http).toHaveBeenCalledTimes(2);
 });

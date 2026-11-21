@@ -54,6 +54,7 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   expect(directives.get("connect-src")).toEqual([
     "'self'",
     "https://api.tailos.example",
+    "wss://api.tailos.example",
   ]);
   expect(directives.get("form-action")).toEqual([
     "'self'",

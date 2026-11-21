@@ -54,12 +54,19 @@ export function SessionPanels({
   const resizeHandle = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    if (showSessions && window.matchMedia(desktopQuery).matches) {
-      const width = readSessionListWidth();
-      if (width !== undefined) {
-        sessionListPanel.current?.resize(width);
-      }
+    if (!showSessions || !window.matchMedia(desktopQuery).matches) {
+      return;
     }
+    const width = readSessionListWidth();
+    if (width === undefined) {
+      return;
+    }
+
+    // Wait for a newly mounted panel to register its constraints with the group.
+    const frame = requestAnimationFrame(() => {
+      sessionListPanel.current?.resize(width);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [sessionListPanel, showSessions]);
 
   return (

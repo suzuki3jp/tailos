@@ -4,7 +4,7 @@ id: PDR-20261121-session-list-width-persistence
 key: web.project.session-list-resize
 status: accepted
 date: "2026-11-21"
-decided_by: requester
+decided_by: suzuki3jp
 areas: [web, sessions]
 keywords: [セッション一覧, リサイズ, 幅, 永続化]
 paths:

@@ -3,6 +3,12 @@ export type AgentModel = {
   readonly efforts: readonly string[];
 };
 
+/**
+ * Codex CLI version whose bundled catalog `codexModels` mirrors. A Runner test
+ * keeps it equal to `TAILOS_CODEX_VERSION` in the Runner Dockerfile.
+ */
+export const codexCatalogVersion = "0.166.0";
+
 const gpt6Efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const lunaEfforts = ["low", "medium", "high", "xhigh", "max"];
 
@@ -10,8 +16,8 @@ const lunaEfforts = ["low", "medium", "high", "xhigh", "max"];
  * Codex models and reasoning efforts Tailos offers.
  *
  * Mirrors the models listed (visibility "list") in the catalog bundled with
- * the Codex CLI the Runner installs (`TAILOS_CODEX_VERSION`), in its priority
- * order. Update this list when that version changes.
+ * Codex CLI `codexCatalogVersion`, in its priority order. Update this list and
+ * the version together when the Runner's Codex CLI changes.
  */
 export const codexModels: readonly AgentModel[] = [
   { model: "gpt-6.1-sol", efforts: gpt6Efforts },

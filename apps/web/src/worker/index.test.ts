@@ -4,10 +4,14 @@ import worker from "@/worker/index.ts";
 const render = vi.hoisted(() =>
   vi.fn<(request: Request) => Promise<Response>>(),
 );
+const config = vi.hoisted(() => ({ isPreview: false }));
 
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
 vi.mock("@/shared/config", () => ({
   apiOrigin: "https://api.tailos.example",
+  get isPreview() {
+    return config.isPreview;
+  },
 }));
 
 const env = { ASSETS: { fetch: vi.fn(), connect: vi.fn() } };
@@ -16,6 +20,8 @@ const context = {} as ExecutionContext;
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  config.isPreview = false;
   render.mockReset();
 });
 
@@ -86,4 +92,46 @@ test("preserves the health route response", async () => {
   );
 
   expect(response).toBe(health);
+});
+
+test("proxies the OAuth callback on the stable Web host to its deployed API", async () => {
+  config.isPreview = true;
+  const response = new Response(null, {
+    status: 303,
+    headers: { Location: "https://api.tailos.example/login" },
+  });
+  const upstreamFetch = vi.fn<typeof fetch>(async () => response);
+  vi.stubGlobal("fetch", upstreamFetch);
+  const bindings = {
+    ...env,
+    TAILOS_PREVIEW_API_ORIGIN: "https://deployment-pr-123.preview-api.example",
+    TAILOS_PREVIEW_PROXY_SECRET: "test-proxy-secret",
+  };
+  const path = "/v1/auth/callback/github?state=state&code=code";
+  const request = new Request(`https://api.tailos.example${path}`, {
+    headers: {
+      Cookie: "oauth_state=state",
+      "X-Tailos-Preview-Proxy": "ignored",
+    },
+  });
+  expect(await worker.fetch(request, bindings, context)).toBe(response);
+  const [target, init] = upstreamFetch.mock.calls[0];
+  assert(target instanceof Request);
+  expect(target.url).toBe(bindings.TAILOS_PREVIEW_API_ORIGIN + path);
+  expect(init?.redirect).toBe("manual");
+  expect(new Headers(init?.headers).get("Cookie")).toBe("oauth_state=state");
+  expect(new Headers(init?.headers).get("X-Tailos-Preview-Proxy")).toBe(
+    "test-proxy-secret",
+  );
+  expect(render).not.toHaveBeenCalled();
+  expect(
+    (
+      await worker.fetch(
+        new Request(`https://other.example${path}`),
+        bindings,
+        context,
+      )
+    ).status,
+  ).toBe(404);
+  expect(upstreamFetch).toHaveBeenCalledTimes(1);
 });

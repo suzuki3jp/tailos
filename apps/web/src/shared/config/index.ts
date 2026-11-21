@@ -1,1 +1,1 @@
-export { apiOrigin } from "./api-origin";
+export { apiOrigin, isPreview } from "./api-origin";

@@ -1,0 +1,185 @@
+name: Preview
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Serialize publishes and cleanup, including a close or reopen during deployment.
+concurrency:
+  group: tailos-previews
+  queue: max
+
+env:
+  HUSKY: "0"
+
+jobs:
+  revision:
+    if: >-
+      vars.TAILOS_PREVIEW_ENABLED == 'true' &&
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - id: resolve
+        name: Find the open PR for this CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api --paginate --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open -f base=main -f head="$GITHUB_REPOSITORY_OWNER:$BRANCH" |
+            jq -sr --arg sha "$SHA" --arg repository "$GITHUB_REPOSITORY" \
+              '[.[][] | select(.head.sha == $sha and .head.repo.full_name == $repository)] |
+              if length == 1 then .[0].number else empty end')
+          if [[ -n "$pr" ]]; then
+            printf 'pr=%s\nsha=%s\n' "$pr" "$SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: revision
+    if: needs.revision.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.revision.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - name: Build PR Web and API
+        env:
+          PR: ${{ needs.revision.outputs.pr }}
+          TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
+          TAILOS_PREVIEW_API_DOMAIN: ${{ vars.TAILOS_PREVIEW_API_DOMAIN }}
+          WRANGLER_SEND_METRICS: "false"
+        run: node tools/preview/build.mjs "$PR" "$RUNNER_TEMP/preview"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: preview
+          path: ${{ runner.temp }}/preview/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: [revision, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: preview
+          path: ${{ runner.temp }}/preview
+      - name: Recheck the PR head and state
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.revision.outputs.pr }}
+          SHA: ${{ needs.revision.outputs.sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          if jq -e --arg sha "$SHA" --arg repo "$GITHUB_REPOSITORY" \
+            '.state == "open" and .base.ref == "main" and .head.sha == $sha and .head.repo.full_name == $repo' \
+            "$RUNNER_TEMP/pr.json" > /dev/null; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish and verify both Workers Previews
+        if: steps.revision.outputs.deploy == 'true'
+        env:
+          PR: ${{ needs.revision.outputs.pr }}
+          SHA: ${{ needs.revision.outputs.sha }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_CLOUDFLARE_API_TOKEN }}
+          TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
+          TAILOS_PREVIEW_API_DOMAIN: ${{ vars.TAILOS_PREVIEW_API_DOMAIN }}
+          TAILOS_PREVIEW_D1_DATABASE_ID: ${{ vars.TAILOS_PREVIEW_D1_DATABASE_ID }}
+          TAILOS_GITHUB_OAUTH_CLIENT_ID: ${{ vars.TAILOS_PREVIEW_GITHUB_OAUTH_CLIENT_ID }}
+          TAILOS_OPERATOR_GITHUB_ID: ${{ vars.TAILOS_PREVIEW_OPERATOR_GITHUB_ID }}
+          TAILOS_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.TAILOS_PREVIEW_GITHUB_OAUTH_CLIENT_SECRET }}
+          BETTER_AUTH_SECRET: ${{ secrets.TAILOS_PREVIEW_AUTH_SECRET }}
+        run: node tools/preview/deploy.mjs "$PR" "$SHA" "$RUNNER_TEMP/preview"
+      - name: Link the Preview from the PR
+        if: steps.revision.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.revision.outputs.pr }}
+          SHA: ${{ needs.revision.outputs.sha }}
+          DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
+        run: |
+          set -euo pipefail
+          marker='<!-- tailos-workers-preview -->'
+          body="$RUNNER_TEMP/preview-comment.md"
+          printf '%s\n[Preview](https://pr-%s.%s) · `%s`\n' "$marker" "$PR" "$DOMAIN" "$SHA" > "$body"
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" |
+            jq -sr --arg marker "$marker" \
+              '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))] | first.id // empty')
+          if [[ -n "$id" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F "body=@$body" > /dev/null
+          else
+            gh pr comment "$PR" --body-file "$body"
+          fi
+
+  cleanup:
+    if: >-
+      vars.TAILOS_PREVIEW_ENABLED == 'true' &&
+      ((github.event_name == 'pull_request_target' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+       github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: preview
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Delete closed PR Previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [[ -n "$PR" ]]; then
+            node tools/preview/cleanup.mjs "$PR"
+          else
+            node tools/preview/cleanup.mjs
+          fi

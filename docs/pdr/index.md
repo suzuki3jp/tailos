@@ -70,6 +70,7 @@
 | [PDR-20261119-routine-model-catalog-cache](records/PDR-20261119-routine-model-catalog-cache.md) | accepted | triggers.routine-model-catalog-cache | Routine のモデル候補取得を所有者・接続ごとにまとめる |
 | [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | accepted | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |
 | [PDR-20261119-runner-failure-diagnostics](records/PDR-20261119-runner-failure-diagnostics.md) | accepted | diagnostics.runner-failure-details | Runner の失敗段階と例外の詳細を diagnostics に記録する |
+| [PDR-20261121-pr-previews](records/PDR-20261121-pr-previews.md) | accepted | deployment.pr-previews | PR ごとに Web と API の Workers Preview を公開する |
 | [PDR-20261121-project-session-detail](records/PDR-20261121-project-session-detail.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と Agent の実行ログを読む |
 | [PDR-20261121-project-session-preview](records/PDR-20261121-project-session-preview.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と実行時間を表示する |
 | [PDR-20261121-project-session-timeline](records/PDR-20261121-project-session-timeline.md) | accepted | web.project.session-detail | 会話内の実行タイムラインと展開できる履歴をデザインシステムに沿って表示する |

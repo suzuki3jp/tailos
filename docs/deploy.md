@@ -1,5 +1,7 @@
 # Tailos の本番デプロイ
 
+PR ごとの確認環境は [Workers Previews の設定と運用](pr-previews.md) を参照。
+
 `TAILOS_D1_DATABASE_ID` を設定すると、`main` の最新コミットに対する CI の成功後に **Deploy** が走る。API と Runner をデプロイし、API の公開確認後に Web をデプロイする。
 
 API ジョブは Wrangler 設定の名前で既存の D1 と R2 を探し、D1 マイグレーション、API Worker と Runner イメージのデプロイ、`api.tailos.app/health` の確認を行う。

@@ -1,8 +1,27 @@
 import handler from "vinext/server/fetch-handler";
-import { apiOrigin } from "@/shared/config";
+import { apiOrigin, isPreview } from "@/shared/config";
 
 export default {
   async fetch(request: Request, env, ctx) {
+    if (isPreview) {
+      const url = new URL(request.url);
+      if (url.origin !== apiOrigin) return new Response(null, { status: 404 });
+      if (url.pathname.startsWith("/v1/")) {
+        const secret = env.TAILOS_PREVIEW_PROXY_SECRET;
+        const origin = env.TAILOS_PREVIEW_API_ORIGIN;
+        if (!secret || !origin) return new Response(null, { status: 503 });
+        const upstream = new URL(origin);
+        upstream.pathname = url.pathname;
+        upstream.search = url.search;
+        const headers = new Headers(request.headers);
+        headers.delete("Host");
+        headers.set("X-Tailos-Preview-Proxy", secret);
+        return fetch(new Request(upstream, request), {
+          headers,
+          redirect: "manual",
+        });
+      }
+    }
     const nonce = btoa(
       String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
     );
@@ -41,4 +60,8 @@ export default {
     securedResponse.headers.set("X-Content-Type-Options", "nosniff");
     return securedResponse;
   },
-} satisfies ExportedHandler<{ ASSETS: Fetcher }>;
+} satisfies ExportedHandler<{
+  ASSETS: Fetcher;
+  TAILOS_PREVIEW_API_ORIGIN?: string;
+  TAILOS_PREVIEW_PROXY_SECRET?: string;
+}>;

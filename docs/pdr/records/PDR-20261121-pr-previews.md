@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261121-pr-previews
 key: deployment.pr-previews
-status: accepted
+status: superseded
 date: "2026-11-21"
 decided_by: suzuki3jp
 areas: [deployment, web, api, auth]

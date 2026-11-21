@@ -86,7 +86,7 @@ jobs:
         run: node tools/preview/build.mjs "$PR" "$RUNNER_TEMP/preview"
       - uses: actions/upload-artifact@v7
         with:
-          name: preview-${{ github.event.pull_request.head.sha }}
+          name: preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/preview/
           if-no-files-found: error
           overwrite: true

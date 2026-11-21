@@ -1,11 +1,8 @@
 name: Preview
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
   pull_request_target:
-    types: [closed]
+    types: [labeled, closed]
     branches: [main]
   schedule:
     - cron: "23 3 * * *"
@@ -15,11 +12,6 @@ permissions:
   contents: read
   pull-requests: read
 
-# Serialize publishes and cleanup, including a close or reopen during deployment.
-concurrency:
-  group: tailos-previews
-  queue: max
-
 env:
   HUSKY: "0"
 
@@ -27,38 +19,71 @@ jobs:
   revision:
     if: >-
       vars.TAILOS_PREVIEW_ENABLED == 'true' &&
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'preview' &&
+      github.event.sender.type == 'User' &&
+      github.event.sender.id == github.repository_owner_id &&
+      github.triggering_actor == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      pull-requests: read
     outputs:
-      pr: ${{ steps.resolve.outputs.pr }}
-      sha: ${{ steps.resolve.outputs.sha }}
+      run_id: ${{ steps.resolve.outputs.run_id }}
     steps:
       - id: resolve
-        name: Find the open PR for this CI run
+        name: Wait for CI on the labeled commit
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          pr=$(gh api --paginate --method GET "repos/$GITHUB_REPOSITORY/pulls" \
-            -f state=open -f base=main -f head="$GITHUB_REPOSITORY_OWNER:$BRANCH" |
-            jq -sr --arg sha "$SHA" --arg repository "$GITHUB_REPOSITORY" \
-              '[.[][] | select(.head.sha == $sha and .head.repo.full_name == $repository)] |
-              if length == 1 then .[0].number else empty end')
-          if [[ -n "$pr" ]]; then
-            printf 'pr=%s\nsha=%s\n' "$pr" "$SHA" >> "$GITHUB_OUTPUT"
-          fi
+          while true; do
+            pull=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR")
+            if ! jq -e --arg sha "$SHA" --arg repo "$GITHUB_REPOSITORY" \
+              '.state == "open" and .base.ref == "main" and .head.sha == $sha and
+              .head.repo.full_name == $repo and any(.labels[]; .name == "preview")' \
+              <<< "$pull" > /dev/null; then
+              echo '::notice::This label no longer applies to the current open PR head.'
+              exit 0
+            fi
+            run=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f event=pull_request -f head_sha="$SHA" -f branch="$BRANCH" |
+              jq -c --arg sha "$SHA" --arg repo "$GITHUB_REPOSITORY" --argjson pr "$PR" \
+                'first(.workflow_runs[] | select(.head_sha == $sha and .head_repository.full_name == $repo and
+                ((.pull_requests | length) == 0 or any(.pull_requests[]; .number == $pr)))) // null')
+            if [[ $(jq -r '.status' <<< "$run") == completed ]]; then
+              if [[ $(jq -r '.conclusion' <<< "$run") != success ]]; then
+                echo '::error::CI failed for the labeled commit. Reapply the preview label after CI succeeds.'
+                exit 1
+              fi
+              run_id=$(jq -er '.id' <<< "$run")
+              package_count=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
+                -f name="preview-$PR-$SHA" --jq '[.artifacts[] | select(.expired == false)] | length')
+              if [[ "$package_count" != 1 ]]; then
+                echo '::error::No current Preview package for this PR head. Rerun CI and reapply the preview label.'
+                exit 1
+              fi
+              printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
 
   deploy:
     needs: revision
-    if: needs.revision.outputs.pr != ''
+    if: needs.revision.outputs.run_id != '' && github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: preview
+    concurrency:
+      group: tailos-previews
+      queue: max
     permissions:
       actions: read
       contents: read
@@ -77,12 +102,13 @@ jobs:
         id: revision
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ needs.revision.outputs.pr }}
-          SHA: ${{ needs.revision.outputs.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
           if jq -e --arg sha "$SHA" --arg repo "$GITHUB_REPOSITORY" \
-            '.state == "open" and .base.ref == "main" and .head.sha == $sha and .head.repo.full_name == $repo' \
+            '.state == "open" and .base.ref == "main" and .head.sha == $sha and
+            .head.repo.full_name == $repo and any(.labels[]; .name == "preview")' \
             "$RUNNER_TEMP/pr.json" > /dev/null; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           fi
@@ -91,14 +117,14 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          name: preview-${{ needs.revision.outputs.sha }}
+          run-id: ${{ needs.revision.outputs.run_id }}
+          name: preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/preview
       - name: Publish and verify both Workers Previews
         if: steps.revision.outputs.deploy == 'true'
         env:
-          PR: ${{ needs.revision.outputs.pr }}
-          SHA: ${{ needs.revision.outputs.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_CLOUDFLARE_API_TOKEN }}
           TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
@@ -113,8 +139,8 @@ jobs:
         if: steps.revision.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ needs.revision.outputs.pr }}
-          SHA: ${{ needs.revision.outputs.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
           DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
         run: |
           set -euo pipefail
@@ -134,12 +160,16 @@ jobs:
     if: >-
       vars.TAILOS_PREVIEW_ENABLED == 'true' &&
       ((github.event_name == 'pull_request_target' &&
+        github.event.action == 'closed' &&
         github.event.pull_request.head.repo.full_name == github.repository) ||
        github.event_name == 'schedule' ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: preview
+    concurrency:
+      group: tailos-previews
+      queue: max
     steps:
       - uses: actions/checkout@v7
         with:

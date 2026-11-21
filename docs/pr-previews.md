@@ -1,6 +1,6 @@
 # PR の動作確認環境
 
-同一リポジトリから `main` への PR は、`pull_request` の CI で PR の head をビルドする。**Preview** はその CI 実行の成果物から Web と API の Workers Preview を公開する。公開ジョブは `main` のデプロイ手順を使い、PR のビルドスクリプトを実行しない。両方の疎通と GitHub ログインの開始を確認したあと、PR コメントに Web URL と公開した SHA を表示する。push しても Web URL は固定され、その Web は同じ SHA の API デプロイを参照する。
+同一リポジトリから `main` への PR は、`pull_request` の CI で PR の head をビルドする。**リポジトリ所有者が `preview` ラベルを付けると**、その時点の head の CI 成功を待ち、成果物から Web と API の Workers Preview を公開する。Tailos が生成した PR も同じ手順で公開できる。公開ジョブは `main` のデプロイ手順を使い、PR のビルドスクリプトを実行しない。両方の疎通と GitHub ログインの開始を確認したあと、PR コメントに Web URL と公開した SHA を表示する。Web URL は固定され、その Web は同じ SHA の API デプロイを参照する。
 
 ## 初回設定
 
@@ -8,7 +8,7 @@
 2. Cloudflare に親 Worker `tailos-preview-web` と `tailos-preview-api` を用意する。各 Worker の Domains で、本番の `tailos.app` と異なる登録ドメイン上の Custom Domain を **Preview only** として割り当てる。たとえば Web が `preview.example.net`、API が `preview-api.example.net` なら、PR #123 の Web URL は `https://pr-123.preview.example.net` になる。API には PR の固定 URL に加えて、デプロイごとの URL が必要。初回の DNS と TLS 証明書の反映には時間がかかる。 [Cloudflare の設定手順](https://developers.cloudflare.com/workers/previews/custom-domains/)
 3. GitHub に Preview 専用 OAuth App を登録する。Authorization callback URL は `https://preview.example.net/v1/auth/callback/github` のように Web 側の Preview 用ベースホストで登録し、**wildcard matching** を有効にする。各 PR は自身の Web URL の同じパスに戻る。登録ドメインと照合対象のサブドメインは管理下に置く。 [GitHub の照合仕様](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#redirect-urls)
 4. GitHub Actions の Environment `preview` を作り、デプロイ元を `main` に制限する。次の変数と Secret を登録する。Cloudflare トークンは Preview 用アカウントの Workers Scripts の編集、D1 と R2 の読み取りに限定する。PR のコードは Preview 用データと実行時の資格情報を扱うので、同一リポジトリのブランチ作成権限は信頼できる主体に限定する。
-5. 共有 D1 に `main` の migration を適用し、最後にリポジトリ変数 `TAILOS_PREVIEW_ENABLED=true` を登録する。設定完了後に PR の CI を再実行すると Preview を作成する。
+5. 共有 D1 に `main` の migration を適用し、リポジトリに `preview` ラベルを作る。最後にリポジトリ変数 `TAILOS_PREVIEW_ENABLED=true` を登録する。設定前に開いた PR は、Preview のビルドを含む `main` を取り込んで CI を実行してから、リポジトリ所有者がラベルを付ける。
 
 | 種別 | 設定名 | 内容 |
 | --- | --- | --- |
@@ -48,6 +48,7 @@ pnpm --dir apps/api exec wrangler d1 migrations apply DB --remote --config wrang
 
 ## 確認と削除
 
+- 新しいコミットを公開するには、その差分を確認して `preview` ラベルを付け直す。公開待ちの間に push またはラベルの取り外しがあれば、その公開は進まない。CI が失敗した場合や成果物の期限が切れた場合は、CI を再実行して成功後にラベルを付け直す。ラベルを外す操作は公開済みの Preview を削除しない。
 - PR コメントのリンクで GitHub ログインを完了し、ログイン後の画面をリロードして認証状態を確認する。別 PR の URL でも個別にログインできることを確認する。
 - close・merge 後は `pr-<番号>` の Web と API を削除する。削除ジョブが失敗した場合は、次の日次実行か **Actions → Preview → Run workflow** で再照合できる。照合は Cloudflare に残る Preview を列挙し、GitHub 上で閉じた PR に対応する分だけを削除する。
 - Runner、GitHub App Webhook、Cron はこの環境の確認対象外。稼働中の別 PR や共有 D1・R2 に影響がないことは、2 本のテスト PR で確認する。

@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 afterEach(() => {
   vi.doUnmock("../config");
+  vi.doUnmock("cloudflare:workers");
   vi.unstubAllGlobals();
   vi.resetModules();
 });
@@ -21,7 +22,11 @@ test.each([
   "forwards only the correct session cookie and never follows redirects from $origin",
   async ({ origin, name, other }) => {
     vi.resetModules();
-    vi.doMock("../config", () => ({ apiOrigin: origin }));
+    vi.doMock("../config", () => ({
+      apiOrigin: origin,
+      browserApiBaseUrl: `${origin}/v1`,
+      usesWebApiProxy: false,
+    }));
     const { createServerApi } = await import("./server-client");
     const http = vi.fn<typeof fetch>(
       async () =>
@@ -50,6 +55,29 @@ test.each([
     });
   },
 );
+
+test("uses the production binding for SSR and sends only the host cookie", async () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json([]));
+  vi.doMock("../config", () => ({
+    apiOrigin: "https://tailos.app",
+    browserApiBaseUrl: "https://tailos.app/api/v1",
+    usesWebApiProxy: true,
+  }));
+  vi.doMock("cloudflare:workers", () => ({ env: { BROWSER_API: { fetch } } }));
+  const { createServerApi } = await import("./server-client");
+  const api = createServerApi(
+    "__Secure-tailos.session_token=old; __Host-tailos.session_token=new; tracking=ignored",
+  );
+
+  expect((await api.projects.$get()).status).toBe(200);
+  expect(fetch).toHaveBeenCalledOnce();
+  const [url, init] = fetch.mock.calls[0];
+  expect(String(url)).toBe("https://tailos.app/api/v1/projects");
+  expect(new Headers(init?.headers).get("Cookie")).toBe(
+    "__Host-tailos.session_token=new",
+  );
+  expect(init).toMatchObject({ cache: "no-store", redirect: "manual" });
+});
 
 test.each(["request", "query"])(
   "combines request and query cancellation when the %s is aborted",

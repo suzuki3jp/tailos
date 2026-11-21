@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { apiOrigin } from "@/shared/config";
+import { browserApiBaseUrl } from "@/shared/config";
 import { RequestState } from "@/shared/ui/request-state";
 import { accountQueryOptions } from "../api/queries";
 
@@ -26,7 +26,7 @@ export function Account() {
   }
   if (!data) {
     return (
-      <form method="post" action={apiOrigin + "/v1/auth/login"}>
+      <form method="post" action={`${browserApiBaseUrl}/auth/login`}>
         <button className="action action-primary" type="submit">
           GitHub でログイン
         </button>
@@ -48,7 +48,7 @@ export function Account() {
             Agent 接続を開く
           </a>
         )}
-        <form method="post" action={apiOrigin + "/v1/auth/logout"}>
+        <form method="post" action={`${browserApiBaseUrl}/auth/logout`}>
           <button className="action" type="submit">
             ログアウト
           </button>

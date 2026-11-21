@@ -7,42 +7,46 @@ test.for([
   {
     api: "https://api.tailos.example",
     web: "https://tailos.example",
-    domain: "tailos.example",
+    viaWeb: "true",
+    name: "__Host-tailos.session_token",
     secure: true,
   },
   {
     api: "http://localhost:8787",
     web: "http://localhost:3000",
-    domain: undefined,
+    viaWeb: undefined,
+    name: "tailos.session_token",
     secure: false,
   },
   {
     api: "https://api.example",
     web: "https://unrelated.example",
-    domain: undefined,
+    viaWeb: undefined,
+    name: "__Secure-tailos.session_token",
     secure: true,
   },
 ])(
-  "shares only the session cookie with the configured web parent: $api",
-  async ({ api, web, domain, secure }, t) => {
+  "uses host-only cookies with the expected name and security attributes: $name",
+  async ({ api, web, viaWeb, name, secure }, t) => {
     const DB = await createTestDb(t);
     const auth = createLoginAuth({
       ...testLoginBindings(DB),
       TAILOS_PUBLIC_ORIGIN: api,
       TAILOS_WEB_ORIGIN: web,
+      TAILOS_BROWSER_API_VIA_WEB: viaWeb,
     });
     assert(auth);
     const context = await auth.$context;
     expect(context.authCookies.sessionToken).toMatchObject({
-      name: `${secure ? "__Secure-" : ""}tailos.session_token`,
+      name,
       attributes: {
-        domain,
         secure,
         httpOnly: true,
         sameSite: "lax",
         path: "/",
       },
     });
+    expect(context.authCookies.sessionToken.attributes.domain).toBeUndefined();
     expect(context.authCookies.sessionData.attributes.domain).toBeUndefined();
     expect(
       context.authCookies.dontRememberToken.attributes.domain,

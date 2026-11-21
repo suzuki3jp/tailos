@@ -10,12 +10,14 @@ export function Disclosure({
   open,
   onOpenChange,
   className,
+  inlineChevron = false,
 }: {
   label: ReactNode;
   children: ReactNode;
   open: boolean;
   onOpenChange(open: boolean): void;
   className?: string;
+  inlineChevron?: boolean;
 }) {
   return (
     <details
@@ -23,8 +25,15 @@ export function Disclosure({
       onToggle={(event) => onOpenChange(event.currentTarget.open)}
       className={cn("[&[open]>summary>svg]:rotate-90", className)}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm text-control marker:hidden [&::-webkit-details-marker]:hidden">
-        <span className="min-w-0 flex-1">{label}</span>
+      <summary
+        className={cn(
+          "flex cursor-pointer list-none items-center rounded-sm text-control marker:hidden [&::-webkit-details-marker]:hidden",
+          inlineChevron ? "gap-1.5" : "gap-2",
+        )}
+      >
+        <span className={cn("min-w-0", !inlineChevron && "flex-1")}>
+          {label}
+        </span>
         <IconChevronRight
           aria-hidden="true"
           size={16}

@@ -58,7 +58,7 @@ The session page places progress and tool activity in the conversation, immediat
 | Progress message | Plain `text-control`, relaxed line height, preserved line breaks. Completed and inspected messages arrive as a unit. No speech bubble or duplicate final answer. |
 | Activity Item | `bg-card`, `border-border`, `rounded-lg`, 12px horizontal padding and 10px vertical padding. Command names use `font-mono`; other labels use the body face. Long labels wrap on narrow screens. |
 | State | 16px Tabler mark with a text label. `muted-foreground` for normal states, `destructive` for failure. Running marks animate only when reduced motion is not requested. A finished Run's unfinished Item is shown as result unknown. |
-| Disclosure | Shared `shared/ui/disclosure` uses native `details` / `summary`, keyboard behavior and the existing focus outline. The chevron rotates on open; no custom keyboard handling or new color is introduced. |
+| Disclosure | Shared `shared/ui/disclosure` uses native `details` / `summary`, keyboard behavior and the existing focus outline. In Run history, the chevron sits immediately after the label with a 6px gap (`gap-1.5`); other disclosures keep the chevron at the right edge. The chevron rotates on open; no custom keyboard handling or new color is introduced. |
 | Output | Loaded only on expansion. `bg-muted`, `rounded-md`, `font-mono`, `text-control-xs`, 12px padding, bounded scrolling. Exit code and measured duration appear with the Item. Missing, expired and failed requests have distinct text; request failures offer Retry. |
 | Connection | A small separate status distinguishes live/reconnecting/authentication from Agent execution. Saved content stays visible while reconnecting. |
 

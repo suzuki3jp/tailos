@@ -94,7 +94,7 @@ SQL トリガーは使わない。旧 Worker の更新件数や業務動作を�
 
 ### 詳細な記録と本文
 
-Runner は実行中から、検査済みの記録を1.5秒ごとに送信する。本文は完了したコマンド・ツールなどのまとまった単位で検査する。文字単位の delta を独立して保存しない。
+Runner は実行中から、検査済みの記録を250msごとに送信する。本文は完了したコマンド・ツールなどのまとまった単位で検査する。文字単位の delta を独立して保存しない。
 
 1. API/DO が Run・producer に限定した専用の短命リースを割り当てる。
 2. Runner が既知の秘密値と Secretlint で本文を検査してからバッチにする。
@@ -169,3 +169,13 @@ RunnerJob の診断設定は optional とし、既存のジョブ・結果を受
 テストでは、同じ配送の再送、合流、重要な履歴の保存失敗による業務更新のロールバック、移行中の旧 Run、R2/D1 の片側失敗、ACK 消失、遅延 Event、リースの用途分離と期限、所有者を越えた取得、本文の上限・省略、抑止コメント、秘密鍵、更新後の資格情報、Workers 互換性を確認する。
 
 検証コマンドは CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build`。加えて Runner のバンドルと API の Wrangler dry run を確認する。
+
+## Session の実行タイムライン
+
+Session の会話画面は診断の Trace / Span をブラウザで組み立てず、検査済みの記録から保存側で作る `session_activity_items` を表示する。`session_activity_events` の受信順 cursor から復旧し、`session_activity_notifications` を通知待ち記録として SessionStream Durable Object へ配送する。通常の閲覧では WebSocket を使い、履歴・本文は認証された HTTP API で取得する。
+
+表示用 Item とイベントは診断 Event と同じ D1 batch で保存し、本文は既存の R2 Artifact を参照する。新たな本文用バケットや未検査の配信経路は設けない。進捗は明示された commentary の完成後に表示し、構造化された最終回答や phase 不明の返答を進捗に変換しない。文字単位の delta と長いコマンドの実行途中の出力は、この段階では配信しない。
+
+Session・会話・Run・最初の Item と cursor は同じ D1 スナップショットで取得する。完了時の業務更新も通知待ち記録を残し、詳細な記録の完了だけで Run の成功を断定しない。接続先は Session 所有者・保存済み Project ID・ログイン Session・許可 Origin を検証し、配信中もログイン失効を確認する。WebSocket の購読や ping は Agent の制御権を与えない。
+
+保持は本文30日・メタデータ90日を共有する。短い本文の D1 コピーも失効時に取得対象から除外し、Cron で削除する。既存の保存済み command / tool / file / stage のメタデータと Artifact 参照は migration 0012 で引き継ぐが、過去の未収集の進捗は復元しない。

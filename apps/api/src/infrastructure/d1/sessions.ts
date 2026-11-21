@@ -12,6 +12,7 @@ import {
 } from "@/infrastructure/d1/schema.ts";
 import type { SessionListStore } from "@/application/sessions/list-sessions.ts";
 import * as v from "valibot";
+import { timelineSnapshotFields, readTimelineSnapshot } from "./timeline.ts";
 
 const triggerSchema = v.object({
   kind: v.literal("github.issue"),
@@ -110,7 +111,7 @@ export function d1Sessions(database: D1Database) {
           ),
         );
       // Read the reply and Run status from the same D1 snapshot.
-      const [[session], messages, executions] = await db.batch([
+      const [[session], messages, executions, timeline] = await db.batch([
         ownedSession,
         db
           .select()
@@ -143,9 +144,18 @@ export function d1Sessions(database: D1Database) {
           )
           .where(and(eq(runs.sessionId, id), exists(ownedSession)))
           .orderBy(asc(runs.createdAt), asc(runs.id)),
+        db
+          .select(timelineSnapshotFields(id, Date.now()))
+          .from(sessions)
+          .where(and(eq(sessions.id, id), exists(ownedSession))),
       ]);
       if (!session) return null;
-      return { session, messages, runs: executions };
+      return {
+        session,
+        messages,
+        runs: executions,
+        timeline: readTimelineSnapshot(timeline[0]),
+      };
     },
     async projectName(id: string, ownerId: string) {
       const [project] = await db

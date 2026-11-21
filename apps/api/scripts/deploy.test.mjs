@@ -298,6 +298,7 @@ test("deploy transfers the existing credential namespace and creates a fresh Run
         },
       ],
     },
+    { tag: "session-stream-v1", new_sqlite_classes: ["SessionStream"] },
   ]);
 });
 

@@ -80,7 +80,7 @@ const script = `
           throw new Error("Expected instructions to use the bundled pnpm for verification");
         if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
           throw new Error("Missing repository response schema");
-      } else if (input[0].text !== "Answer the prompt" || outputSchema !== undefined) {
+      } else if (!input[0].text.startsWith("Answer the prompt") || !input[0].text.includes("concise progress messages") || outputSchema !== undefined) {
         throw new Error("Unexpected turn input");
       }
       reply({});
@@ -111,6 +111,9 @@ const script = `
       ) throw new Error("Unexpected credential refresh response");
       send({ method: "item/started", params: { threadId: "test-thread", item: {
         id: "command-1", type: "commandExecution", command: "pnpm test", cwd: workspace, status: "inProgress",
+      } } });
+      send({ method: "item/completed", params: { threadId: "test-thread", item: {
+        id: "progress-1", type: "agentMessage", phase: "commentary", text: "Checking tests new-access",
       } } });
       send({ method: "item/completed", params: { threadId: "test-thread", item: {
         id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed new-access", exitCode: 0, status: "completed",
@@ -356,7 +359,9 @@ test("records effective input and command results without refreshed credentials"
   expect(
     records.some(
       (record) =>
-        record.attributes.operation === "input" && record.body === job.prompt,
+        record.attributes.operation === "input" &&
+        record.body?.startsWith(job.prompt) &&
+        record.body.includes("concise progress messages"),
     ),
   ).toBe(true);
   const command = records.find(
@@ -366,6 +371,10 @@ test("records effective input and command results without refreshed credentials"
   );
   expect(command?.attributes.exitCode).toBe(0);
   expect(command?.body).toContain("checks passed [REDACTED]");
+  expect(
+    records.find((record) => record.attributes.messagePhase === "commentary")
+      ?.body,
+  ).toContain("Checking tests [REDACTED]");
 });
 
 test("keeps the disposable command environment out of the app-server environment", async (t) => {

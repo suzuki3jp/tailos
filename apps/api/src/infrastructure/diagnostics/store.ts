@@ -1,5 +1,10 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import {
+  timelineRecord,
+  timelineMarker,
+  timelineNotification,
+} from "@/infrastructure/d1/timeline.ts";
+import {
   DiagnosticBatch,
   diagnosticBodyRetentionMs,
   diagnosticGraceMs,
@@ -177,8 +182,12 @@ export async function ingestDiagnostics(
           digest,
         ),
     );
+    statements.push(...timelineRecord(db, runId, batch.batchId, record, now));
   }
   if (batch.completed) {
+    statements.push(
+      timelineMarker(db, runId, `capture/${batch.batchId}`, "capture", now),
+    );
     statements.push(
       db
         .prepare(`UPDATE diagnostic_traces SET last_seq = ?, dropped = ?
@@ -204,6 +213,7 @@ export async function ingestDiagnostics(
     ELSE 'partial' END WHERE id = ?`)
       .bind(traceId, producerId, traceId),
   );
+  statements.push(timelineNotification(db, runId));
   await db.batch(statements);
   const stored = await db
     .prepare(

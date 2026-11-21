@@ -11,6 +11,7 @@ import {
 import type { RunnerJob } from "@tailos/core/runner";
 import { redactDiagnosticBody } from "@tailos/diagnostics";
 import * as v from "valibot";
+import { timelineDeliveryMs } from "@tailos/core/timeline";
 
 export class RunnerDiagnostics implements Diagnostics {
   private readonly context;
@@ -23,6 +24,7 @@ export class RunnerDiagnostics implements Diagnostics {
       operation: DiagnosticAttributes["operation"];
       startedAt: number;
       parentSpanId: string;
+      attributes: DiagnosticAttributes;
     }
   >();
   private work = Promise.resolve();
@@ -64,7 +66,7 @@ export class RunnerDiagnostics implements Diagnostics {
       this.addSecret(this.context.bearer);
       this.timer = setInterval(() => {
         void this.flush();
-      }, 1_500);
+      }, timelineDeliveryMs);
       this.timer.unref();
     }
   }
@@ -81,6 +83,7 @@ export class RunnerDiagnostics implements Diagnostics {
     operation: NonNullable<DiagnosticAttributes["operation"]>,
     body?: string,
     parentSpanId?: string,
+    attributes: DiagnosticAttributes = {},
   ) {
     const spanId = crypto.randomUUID();
     if (!this.context) return spanId;
@@ -90,8 +93,15 @@ export class RunnerDiagnostics implements Diagnostics {
         startedAt: performance.now(),
         parentSpanId:
           parentSpanId ?? this.parentSpanId ?? this.context.parentSpanId,
+        attributes,
       });
-    this.record(spanId, "span.started", { operation }, body, parentSpanId);
+    this.record(
+      spanId,
+      "span.started",
+      { ...attributes, operation },
+      body,
+      parentSpanId,
+    );
     return spanId;
   }
 
@@ -102,6 +112,7 @@ export class RunnerDiagnostics implements Diagnostics {
       spanId,
       "span.finished",
       {
+        ...operation?.attributes,
         operation: operation?.operation,
         durationMs: operation
           ? performance.now() - operation.startedAt

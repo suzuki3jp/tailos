@@ -31,6 +31,10 @@ export const DiagnosticContext = v.strictObject({
 export type DiagnosticContext = v.InferOutput<typeof DiagnosticContext>;
 
 export const DiagnosticAttributes = v.strictObject({
+  messagePhase: v.optional(
+    v.picklist(["commentary", "final_answer", "partial_answer", "unknown"]),
+  ),
+  toolKind: v.optional(v.picklist(["web", "tool"])),
   routineId: v.optional(v.pipe(v.string(), v.uuid())),
   operation: v.optional(
     v.picklist([
@@ -152,6 +156,7 @@ export interface Diagnostics {
     operation: NonNullable<DiagnosticAttributes["operation"]>,
     body?: string,
     parentSpanId?: string,
+    attributes?: DiagnosticAttributes,
   ): string;
   end(spanId: string, attributes?: DiagnosticAttributes, body?: string): void;
   output(spanId: string, body: string): void;

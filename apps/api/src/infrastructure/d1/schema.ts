@@ -137,6 +137,62 @@ export const sessionMessages = sqliteTable(
   ],
 );
 
+export const sessionActivityItems = sqliteTable(
+  "session_activity_items",
+  {
+    id: text().primaryKey().notNull(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    runId: text("run_id").notNull(),
+    kind: text().notNull(),
+    label: text(),
+    text: text(),
+    status: text().notNull(),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+    durationMs: integer("duration_ms"),
+    exitCode: integer("exit_code"),
+    revision: integer().notNull(),
+    firstCursor: integer("first_cursor").notNull(),
+    inputArtifact: text("input_artifact"),
+    inputEvent: text("input_event"),
+    outputArtifact: text("output_artifact"),
+    outputEvent: text("output_event"),
+    bodyExpiresAt: integer("body_expires_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [index("session_activity_item_page").on(t.sessionId, t.firstCursor)],
+);
+
+export const sessionActivityEvents = sqliteTable(
+  "session_activity_events",
+  {
+    cursor: integer().primaryKey({ autoIncrement: true }),
+    eventId: text("event_id").notNull().unique(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    runId: text("run_id").notNull(),
+    itemId: text("item_id"),
+    kind: text().notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [index("session_activity_event_page").on(t.sessionId, t.cursor)],
+);
+
+export const sessionActivityNotifications = sqliteTable(
+  "session_activity_notifications",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .notNull()
+      .references(() => sessions.id),
+    version: integer().notNull(),
+    deliveredVersion: integer("delivered_version").notNull(),
+  },
+);
+
 export const runs = sqliteTable(
   "runs",
   {

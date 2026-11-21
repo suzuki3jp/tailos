@@ -8,8 +8,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
+import { defaultModelEffort, modelEffortValue } from "../model/model-effort";
 
-const defaultOption = { value: "default", label: "Default model / effort" };
+const defaultOption = {
+  value: defaultModelEffort,
+  label: "Default model / effort",
+};
 const effortLabels: Record<string, string> = {
   none: "None",
   minimal: "Minimal",
@@ -23,15 +27,32 @@ const effortLabels: Record<string, string> = {
 const groups = codexModels.map(({ model, efforts }) => ({
   model,
   options: [undefined, ...efforts].map((effort) => ({
-    value: JSON.stringify([model, effort]),
+    value: modelEffortValue(model, effort),
     label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
   })),
 }));
 const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
 
-export function ModelEffortSelect() {
+export function ModelEffortSelect({
+  value,
+  onValueChange,
+  disabled,
+}: {
+  value?: string;
+  onValueChange?: (value: string) => void;
+  disabled?: boolean;
+}) {
   return (
-    <Select items={items} defaultValue={defaultOption.value}>
+    <Select
+      items={items}
+      {...(value === undefined
+        ? { defaultValue: defaultOption.value }
+        : { value })}
+      onValueChange={(next) => {
+        if (typeof next === "string") onValueChange?.(next);
+      }}
+      disabled={disabled}
+    >
       <SelectTrigger
         aria-label="Model and effort"
         variant="ghost"

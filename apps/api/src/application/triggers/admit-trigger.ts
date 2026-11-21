@@ -11,6 +11,8 @@ export type TriggerAdmission = {
   initialTitle?: string;
   triggerMetadata?: string;
   concurrencyKey: string;
+  /** Who wrote the first message; external events default to automation. */
+  authorKind?: "automation" | "user";
   prompt: string;
   executionContext: string;
   timeoutMs: number;

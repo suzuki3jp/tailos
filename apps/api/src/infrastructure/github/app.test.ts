@@ -25,8 +25,13 @@ const target = {
   installationId: 19,
   issueNumber: 8,
   defaultBranch: "main",
-  triggerLabel: "tailos:run",
 };
+const trigger = {
+  kind: "github.issue-label",
+  issueNumber: 8,
+  label: "tailos:run",
+} as const;
+const planTrigger = { kind: "github.issue-comment", issueNumber: 8 } as const;
 const sha = "a".repeat(40);
 const pullUrl = "https://github.com/owner/private/pull/32";
 
@@ -127,17 +132,21 @@ test("scopes app grants to one repository and protects the default branch and gi
   );
 
   const runId = randomUUID();
-  await expect(github.checkout(target, runId)).rejects.toThrow(
+  await expect(github.checkout(target, trigger, runId)).rejects.toThrow(
     /active creation/,
   );
   expect(permissions).toStrictEqual([{ contents: "read", issues: "read" }]);
   protectedBranch = true;
-  const { expiresAt, ...checkout } = await github.checkout(target, runId);
+  const { expiresAt, ...checkout } = await github.checkout(
+    target,
+    trigger,
+    runId,
+  );
   assert(expiresAt > Date.now());
   expect(checkout).toStrictEqual({
     token: "test-grant",
     baseSha: sha,
-    branch: workBranchFor(target, runId),
+    branch: workBranchFor(trigger, runId),
   });
   expect(permissions).toStrictEqual([
     { contents: "read", issues: "read" },
@@ -146,9 +155,72 @@ test("scopes app grants to one repository and protects the default branch and gi
   ]);
 });
 
+test("a Run without an issue checks out without reading an issue and opens a PR without issue wording", async () => {
+  const runId = randomUUID();
+  const webTrigger = { kind: "web.message" } as const;
+  const branch = workBranchFor(webTrigger, runId);
+  expect(branch).toBe(`tailos/run/${runId}`);
+  const paths: string[] = [];
+  let pullBody: { title: string; body: string } | undefined;
+  const repo = { id: 42, default_branch: "main" };
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+      if (url.pathname.endsWith("/access_tokens"))
+        return Response.json({
+          token: "test-grant",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      if (url.pathname === "/repos/owner/private") return Response.json(repo);
+      if (url.pathname.endsWith("/rules/branches/main"))
+        return Response.json(
+          ["creation", "update", "deletion"].map((type) => ({ type })),
+        );
+      if (url.pathname.includes("/git/ref/heads/"))
+        return Response.json({ object: { sha } });
+      if (url.pathname.endsWith("/pulls")) {
+        if (init?.method === "POST") {
+          pullBody = JSON.parse(String(init.body));
+          return Response.json({
+            html_url: pullUrl,
+            base: { ref: "main", repo },
+            head: { ref: branch, sha, repo },
+          });
+        }
+        return Response.json([]);
+      }
+      expect(url.pathname).toBe("/installation/token");
+      return new Response(null, { status: 204 });
+    },
+  );
+  const { branch: checkedOut } = await github.checkout(
+    target,
+    webTrigger,
+    runId,
+  );
+  expect(checkedOut).toBe(branch);
+  expect(paths.some((path) => path.includes("/issues/"))).toBe(false);
+  expect(
+    await github.publish(target, webTrigger, runId, {
+      branch,
+      sha,
+      headline: "feat: add health check",
+    }),
+  ).toBe(pullUrl);
+  expect(pullBody).toMatchObject({
+    title: "feat: add health check",
+    body: `Created by Tailos run \`${runId}\`.`,
+  });
+  await expect(
+    github.publish(target, trigger, runId, { branch, sha }),
+  ).rejects.toThrow(/Unexpected work branch/);
+});
+
 test("reuses the pull request after a lost response and never publishes a different ref", async () => {
   const runId = randomUUID();
-  const branch = workBranchFor(target, runId);
+  const branch = workBranchFor(trigger, runId);
   const headline = "fix(api): handle refresh";
   const repo = { id: 42, default_branch: "main" };
   const pull = {
@@ -192,20 +264,20 @@ test("reuses the pull request after a lost response and never publishes a differ
   );
 
   await expect(
-    github.publish(target, runId, { branch: "main", sha }),
+    github.publish(target, trigger, runId, { branch: "main", sha }),
   ).rejects.toThrow(/Unexpected work branch/);
   await expect(
-    github.publish(target, runId, { branch, sha, headline }),
+    github.publish(target, trigger, runId, { branch, sha, headline }),
   ).rejects.toThrow(/Response lost/);
-  expect(await github.publish(target, runId, { branch, sha, headline })).toBe(
-    pullUrl,
-  );
+  expect(
+    await github.publish(target, trigger, runId, { branch, sha, headline }),
+  ).toBe(pullUrl);
   expect(created).toBe(1);
 });
 
 test("checks a lost push using a read-only grant and treats absent or different refs as unpushed", async () => {
   const runId = randomUUID();
-  const work = { branch: workBranchFor(target, runId), sha };
+  const work = { branch: workBranchFor(trigger, runId), sha };
   let remote: string | null = null;
   let revocations = 0;
   const github = new GitHubApp(
@@ -233,18 +305,18 @@ test("checks a lost push using a read-only grant and treats absent or different 
       return new Response(null, { status: 204 });
     },
   );
-  expect(await github.hasCommit(target, runId, work)).toBe(false);
+  expect(await github.hasCommit(target, trigger, runId, work)).toBe(false);
   remote = "b".repeat(40);
-  expect(await github.hasCommit(target, runId, work)).toBe(false);
+  expect(await github.hasCommit(target, trigger, runId, work)).toBe(false);
   remote = sha;
-  expect(await github.hasCommit(target, runId, work)).toBe(true);
+  expect(await github.hasCommit(target, trigger, runId, work)).toBe(true);
   expect(revocations).toBe(3);
 });
 
 test("reconciles a lost signing response only for the verified commit with the expected tree", async () => {
   const runId = randomUUID();
   const work = {
-    branch: workBranchFor(target, runId),
+    branch: workBranchFor(trigger, runId),
     baseSha: sha,
     tree: "b".repeat(40),
     headline: "refactor(api): organize handlers",
@@ -316,7 +388,7 @@ test("reconciles a lost signing response only for the verified commit with the e
   );
 
   const sign = () =>
-    github.commitCheckedWork(target, runId, work, Date.now() + 10_000);
+    github.commitCheckedWork(target, trigger, runId, work, Date.now() + 10_000);
   await expect(sign()).rejects.toThrow("Response lost");
   await expect(sign()).resolves.toBe(signedSha);
   verified = false;
@@ -459,10 +531,10 @@ test("keeps HTTP status on failures outside issue notifications", async () => {
   const github = new GitHubApp({ appId: "100", privateKey }, async () =>
     Response.json({ message: "Not found" }, { status: 404 }),
   );
-  await expect(github.checkout(target, "run")).rejects.toBeInstanceOf(
+  await expect(github.checkout(target, trigger, "run")).rejects.toBeInstanceOf(
     GitHubRequestError,
   );
-  await expect(github.checkout(target, "run")).rejects.toMatchObject({
+  await expect(github.checkout(target, trigger, "run")).rejects.toMatchObject({
     status: 404,
     message: "GitHub request failed (404)",
   });
@@ -584,10 +656,10 @@ test("planning checks out an unlabelled issue without publication branch rules",
       return new Response(null, { status: 204 });
     },
   );
-  expect((await github.checkout(target, randomUUID(), "plan")).baseSha).toBe(
-    sha,
-  );
-  await expect(github.checkout(target, randomUUID())).rejects.toThrow(
+  expect(
+    (await github.checkout(target, planTrigger, randomUUID(), "plan")).baseSha,
+  ).toBe(sha);
+  await expect(github.checkout(target, trigger, randomUUID())).rejects.toThrow(
     /trigger/,
   );
 });

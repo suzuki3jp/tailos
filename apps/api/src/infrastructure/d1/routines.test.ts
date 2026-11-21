@@ -214,9 +214,10 @@ test("label dispatch isolates matching Routines, snapshots options, replays afte
         model: "test-model",
         effort: "high",
         routine: { id: first.id, revision: 1, projectRevision: 1 },
-        repository: expect.objectContaining({
-          triggerLabel: "build",
-          agentNetworkAccess: true,
+        repository: expect.objectContaining({ agentNetworkAccess: true }),
+        trigger: expect.objectContaining({
+          kind: "github.issue-label",
+          label: "build",
         }),
       }),
     ]),

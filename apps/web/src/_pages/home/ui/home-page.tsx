@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { IconUser } from "@tabler/icons-react";
 import { HomeSidebar } from "./home-sidebar";
-import { LoopComposer } from "@/features/compose-loop";
-import { HomeProjectSelect } from "./project-select";
+import { HomeComposer } from "./home-composer";
 import { RecentSessions } from "./recent-sessions";
 import { ProjectSelectionProvider } from "./project-selection";
 import { ProjectStatus } from "./project-status";
@@ -56,10 +55,7 @@ export function HomePage() {
                 Let’s dive into the looooop!
               </h1>
               <ProjectStatus />
-              <LoopComposer
-                mode="home"
-                projectSelect={<HomeProjectSelect compact />}
-              />
+              <HomeComposer />
             </section>
             <RecentSessions />
           </main>

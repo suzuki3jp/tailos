@@ -55,8 +55,34 @@ import { createProjectRoutes } from "@/presentation/http/handlers/projects/proje
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
+function githubApp(env: Bindings) {
+  if (!env.TAILOS_GH_APP_ID || !env.TAILOS_GH_APP_PRIVATE_KEY)
+    throw new Error("GitHub App is not configured");
+  return new GitHubApp({
+    appId: env.TAILOS_GH_APP_ID,
+    privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
+  });
+}
+
+const codexConnected = (env: Bindings) => async (ownerId: string) =>
+  !!env.CREDENTIALS &&
+  !!env.CREDENTIAL_ENCRYPTION_KEY &&
+  (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
+    .state === "connected";
+
 const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
-  createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth);
+  createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth, {
+    deps: (env) => ({
+      project: async (ownerId, projectId) =>
+        (await d1Projects(env.DB).settings(ownerId)).find(
+          (record) => record.project.id === projectId,
+        ) ?? null,
+      codexConnected: codexConnected(env),
+      defaultBranch: (project) => githubApp(env).defaultBranch(project),
+      admit: (input) => admitTrigger(env.DB, input),
+    }),
+    scheduleRun: (env) => runStarter(env.RUNNER),
+  });
 
 const triggerRoutes = createTriggerRoutes(
   (env) => runStarter(env.RUNNER),
@@ -127,14 +153,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects",
     createProjectRoutes(
       (env) => d1Projects(env.DB),
-      (env) => {
-        if (!env.TAILOS_GH_APP_ID || !env.TAILOS_GH_APP_PRIVATE_KEY)
-          throw new Error("GitHub App is not configured");
-        return new GitHubApp({
-          appId: env.TAILOS_GH_APP_ID,
-          privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
-        }).projectRepositories();
-      },
+      (env) => githubApp(env).projectRepositories(),
       operatorAuth,
     ),
   )
@@ -142,11 +161,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects/:projectId/routines",
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
-      (env) => async (ownerId) =>
-        !!env.CREDENTIALS &&
-        !!env.CREDENTIAL_ENCRYPTION_KEY &&
-        (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
-          .state === "connected",
+      codexConnected,
       operatorAuth,
     ),
   )

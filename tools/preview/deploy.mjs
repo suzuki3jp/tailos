@@ -6,7 +6,12 @@ import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { readLoginConfig } from "../../apps/api/scripts/login-config.mjs";
 import { cloudflare } from "./cloudflare.mjs";
-import { origins, previewName, workers } from "./config.mjs";
+import {
+  findApiDeploymentOrigin,
+  origins,
+  previewName,
+  workers,
+} from "./config.mjs";
 
 const [number, sha, artifactDir] = process.argv.slice(2);
 const name = previewName(number);
@@ -152,19 +157,7 @@ try {
     },
     { ...login.secrets, ...proxy },
   );
-  const apiHost = new URL(api).hostname;
-  const apiDeploymentOrigin = deployment?.urls
-    ?.map((url) => new URL(url))
-    .find(
-      (url) =>
-        url.protocol === "https:" &&
-        url.hostname.endsWith(`-${apiHost}`) &&
-        url.origin === url.href.slice(0, -1),
-    )?.origin;
-  if (!apiDeploymentOrigin)
-    throw new Error(
-      "Cloudflare did not return a deployment URL on the API Preview domain",
-    );
+  const apiDeploymentOrigin = findApiDeploymentOrigin(deployment?.urls, api);
   await verify(apiDeploymentOrigin, "/health", serviceIs("tailos-api"), {
     "X-Tailos-Preview-Proxy": secret,
   });

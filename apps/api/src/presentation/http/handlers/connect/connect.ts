@@ -51,14 +51,6 @@ export function createConnectRoutes(
           });
         return c.json(status);
       })
-      .get("/codex/models", async (c) => {
-        const models = await codex(c)
-          .codexModels?.()
-          .catch(() => null);
-        return models === undefined || models === null
-          ? c.json({ error: "catalog_unavailable" as const }, 503)
-          : c.json({ models });
-      })
       .post("/start", async (c) => {
         await codex(c).begin();
         return c.json({ ok: true as const });

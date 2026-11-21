@@ -10,25 +10,6 @@ export type RoutineSettings = Omit<
   Routine,
   "id" | "projectId" | "revision" | "deletedAt"
 >;
-export type RoutineModel = InferResponseType<
-  typeof routes.models.$get,
-  200
->["models"][number];
-
-export function routineModelsQueryOptions(projectId: string) {
-  return queryOptions({
-    queryKey: ["routine-models", projectId],
-    retry: false,
-    queryFn: async ({ signal }) => {
-      const response = await routes.models.$get(
-        { param: { projectId } },
-        { init: { signal } },
-      );
-      if (!response.ok) throw new RoutineRequestError(response.status);
-      return (await response.json()).models;
-    },
-  });
-}
 export const routinesKey = (projectId: string) => [
   "project-routines",
   projectId,
@@ -84,7 +65,7 @@ async function check(response: {
       : undefined;
   if (error === "configuration_unverified")
     throw new Error(
-      "接続またはモデル情報を確認できません。有効にするには接続を確認してください。無効状態なら保存できます。",
+      "Codex の接続、または既定モデルで effort を使えるかを確認できません。有効にするには接続を確認するか、モデルを指定してください。無効状態なら保存できます。",
     );
   if (error === "unsupported_model" || error === "unsupported_effort")
     throw new Error(

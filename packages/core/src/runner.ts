@@ -183,14 +183,6 @@ export const CodexAccess = v.strictObject({
   accessVersion: v.pipe(v.string(), v.uuid()),
 });
 
-export const CodexModelsRequest = v.strictObject({ access: CodexAccess });
-export const CodexModels = v.array(
-  v.object({
-    model: v.pipe(v.string(), v.minLength(1)),
-    efforts: v.array(v.pipe(v.string(), v.minLength(1))),
-  }),
-);
-
 const repositoryJob = {
   githubContext: v.optional(
     v.strictObject({

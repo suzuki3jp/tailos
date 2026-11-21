@@ -66,9 +66,9 @@
 | [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |
 | [PDR-20261118-routine-configuration-validation](records/PDR-20261118-routine-configuration-validation.md) | accepted | triggers.routine-configuration-validation | 接続やモデル情報を確認できない Routine も無効状態で保存する |
 | [PDR-20261118-routine-initial-migration](records/PDR-20261118-routine-initial-migration.md) | accepted | triggers.routine-initial-migration | Routine と呼び、初回移行は Run のない状態で行う |
-| [PDR-20261118-routine-model-options](records/PDR-20261118-routine-model-options.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を選択式にする |
-| [PDR-20261119-routine-model-catalog-cache](records/PDR-20261119-routine-model-catalog-cache.md) | accepted | triggers.routine-model-catalog-cache | Routine のモデル候補取得を所有者・接続ごとにまとめる |
-| [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | accepted | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |
+| [PDR-20261118-routine-model-options](records/PDR-20261118-routine-model-options.md) | superseded | triggers.routine-model-options | Routine のモデルと effort を選択式にする |
+| [PDR-20261119-routine-model-catalog-cache](records/PDR-20261119-routine-model-catalog-cache.md) | superseded | triggers.routine-model-catalog-cache | Routine のモデル候補取得を所有者・接続ごとにまとめる |
+| [PDR-20261119-routine-model-catalog-transport](records/PDR-20261119-routine-model-catalog-transport.md) | superseded | triggers.routine-model-catalog-transport | Routine のモデル候補を app-server の model/list から取得する |
 | [PDR-20261119-runner-failure-diagnostics](records/PDR-20261119-runner-failure-diagnostics.md) | accepted | diagnostics.runner-failure-details | Runner の失敗段階と例外の詳細を diagnostics に記録する |
 | [PDR-20261121-project-session-detail](records/PDR-20261121-project-session-detail.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と Agent の実行ログを読む |
 | [PDR-20261121-project-session-preview](records/PDR-20261121-project-session-preview.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と実行時間を表示する |
@@ -77,3 +77,6 @@
 | [PDR-20261121-session-list-resize](records/PDR-20261121-session-list-resize.md) | superseded | web.project.session-list-resize | セッション一覧とチャットの境界を動かして幅を調整する |
 | [PDR-20261121-session-list-width-persistence](records/PDR-20261121-session-list-width-persistence.md) | accepted | web.project.session-list-resize | セッション一覧の調整済みの幅を保存する |
 | [PDR-20261121-session-realtime-transport](records/PDR-20261121-session-realtime-transport.md) | accepted | sessions.realtime-transport | Session 単位の WebSocket 配信で履歴の後から更新を受け取る |
+| [PDR-20261122-codex-model-catalog-in-source](records/PDR-20261122-codex-model-catalog-in-source.md) | accepted | triggers.routine-model-catalog-transport | Codex のモデル・effort 候補を Tailos のソースに定義する |
+| [PDR-20261122-codex-model-catalog-no-fetch-cache](records/PDR-20261122-codex-model-catalog-no-fetch-cache.md) | accepted | triggers.routine-model-catalog-cache | モデル候補取得のまとめ・キャッシュを廃止する |
+| [PDR-20261122-routine-model-options-from-source](records/PDR-20261122-routine-model-options-from-source.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を Tailos 定義の候補から選択する |

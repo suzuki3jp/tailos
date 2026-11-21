@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-routine-model-options
 key: triggers.routine-model-options
-status: accepted
+status: superseded
 date: "2026-11-18"
 areas: [triggers, agent]
 keywords: [Routine, モデル, effort, Codex]

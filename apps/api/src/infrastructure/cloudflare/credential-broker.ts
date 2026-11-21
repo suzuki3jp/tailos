@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Bindings } from "@/bindings.ts";
 import type { ClaudeAccess, CodexAccess } from "@tailos/core/runner";
-import type { CodexModel } from "@/application/routines/routines.ts";
 import {
   CodexDeviceAuth,
   CodexDeviceError,
@@ -31,7 +30,6 @@ import * as v from "valibot";
 const pendingContext = "meguri:codex:default:pending:v1";
 const credentialContext = "meguri:codex:default:credentials:v1";
 const claudeContext = "tailos:claude:token:v1";
-const modelCatalogCacheMs = 5 * 60_000;
 
 const pendingSchema = v.strictObject({
   id: v.string(),
@@ -74,15 +72,6 @@ export class CredentialBroker
   extends DurableObject<Bindings>
   implements ClaudeConnectionControl
 {
-  private modelRequest?: {
-    connectionVersion: string;
-    result: Promise<CodexModel[] | null>;
-  };
-  private modelCache?: {
-    connectionVersion: string;
-    expiresAt: number;
-    models: CodexModel[];
-  };
   protected readonly adapter: DeviceAuthAdapter<CodexCredentials> =
     new CodexDeviceAuth();
 
@@ -163,8 +152,6 @@ export class CredentialBroker
         "claude",
       ]);
       await this.ctx.storage.deleteAlarm();
-      this.modelRequest = undefined;
-      this.modelCache = undefined;
     });
   }
 
@@ -188,42 +175,6 @@ export class CredentialBroker
       } satisfies StoredClaudeToken);
       return true;
     });
-  }
-
-  async codexModels(): Promise<CodexModel[] | null> {
-    const access = await this.issueAccess();
-    if (!access) {
-      this.modelRequest = undefined;
-      this.modelCache = undefined;
-      return null;
-    }
-    if (
-      this.modelCache?.connectionVersion === access.connectionVersion &&
-      this.modelCache.expiresAt > Date.now()
-    )
-      return this.modelCache.models;
-    this.modelCache = undefined;
-    const runner = this.env.RUNNER;
-    if (!runner) return null;
-    if (this.modelRequest?.connectionVersion === access.connectionVersion)
-      return this.modelRequest.result;
-    const request = {
-      connectionVersion: access.connectionVersion,
-      result: runner.get(runner.newUniqueId()).codexModels(access),
-    };
-    this.modelRequest = request;
-    try {
-      const models = await request.result;
-      if (this.modelRequest === request && models?.length)
-        this.modelCache = {
-          connectionVersion: access.connectionVersion,
-          expiresAt: Date.now() + modelCatalogCacheMs,
-          models,
-        };
-      return models;
-    } finally {
-      if (this.modelRequest === request) this.modelRequest = undefined;
-    }
   }
 
   async issueClaudeAccess(): Promise<ClaudeAccess | null> {

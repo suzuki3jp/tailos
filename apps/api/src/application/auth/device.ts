@@ -30,9 +30,6 @@ export type ConnectionStatus =
 
 export interface ConnectionControl {
   status(): Promise<ConnectionStatus>;
-  codexModels?(): Promise<
-    import("@/application/routines/routines.ts").CodexModel[] | null
-  >;
   begin(): Promise<boolean>;
   disconnect(): Promise<void>;
   issueAccess(rejected?: {

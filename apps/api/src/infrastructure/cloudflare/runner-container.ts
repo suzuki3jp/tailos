@@ -25,8 +25,6 @@ import {
 } from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
-  CodexModels,
-  CodexModelsRequest,
   FileChanges,
   maxRunnerJobBytes,
   RunnerStatus,
@@ -34,7 +32,6 @@ import {
   type ExecutionContext,
   type RunnerJob,
   type RepositoryTarget,
-  type CodexAccess,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
@@ -124,28 +121,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await this.ctx.container?.destroy().catch(() => {
         // oxlint-disable-next-line no-console -- Record cleanup failures without container data.
         console.warn("Runner health check container cleanup failed");
-      });
-    }
-  }
-
-  async codexModels(access: CodexAccess) {
-    try {
-      const port = await this.startRunner(Date.now() + 15_000, true);
-      const response = await port.fetch("http://runner/codex/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(v.parse(CodexModelsRequest, { access })),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        return null;
-      }
-      return v.parse(CodexModels, await response.json());
-    } finally {
-      await this.ctx.container?.destroy().catch(() => {
-        // oxlint-disable-next-line no-console -- Never include credentials in cleanup diagnostics.
-        console.warn("Model catalog container cleanup failed");
       });
     }
   }

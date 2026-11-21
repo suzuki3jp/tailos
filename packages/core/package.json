@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     "./auth": "./src/auth.ts",
+    "./models": "./src/models.ts",
     "./runner": "./src/runner.ts",
     "./diagnostics": "./src/diagnostics.ts",
     "./timeline": "./src/timeline.ts"

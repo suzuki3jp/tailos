@@ -7,7 +7,7 @@ import {
   routineSettings,
   validateRoutine,
   type RoutineStore,
-  type ModelCatalog,
+  type CodexConnection,
 } from "@/application/routines/routines.ts";
 import type { Bindings } from "@/bindings.ts";
 import type {
@@ -26,7 +26,7 @@ function input<T extends v.GenericSchema>(schema: T) {
 }
 export function createRoutineRoutes(
   store: (env: Bindings) => RoutineStore,
-  catalog: (env: Bindings) => ModelCatalog,
+  connection: (env: Bindings) => CodexConnection,
   auth: ReturnType<typeof createOperatorAuth>,
 ) {
   return new Hono<OperatorEnv>()
@@ -50,15 +50,6 @@ export function createRoutineRoutes(
       return routines
         ? c.json({ routines })
         : c.json({ error: "not_found" as const }, 404);
-    })
-    .get("/models", async (c) => {
-      const ownerId = c.var.operatorUserId;
-      if (!(await store(c.env).list(ownerId, c.req.param("projectId")!)))
-        return c.json({ error: "not_found" as const }, 404);
-      const models = await catalog(c.env)(ownerId);
-      return models?.length
-        ? c.json({ models })
-        : c.json({ error: "configuration_unverified" as const }, 503);
     })
     .get(
       "/history",
@@ -101,7 +92,7 @@ export function createRoutineRoutes(
         return c.json({ error: "not_found" as const }, 404);
       const error = await validateRoutine(
         settings,
-        catalog(c.env),
+        connection(c.env),
         c.var.operatorUserId,
       );
       if (error)
@@ -134,7 +125,7 @@ export function createRoutineRoutes(
           return c.json({ error: "not_found" as const }, 404);
         const error = await validateRoutine(
           settings,
-          catalog(c.env),
+          connection(c.env),
           c.var.operatorUserId,
         );
         if (error)

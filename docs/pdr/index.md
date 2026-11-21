@@ -72,4 +72,5 @@
 | [PDR-20261119-runner-failure-diagnostics](records/PDR-20261119-runner-failure-diagnostics.md) | accepted | diagnostics.runner-failure-details | Runner の失敗段階と例外の詳細を diagnostics に記録する |
 | [PDR-20261121-project-session-detail](records/PDR-20261121-project-session-detail.md) | superseded | web.project.session-detail | Project のセッション画面で保存済みの会話と Agent の実行ログを読む |
 | [PDR-20261121-project-session-preview](records/PDR-20261121-project-session-preview.md) | accepted | web.project.session-detail | Project のセッション画面で保存済みの会話と実行時間を表示する |
-| [PDR-20261121-session-list-resize](records/PDR-20261121-session-list-resize.md) | accepted | web.project.session-list-resize | セッション一覧とチャットの境界を動かして幅を調整する |
+| [PDR-20261121-session-list-resize](records/PDR-20261121-session-list-resize.md) | superseded | web.project.session-list-resize | セッション一覧とチャットの境界を動かして幅を調整する |
+| [PDR-20261121-session-list-width-persistence](records/PDR-20261121-session-list-width-persistence.md) | accepted | web.project.session-list-resize | セッション一覧の調整済みの幅を保存する |

@@ -171,9 +171,15 @@ test("real WebSocket resumes durable changes, supports ping, and revokes a delet
         { once: true },
       ),
     );
+  const beforeResume: unknown[] = [];
+  socket.addEventListener("message", (event) =>
+    beforeResume.push(JSON.parse(String(event.data))),
+  );
+  await worker.dispatchFetch("http://worker/notify", { headers });
   const pong = frame(socket);
   socket.send(JSON.stringify({ type: "ping" }));
   expect((await pong).type).toBe("pong");
+  expect(beforeResume).toEqual([{ type: "pong" }]);
   socket.send(JSON.stringify({ type: "resume", after: snapshot.cursor }));
   await ingestDiagnostics(DB, RUN_ARTIFACTS, run.runId, producerId, {
     version: 1,

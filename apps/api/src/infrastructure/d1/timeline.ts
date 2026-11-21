@@ -162,6 +162,7 @@ export function readTimelineSnapshot(row: {
     v.array(v.object({ ...storedItem.entries, firstCursor: v.number() })),
     JSON.parse(row.items),
   );
+  rows.sort((a, b) => b.firstCursor - a.firstCursor);
   const page = rows.slice(0, timelinePageSize);
   return {
     items: readItems(page).reverse(),

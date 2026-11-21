@@ -10,6 +10,7 @@ const subscriptionSchema = v.object({
   loginId: v.string(),
   projectId: v.optional(v.string()),
   cursor: v.number(),
+  resumed: v.optional(v.boolean(), false),
   frames: v.optional(
     v.array(v.object({ cursor: v.number(), bytes: v.number() })),
     [],
@@ -47,6 +48,7 @@ export class SessionStream extends DurableObject<Bindings> {
       loginId: request.headers.get("X-Tailos-Login") ?? "",
       projectId: request.headers.get("X-Tailos-Project") ?? undefined,
       cursor: 0,
+      resumed: false,
       frames: [],
     };
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
@@ -96,6 +98,9 @@ export class SessionStream extends DurableObject<Bindings> {
       socket.close(1008, "Authentication expired");
       return;
     }
+    // Notifications can arrive during the upgrade/resume round trip. The
+    // client's snapshot position must be known before any history is sent.
+    if (!subscription.resumed) return;
     const reader = d1Timeline(this.env.DB);
     // A slow subscriber catches up using a fresh snapshot instead of building
     // an unbounded send queue. Output bodies are never broadcast.
@@ -156,6 +161,7 @@ export class SessionStream extends DurableObject<Bindings> {
       }
       if (command.type === "resume") {
         subscription.cursor = command.after;
+        subscription.resumed = true;
         subscription.frames = [];
         socket.serializeAttachment(subscription);
       } else if (command.type === "ack") {

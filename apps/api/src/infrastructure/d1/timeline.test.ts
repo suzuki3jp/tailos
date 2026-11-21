@@ -7,7 +7,11 @@ import { parseTimelineSnapshot } from "@tailos/core/timeline";
 import app from "@/bootstrap/http.ts";
 import { createTestBindings } from "./testing.ts";
 import { admitTrigger } from "./trigger-admission.ts";
-import { d1Timeline, expireTimeline } from "./timeline.ts";
+import {
+  d1Timeline,
+  expireTimeline,
+  readTimelineSnapshot,
+} from "./timeline.ts";
 import {
   ingestDiagnostics,
   registerDiagnosticProducer,
@@ -320,4 +324,33 @@ test("failed fan-out leaves a durable outbox and retry acknowledges only the del
     ).first("delivered_version"),
   ).toBe(pending.version);
   expect(notify).toHaveBeenCalledTimes(2);
+});
+
+test("snapshot pagination is independent of JSON aggregate element order", () => {
+  const rows = Array.from({ length: 101 }, (_, index) => ({
+    id: String(index + 1),
+    runId: "run",
+    kind: "stage",
+    label: "agent",
+    text: null,
+    status: "succeeded",
+    startedAt: index + 1,
+    finishedAt: index + 2,
+    durationMs: 1,
+    exitCode: null,
+    revision: 1,
+    bodyExpiresAt: 9999999999999,
+    hasInput: false,
+    hasOutput: false,
+    firstCursor: index + 1,
+  }));
+  const snapshot = readTimelineSnapshot({
+    items: JSON.stringify(rows),
+    cursor: 101,
+    captures: "[]",
+  });
+  expect(snapshot.items).toHaveLength(100);
+  expect(snapshot.items[0].id).toBe("2");
+  expect(snapshot.items.at(-1)?.id).toBe("101");
+  expect(snapshot.before).toBe(2);
 });

@@ -12,7 +12,7 @@ export type SessionStore<Detail> = {
       createdAt: number;
     }[];
   }): Promise<void>;
-  read(id: string, ownerId: string): Promise<Detail | null>;
+  read(id: string, ownerId: string, projectId?: string): Promise<Detail | null>;
 };
 
 export async function createSession(

@@ -22,6 +22,7 @@ export type SessionListStore = {
     ownerId: string,
     limit: number,
     before?: SessionPosition,
+    projectId?: string,
   ): Promise<SessionSummary[]>;
 };
 const position = v.strictObject({
@@ -61,8 +62,14 @@ export async function listSessions(
   store: SessionListStore,
   ownerId: string,
   input: NonNullable<ReturnType<typeof sessionListInput>>,
+  projectId?: string,
 ) {
-  const rows = await store.list(ownerId, input.limit + 1, input.before);
+  const rows = await store.list(
+    ownerId,
+    input.limit + 1,
+    input.before,
+    projectId,
+  );
   const items = rows.slice(0, input.limit);
   const last = items.at(-1);
   const nextCursor =

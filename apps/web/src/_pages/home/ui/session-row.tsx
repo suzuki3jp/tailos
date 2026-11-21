@@ -4,6 +4,7 @@ import {
   IconMessageDots,
   IconMessageReport,
 } from "@tabler/icons-react";
+import { sessionPath } from "@/shared/lib/session-path";
 import type { HomeSession } from "../api/queries";
 import { updatedLabel } from "../model/session-presentation";
 
@@ -30,7 +31,7 @@ export function SessionRow({
   return (
     <div className="space-y-1.5 p-3">
       <Link
-        href={`/sessions/${encodeURIComponent(session.id)}`}
+        href={sessionPath(session.id, session.project?.id)}
         className="flex items-start gap-3 rounded-sm text-foreground-strong hover:underline"
       >
         <Icon aria-hidden="true" size={20} className="shrink-0" />

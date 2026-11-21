@@ -20,6 +20,7 @@
   --border: #ded4c3;
   --input: var(--border);
   --ring: #d4d4d4;
+  --message: #ceb384;
   --unread: #004ebb;
   --sidebar: var(--background);
   --sidebar-foreground: var(--foreground);
@@ -64,6 +65,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-message: var(--message);
   --color-unread: var(--unread);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);

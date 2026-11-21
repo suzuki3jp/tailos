@@ -94,3 +94,101 @@ test("session listing authenticates the owner and pages tied timestamps without 
   });
   expect(JSON.stringify(refreshed)).not.toContain("private body");
 });
+
+test("scopes project session pages by owner and project, including histories of deleted projects", async (t) => {
+  const db = await createTestDb(t);
+  const env = testLoginBindings(db);
+  const operator = await createTestOperator(env);
+  const projectId = "deleted/project";
+  const time = Date.now();
+  await db.batch(
+    [
+      ["first", operator.id, projectId, time + 1],
+      ["second", operator.id, projectId, time],
+      ["standalone", operator.id, null, time + 10],
+      ["foreign", "other-owner", projectId, time + 10],
+      ["wrong-project", operator.id, "another", time + 10],
+    ].map(([id, owner, project, time]) =>
+      db
+        .prepare(
+          "INSERT INTO sessions (id, owner_id, project_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(id, owner, project, time),
+    ),
+  );
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO session_messages (id, session_id, seq, author_kind, body, created_at) VALUES ('prompt', 'first', 1, 'user', 'Prompt', ?)",
+      )
+      .bind(time),
+    db
+      .prepare(
+        "INSERT INTO runs (id, session_id, start_message_id, status, execution_context, deadline_at, created_at) VALUES ('run', 'first', 'prompt', 'succeeded', '{}', ?, ?)",
+      )
+      .bind(time, time),
+    db
+      .prepare(
+        "INSERT INTO diagnostic_traces (id, owner_id, session_id, run_id, source, created_at, expires_at) VALUES ('run/run', ?, 'first', 'run', 'run', ?, ?)",
+      )
+      .bind(operator.id, time, time + 60_000),
+    db
+      .prepare(
+        "INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, occurred_at, received_at, name, attributes) VALUES (?, 'run/run', ?, 'runner', ?, ?, 'span.finished', ?)",
+      )
+      .bind(
+        "command",
+        "command",
+        time,
+        time,
+        JSON.stringify({ operation: "command", durationMs: 10_000 }),
+      ),
+    db
+      .prepare(
+        "INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, occurred_at, received_at, name, attributes) VALUES (?, 'run/run', ?, 'runner', ?, ?, 'span.finished', ?)",
+      )
+      .bind(
+        "agent",
+        "agent",
+        time,
+        time,
+        JSON.stringify({ operation: "agent", durationMs: 752_000 }),
+      ),
+  ]);
+  const send = (suffix = "", project = projectId, cookie = operator.cookie) =>
+    app.request(
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/projects/${encodeURIComponent(project)}/sessions${suffix}`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+  expect((await send("/first", projectId, "")).status).toBe(401);
+  expect((await send("/first", "another")).status).toBe(404);
+  expect((await send("/foreign")).status).toBe(404);
+  expect((await send("/standalone")).status).toBe(404);
+  expect((await send("?cursor=x&cursor=y")).status).toBe(400);
+
+  const first = await send("?limit=1");
+  expect(first.status).toBe(200);
+  const page = v.parse(pageSchema, await first.json());
+  expect(page.items.map((item) => item.id)).toEqual(["first"]);
+  const next = await send(`?limit=1&cursor=${page.nextCursor}`);
+  expect(
+    v.parse(pageSchema, await next.json()).items.map((item) => item.id),
+  ).toEqual(["second"]);
+
+  const detail = await send("/first");
+  expect(detail.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await detail.json()).toMatchObject({
+    projectName: null,
+    detail: {
+      messages: [{ body: "Prompt" }],
+      runs: [
+        {
+          id: "run",
+          startMessageId: "prompt",
+          agentDurationMs: 752_000,
+        },
+      ],
+    },
+  });
+});

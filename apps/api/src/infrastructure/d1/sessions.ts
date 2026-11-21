@@ -2,7 +2,14 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { and, asc, desc, eq, exists, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { SessionStore } from "@/application/sessions/create-session.ts";
-import { runs, sessionMessages, sessions } from "@/infrastructure/d1/schema.ts";
+import {
+  diagnosticEvents,
+  diagnosticTraces,
+  projects,
+  runs,
+  sessionMessages,
+  sessions,
+} from "@/infrastructure/d1/schema.ts";
 import type { SessionListStore } from "@/application/sessions/list-sessions.ts";
 import * as v from "valibot";
 
@@ -28,7 +35,9 @@ export function d1Sessions(database: D1Database) {
   const db = drizzle(database);
   return {
     async list(
-      ...[ownerId, limit, before]: Parameters<SessionListStore["list"]>
+      ...[ownerId, limit, before, projectId]: Parameters<
+        SessionListStore["list"]
+      >
     ) {
       const rows = await db
         .select({
@@ -53,6 +62,9 @@ export function d1Sessions(database: D1Database) {
         .where(
           and(
             eq(sessions.ownerId, ownerId),
+            projectId === undefined
+              ? undefined
+              : eq(sessions.projectId, projectId),
             before
               ? sql`(${sessions.updatedAt}, ${sessions.id}) < (${before.updatedAt}, ${before.id})`
               : undefined,
@@ -84,11 +96,19 @@ export function d1Sessions(database: D1Database) {
         ),
       ]);
     },
-    async read(id: string, owner: string) {
+    async read(id: string, owner: string, projectId?: string) {
       const ownedSession = db
         .select()
         .from(sessions)
-        .where(and(eq(sessions.id, id), eq(sessions.ownerId, owner)));
+        .where(
+          and(
+            eq(sessions.id, id),
+            eq(sessions.ownerId, owner),
+            projectId === undefined
+              ? undefined
+              : eq(sessions.projectId, projectId),
+          ),
+        );
       // Read the reply and Run status from the same D1 snapshot.
       const [[session], messages, executions] = await db.batch([
         ownedSession,
@@ -103,13 +123,36 @@ export function d1Sessions(database: D1Database) {
             status: runs.status,
             result: runs.result,
             errorCode: runs.errorCode,
+            startMessageId: runs.startMessageId,
+            agentDurationMs: sql<number | null>`(
+              SELECT sum(json_extract(${diagnosticEvents.attributes}, '$.durationMs'))
+              FROM ${diagnosticEvents}
+              WHERE ${diagnosticEvents.traceId} = ${diagnosticTraces.id}
+                AND ${diagnosticEvents.name} = 'span.finished'
+                AND json_extract(${diagnosticEvents.attributes}, '$.operation') = 'agent'
+            )`,
           })
           .from(runs)
+          .leftJoin(
+            diagnosticTraces,
+            and(
+              eq(diagnosticTraces.runId, runs.id),
+              eq(diagnosticTraces.ownerId, owner),
+              sql`${diagnosticTraces.expiresAt} > ${Date.now()}`,
+            ),
+          )
           .where(and(eq(runs.sessionId, id), exists(ownedSession)))
           .orderBy(asc(runs.createdAt), asc(runs.id)),
       ]);
       if (!session) return null;
       return { session, messages, runs: executions };
+    },
+    async projectName(id: string, ownerId: string) {
+      const [project] = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(and(eq(projects.id, id), eq(projects.ownerId, ownerId)));
+      return project?.name || null;
     },
   };
 }

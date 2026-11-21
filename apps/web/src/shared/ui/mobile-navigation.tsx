@@ -2,14 +2,14 @@
 
 import { useState, type ReactNode } from "react";
 import { IconMenu2 } from "@tabler/icons-react";
-import { Button } from "@/shared/ui/button";
+import { Button } from "./button";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetTitle,
   SheetTrigger,
-} from "@/shared/ui/sheet";
+} from "./sheet";
 
 export function MobileNavigation({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -31,7 +31,7 @@ export function MobileNavigation({ children }: { children: ReactNode }) {
         lang="en"
         side="left"
         showCloseButton={false}
-        className="gap-0 bg-sidebar p-0 data-[side=left]:w-60"
+        className="gap-0 overflow-y-auto bg-sidebar p-0 data-[side=left]:w-60"
         onClick={(event) => {
           if (
             event.target instanceof Element &&
@@ -42,7 +42,7 @@ export function MobileNavigation({ children }: { children: ReactNode }) {
       >
         <SheetTitle className="sr-only">Navigation</SheetTitle>
         <SheetDescription className="sr-only">
-          Choose a project or open a Tailos page.
+          Open a Tailos page.
         </SheetDescription>
         {children}
       </SheetContent>

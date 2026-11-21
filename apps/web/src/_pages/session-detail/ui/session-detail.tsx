@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
 import { sessionQueryOptions } from "../api/queries";
 import { runResult } from "../model/run-result";
+import { useSessionTimeline } from "../api/use-session-timeline";
+import { ActivityItem } from "./activity-item";
 
 const authorLabel = { agent: "Codex", automation: "GitHub", user: "ユーザー" };
 const runLabel = {
@@ -15,6 +17,7 @@ const runLabel = {
 
 export function SessionDetail({ id }: { id: string }) {
   const session = useQuery(sessionQueryOptions(id));
+  const timeline = useSessionTimeline(undefined, id);
   const detail = session.data;
   function renderSession() {
     if (session.isPending)
@@ -69,6 +72,20 @@ export function SessionDetail({ id }: { id: string }) {
                     {runLabel[run.status]}
                   </p>
                   {plan && <p>{plan}</p>}
+                  <div className="space-y-3">
+                    {timeline.data?.items
+                      .filter((item) => item.runId === run.id)
+                      .map((item) => (
+                        <ActivityItem
+                          key={item.id}
+                          item={item}
+                          sessionId={id}
+                          runActive={
+                            run.status === "queued" || run.status === "running"
+                          }
+                        />
+                      ))}
+                  </div>
                   <p className="break-all font-mono text-xs text-muted-foreground">
                     {run.id}
                   </p>

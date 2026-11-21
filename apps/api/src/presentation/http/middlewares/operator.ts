@@ -3,14 +3,14 @@ import type { Bindings } from "@/bindings.ts";
 
 export type OperatorEnv = {
   Bindings: Bindings;
-  Variables: { operatorUserId: string };
+  Variables: { operatorUserId: string; operatorSessionId?: string };
 };
 
 export function createOperatorAuth(
   getOperatorSession: (
     env: Bindings,
     headers: Headers,
-  ) => Promise<{ user: { id: string } } | null>,
+  ) => Promise<{ user: { id: string }; session?: { id: string } } | null>,
 ) {
   return createMiddleware<OperatorEnv>(async (c, next) => {
     const origin = c.env?.TAILOS_PUBLIC_ORIGIN;
@@ -29,6 +29,7 @@ export function createOperatorAuth(
     const session = await getOperatorSession(c.env, c.req.raw.headers);
     if (!session) return c.json({ error: "unauthorized" as const }, 401);
     c.set("operatorUserId", session.user.id);
+    c.set("operatorSessionId", session.session?.id);
     return next();
   });
 }

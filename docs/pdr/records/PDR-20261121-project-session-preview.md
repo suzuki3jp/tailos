@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261121-project-session-preview
 key: web.project.session-detail
-status: accepted
+status: superseded
 date: "2026-11-21"
 decided_by: suzuki3jp
 areas: [web, sessions, diagnostics]

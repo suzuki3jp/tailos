@@ -85,6 +85,13 @@
       "when": 1794998996899,
       "tag": "0011_routines",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795251718561,
+      "tag": "0012_session_activity",
+      "breakpoints": true
     }
   ]
 }

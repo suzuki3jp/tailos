@@ -31,6 +31,8 @@ import { createRefreshRoutes } from "@/presentation/http/handlers/refresh/refres
 import { type Bindings } from "@/bindings.ts";
 import { createRunRoutes } from "@/presentation/http/handlers/runs/runs.ts";
 import { createSessionRoutes } from "@/presentation/http/handlers/sessions/sessions.ts";
+import { createTimelineRoutes } from "@/presentation/http/handlers/sessions/timeline.ts";
+import { d1Timeline } from "@/infrastructure/d1/timeline.ts";
 import { d1Sessions } from "@/infrastructure/d1/sessions.ts";
 import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/triggers.ts";
 import { requestDiagnostics } from "@/presentation/http/middlewares/request-diagnostics.ts";
@@ -150,6 +152,20 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     ),
   )
   .route("/sessions", userSessionRoutes)
+  .route(
+    "/projects/:projectId/sessions/:id",
+    createTimelineRoutes(
+      (env) => d1Timeline(env.DB, env.RUN_ARTIFACTS),
+      operatorAuth,
+    ),
+  )
+  .route(
+    "/sessions/:id",
+    createTimelineRoutes(
+      (env) => d1Timeline(env.DB, env.RUN_ARTIFACTS),
+      operatorAuth,
+    ),
+  )
   .route(
     "/mcp-keys",
     createMcpKeyRoutes((env) => d1McpKeys(env.DB), operatorAuth),

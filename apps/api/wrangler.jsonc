@@ -28,12 +28,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "RUNNER", "class_name": "RunnerContainer" },
+      { "name": "SESSION_STREAM", "class_name": "SessionStream" },
       { "name": "CREDENTIALS", "class_name": "CredentialBroker" },
     ],
   },
   "migrations": [
     { "tag": "runner-v1", "new_sqlite_classes": ["RunnerContainer"] },
     { "tag": "credentials-v1", "new_sqlite_classes": ["CredentialBroker"] },
+    { "tag": "session-stream-v1", "new_sqlite_classes": ["SessionStream"] },
   ],
   "containers": [
     {

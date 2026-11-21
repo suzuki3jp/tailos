@@ -58,6 +58,7 @@ import {
   registerDiagnosticProducer,
 } from "@/infrastructure/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
+import { deliverTimelineNotifications } from "./session-stream.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -202,6 +203,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       driver,
       this.env.RUN_ARTIFACTS,
     );
+    await deliverTimelineNotifications(this.env, runId).catch(() => {});
     if (progress?.status === "running") {
       await this.ctx.storage.setAlarm(progress.nextActionAt);
       return;
@@ -303,6 +305,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
     } catch (error) {
       if (error instanceof DiagnosticStorageLimit) return "limit" as const;
       throw error;
+    }
+    await deliverTimelineNotifications(this.env, runId).catch(() => {});
+    if (batch.completed) {
+      const active = await this.env.DB.prepare(
+        "SELECT id FROM runs WHERE id = ? AND status = 'running'",
+      )
+        .bind(runId)
+        .first();
+      if (active)
+        await this.ctx.storage.setAlarm(Date.now() + 250).catch(() => {});
     }
     return true;
   }

@@ -33,7 +33,12 @@ export function agentPrompt(job: RepositoryJob, githubTool: string) {
     job.checkout || job.mode === "plan"
       ? "\n\nReturn sessionTitle with a concise, single-line summary of the conversation purpose in its primary language (1–100 UTF-16 code units, no control characters). This is separate from the commit headline. If unavailable, use null."
       : "";
-  return sourceContext + workPrompt(job, githubTool) + sessionTitleInstruction;
+  return (
+    sourceContext +
+    workPrompt(job, githubTool) +
+    sessionTitleInstruction +
+    "\nDuring the work, provide concise progress messages at meaningful phase changes. Keep these separate from the final structured answer. Do not include credentials or private reasoning."
+  );
 }
 
 function workPrompt(job: RepositoryJob, githubTool: string) {

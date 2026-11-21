@@ -9,9 +9,12 @@ import app from "@/bootstrap/http.ts";
 import type { Bindings } from "@/bindings.ts";
 import { rescheduleDueRuns } from "@/application/runs/recovery.ts";
 import { observeRun } from "@/infrastructure/diagnostics/store.ts";
+import { deliverTimelineNotifications } from "@/infrastructure/cloudflare/session-stream.ts";
+import { expireTimeline } from "@/infrastructure/d1/timeline.ts";
 
 export { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
 export { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+export { SessionStream } from "@/infrastructure/cloudflare/session-stream.ts";
 
 export default {
   fetch: app.fetch,
@@ -22,6 +25,8 @@ export default {
   ) {
     ctx.waitUntil(deliverIssueNotifications(env));
     ctx.waitUntil(processPlanningInputs(env));
+    ctx.waitUntil(deliverTimelineNotifications(env));
+    ctx.waitUntil(expireTimeline(env.DB));
     const runner = env.RUNNER;
     if (!runner) throw new Error("Missing runner binding");
     ctx.waitUntil(

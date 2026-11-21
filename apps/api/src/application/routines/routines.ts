@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { supportsCodexSelection } from "@tailos/core/models";
 import { promptText } from "@tailos/core/runner";
 import { projectName, projectSchema } from "@/application/triggers/projects.ts";
 
@@ -62,28 +63,20 @@ export type RoutineStore = {
   ): Promise<{ changes: RoutineChange[]; nextCursor: number | null } | null>;
   candidates(projectId: string): Promise<Routine[]>;
 };
-export type CodexModel = { model: string; efforts: string[] };
-export type ModelCatalog = (ownerId: string) => Promise<CodexModel[] | null>;
+export type CodexConnection = (ownerId: string) => Promise<boolean>;
 export async function validateRoutine(
   settings: RoutineSettings,
-  catalog: ModelCatalog,
+  connected: CodexConnection,
   ownerId: string,
 ) {
-  const models = await catalog(ownerId).catch(() => null);
-  if (!models?.length)
-    return settings.enabled ? "configuration_unverified" : null;
-  const candidates = settings.model
-    ? models.filter((m) => m.model === settings.model)
-    : models;
-  if (!candidates.length) return "unsupported_model";
-  if (settings.effort) {
-    const effort = settings.effort;
-    if (!candidates.some((m) => m.efforts.includes(effort)))
-      return "unsupported_effort";
-    // Without an explicit model, the provider may select any catalog default.
-    // A mixed catalog cannot verify this combination; disabled saves still work.
-    if (!settings.model && !candidates.every((m) => m.efforts.includes(effort)))
-      return settings.enabled ? "configuration_unverified" : null;
-  }
-  return null;
+  const selection = supportsCodexSelection(settings.model, settings.effort);
+  if (selection === "unsupported_model" || selection === "unsupported_effort")
+    return selection;
+  if (!settings.enabled) return null;
+  // Without an explicit model, Codex may select any catalog default. A mixed
+  // catalog cannot verify this combination; disabled saves still work.
+  if (selection === "ambiguous_effort") return "configuration_unverified";
+  return (await connected(ownerId).catch(() => false))
+    ? null
+    : "configuration_unverified";
 }

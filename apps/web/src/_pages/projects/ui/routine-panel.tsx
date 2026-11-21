@@ -2,21 +2,20 @@
 import { RequestState } from "@/widgets/request-state";
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { codexModels, type AgentModel } from "@tailos/core/models";
 import {
   RoutineRequestError,
   routinesQueryOptions,
   routinesKey,
   routineHistoryKey,
   routineHistoryQueryOptions,
-  routineModelsQueryOptions,
   saveRoutine,
   deleteRoutine,
   type Routine,
-  type RoutineModel,
   type RoutineSettings,
 } from "../api/routines";
 
-function availableEfforts(models: RoutineModel[], model?: string) {
+function availableEfforts(models: readonly AgentModel[], model?: string) {
   const candidates = model
     ? models.filter((item) => item.model === model)
     : models;
@@ -71,14 +70,13 @@ function Snapshot({ settings }: { settings: RoutineSettings | null }) {
 function RoutineEditor({ projectId }: { projectId: string }) {
   const client = useQueryClient();
   const list = useQuery(routinesQueryOptions(projectId));
-  const modelCatalog = useQuery(routineModelsQueryOptions(projectId));
   const [before, setBefore] = useState<number>();
   const history = useQuery(routineHistoryQueryOptions(projectId, before));
   const [editing, setEditing] = useState<Routine>();
   const [settings, setSettings] = useState<RoutineSettings>(empty);
   const [actors, setActors] = useState("");
-  const models = modelCatalog.data ?? [];
-  const modelIds = [...new Set(models.map(({ model }) => model))];
+  const models = codexModels;
+  const modelIds = models.map(({ model }) => model);
   const efforts = availableEfforts(models, settings.model);
   const reset = () => {
     setEditing(undefined);
@@ -173,30 +171,6 @@ function RoutineEditor({ projectId }: { projectId: string }) {
         )}
       </div>
     );
-  }
-  function renderModelCatalogStatus() {
-    if (modelCatalog.isFetching)
-      return (
-        <p role="status" className="text-sm">
-          モデル候補を読み込んでいます。
-        </p>
-      );
-    if (modelCatalog.isError)
-      return (
-        <div className="space-y-1 text-sm">
-          <p role="status">
-            モデル候補を取得できません。Codex の接続を確認してください。
-          </p>
-          <button
-            className="action"
-            type="button"
-            onClick={() => void modelCatalog.refetch()}
-          >
-            モデル候補を再取得
-          </button>
-        </div>
-      );
-    return null;
   }
   function renderRoutines() {
     if (list.isPending)
@@ -388,7 +362,6 @@ function RoutineEditor({ projectId }: { projectId: string }) {
             ))}
           </select>
         </label>
-        {renderModelCatalogStatus()}
         <label className="flex items-center gap-2">
           <input
             type="checkbox"

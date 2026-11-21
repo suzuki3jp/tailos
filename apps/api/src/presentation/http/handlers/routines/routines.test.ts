@@ -27,14 +27,12 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
     },
     owner.id,
   );
-  const catalog = vi.fn<
-    () => Promise<{ model: string; efforts: string[] }[] | null>
-  >(async () => null);
+  const connected = vi.fn<() => Promise<boolean>>(async () => false);
   const app = new Hono<{ Bindings: Bindings }>().route(
     "/projects/:projectId/routines",
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
-      () => catalog,
+      () => connected,
       createOperatorAuth(getOperatorSession),
     ),
   );
@@ -46,7 +44,7 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
     allowedActors: ["builder"],
     prompt: "Implement the issue",
     engine: "codex",
-    model: "test-model",
+    model: "gpt-5.5",
     effort: "high",
   };
   const send = (
@@ -67,8 +65,6 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
       env,
     );
   expect((await send("", undefined, {})).status).toBe(401);
-  expect((await send("/models", undefined, {})).status).toBe(401);
-  expect((await send("/models")).status).toBe(503);
   expect(
     (
       await send("", settings, {
@@ -103,12 +99,16 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
   expect(created.status).toBe(201);
   const saved: { id: string; revision: number } = await created.json();
   expect(await d1Routines(DB).candidates(project.project.id)).toEqual([]);
-  catalog.mockResolvedValue([{ model: "test-model", efforts: ["high"] }]);
-  const models = await send("/models");
-  expect(models.status).toBe(200);
-  expect(await models.json()).toEqual({
-    models: [{ model: "test-model", efforts: ["high"] }],
-  });
+  // The catalog is defined in source, so unknown values fail without a connection.
+  expect((await send("", { ...settings, model: "wrong" })).status).toBe(400);
+  expect((await send("", { ...settings, effort: "max" })).status).toBe(400);
+  connected.mockResolvedValue(true);
+  const defaultModel = { ...settings, model: undefined };
+  // Codex may pick any default model, and not every model offers "max".
+  expect((await send("", { ...defaultModel, effort: "max" })).status).toBe(201);
+  expect(
+    (await send("", { ...defaultModel, effort: "max", enabled: true })).status,
+  ).toBe(503);
   expect(
     (await send(`/${saved.id}`, { ...settings, enabled: true, revision: 1 }))
       .status,
@@ -127,11 +127,11 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
     .run();
   expect((await send()).status).toBe(404);
   expect((await send("/history")).status).toBe(404);
-  catalog.mockClear();
-  expect((await send("/models")).status).toBe(404);
-  expect(catalog).not.toHaveBeenCalled();
+  connected.mockClear();
   expect(
-    (await send(`/${saved.id}`, { ...settings, revision: 2 })).status,
+    (await send(`/${saved.id}`, { ...settings, enabled: true, revision: 2 }))
+      .status,
   ).toBe(404);
+  expect(connected).not.toHaveBeenCalled();
   expect((await send(`/${saved.id}/delete`, { revision: 2 })).status).toBe(409);
 });

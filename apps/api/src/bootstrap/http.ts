@@ -143,11 +143,10 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
       (env) => async (ownerId) =>
-        env.CREDENTIALS && env.CREDENTIAL_ENCRYPTION_KEY
-          ? (env.CREDENTIALS.getByName(
-              codexConnectionId(ownerId),
-            ).codexModels?.() ?? null)
-          : null,
+        !!env.CREDENTIALS &&
+        !!env.CREDENTIAL_ENCRYPTION_KEY &&
+        (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
+          .state === "connected",
       operatorAuth,
     ),
   )

@@ -53,41 +53,14 @@ jobs:
             printf 'pr=%s\nsha=%s\n' "$pr" "$SHA" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  deploy:
     needs: revision
     if: needs.revision.outputs.pr != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.revision.outputs.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - uses: pnpm/action-setup@v6
-      - run: pnpm install --frozen-lockfile
-      - name: Build PR Web and API
-        env:
-          PR: ${{ needs.revision.outputs.pr }}
-          TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
-          TAILOS_PREVIEW_API_DOMAIN: ${{ vars.TAILOS_PREVIEW_API_DOMAIN }}
-          WRANGLER_SEND_METRICS: "false"
-        run: node tools/preview/build.mjs "$PR" "$RUNNER_TEMP/preview"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: preview
-          path: ${{ runner.temp }}/preview/
-          if-no-files-found: error
-          retention-days: 1
-
-  deploy:
-    needs: [revision, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     environment: preview
     permissions:
+      actions: read
       contents: read
       pull-requests: write
     steps:
@@ -100,10 +73,6 @@ jobs:
           node-version: 22
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v8
-        with:
-          name: preview
-          path: ${{ runner.temp }}/preview
       - name: Recheck the PR head and state
         id: revision
         env:
@@ -117,6 +86,14 @@ jobs:
             "$RUNNER_TEMP/pr.json" > /dev/null; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           fi
+      - name: Download the Preview package from this PR CI run
+        if: steps.revision.outputs.deploy == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: preview-${{ needs.revision.outputs.sha }}
+          path: ${{ runner.temp }}/preview
       - name: Publish and verify both Workers Previews
         if: steps.revision.outputs.deploy == 'true'
         env:

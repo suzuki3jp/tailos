@@ -1,6 +1,6 @@
 # PR の動作確認環境
 
-同一リポジトリから `main` への PR で CI が成功すると **Preview** が PR の head をビルドし、Web と API の Workers Preview を公開する。両方の疎通と GitHub ログインの開始を確認したあと、PR コメントに Web URL と公開した SHA を表示する。push しても Web URL は固定され、その Web は同じ SHA の API デプロイを参照する。
+同一リポジトリから `main` への PR は、`pull_request` の CI で PR の head をビルドする。**Preview** はその CI 実行の成果物から Web と API の Workers Preview を公開する。公開ジョブは `main` のデプロイ手順を使い、PR のビルドスクリプトを実行しない。両方の疎通と GitHub ログインの開始を確認したあと、PR コメントに Web URL と公開した SHA を表示する。push しても Web URL は固定され、その Web は同じ SHA の API デプロイを参照する。
 
 ## 初回設定
 

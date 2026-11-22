@@ -1,10 +1,15 @@
-import { NotificationError } from "@/application/notifications/issue-comment.ts";
+import {
+  NotificationError,
+  type IssueTarget,
+} from "@/application/notifications/issue-comment.ts";
 import { createPrivateKey } from "node:crypto";
 import { importPKCS8, SignJWT } from "jose";
 import {
   gitSha,
+  triggerIssue,
   type CheckedPublication,
   type RepositoryTarget,
+  type RunTrigger,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type {
@@ -103,8 +108,12 @@ export type GitHubCheckout = {
   issueSnapshot?: { title: string; body: string };
 };
 
-export const workBranchFor = (target: RepositoryTarget, runId: string) =>
-  `tailos/issue-${target.issueNumber}/${runId}`;
+export const workBranchFor = (trigger: RunTrigger, runId: string) => {
+  const issue = triggerIssue(trigger);
+  return issue
+    ? `tailos/issue-${issue.issueNumber}/${runId}`
+    : `tailos/run/${runId}`;
+};
 
 export class GitHubApp {
   private readonly config: GitHubConfig;
@@ -276,8 +285,38 @@ export class GitHubApp {
     };
   }
 
+  /** Reads the current default branch of a configured repository. */
+  async defaultBranch(target: RepositoryChoice) {
+    const { token } = await this.installationToken(
+      target.installationId,
+      await this.appToken(),
+      {
+        repository_ids: [target.repositoryId],
+        permissions: { metadata: "read" },
+      },
+    );
+    try {
+      const repo = v.parse(
+        v.object({
+          id: v.number(),
+          full_name: v.string(),
+          default_branch: v.pipe(v.string(), v.minLength(1)),
+        }),
+        await this.json(`/repos/${target.repository}`, token),
+      );
+      if (
+        repo.id !== target.repositoryId ||
+        repo.full_name.toLowerCase() !== target.repository.toLowerCase()
+      )
+        throw new Error("GitHub repository target changed");
+      return repo.default_branch;
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
+  }
+
   async issueComment(
-    target: RepositoryTarget,
+    target: IssueTarget,
     marker: string,
     body: string,
     commentId: number | null,
@@ -303,7 +342,7 @@ export class GitHubApp {
   }
 
   private async writeIssueComment(
-    target: RepositoryTarget,
+    target: IssueTarget,
     marker: string,
     body: string,
     commentId: number | null,
@@ -380,9 +419,11 @@ export class GitHubApp {
 
   async checkout(
     target: RepositoryTarget,
+    trigger: RunTrigger,
     runId: string,
     mode?: "plan" | "implement",
   ): Promise<GitHubCheckout> {
+    const issueTrigger = triggerIssue(trigger);
     const { token } = await this.token(target, {
       contents: "read",
       issues: "read",
@@ -396,18 +437,25 @@ export class GitHubApp {
       )
         throw new Error("GitHub repository target changed");
 
-      const issue = v.parse(
-        issueSchema,
-        await this.json(`${repo}/issues/${target.issueNumber}`, token),
-      );
+      // Only issue triggers depend on the issue still matching at start.
+      const issue = issueTrigger
+        ? v.parse(
+            issueSchema,
+            await this.json(
+              `${repo}/issues/${issueTrigger.issueNumber}`,
+              token,
+            ),
+          )
+        : undefined;
       if (
-        issue.state !== "open" ||
-        issue.pull_request ||
-        (mode !== "plan" &&
-          !issue.labels.some((label) => label.name === target.triggerLabel))
+        issue &&
+        (issue.state !== "open" ||
+          issue.pull_request ||
+          (trigger.kind === "github.issue-label" &&
+            !issue.labels.some((label) => label.name === trigger.label)))
       )
         throw new Error("GitHub issue no longer matches the trigger");
-      if (workBranchFor(target, runId) === target.defaultBranch)
+      if (workBranchFor(trigger, runId) === target.defaultBranch)
         throw new Error("The work branch cannot be the default branch");
       const branch = encodeURIComponent(target.defaultBranch);
       if (mode !== "plan") {
@@ -428,7 +476,7 @@ export class GitHubApp {
           );
       }
       const issueSnapshot =
-        mode === "plan"
+        mode === "plan" && issue
           ? v.parse(
               v.object({ title: v.string(), body: v.nullable(v.string()) }),
               issue,
@@ -451,7 +499,7 @@ export class GitHubApp {
           },
         }),
         baseSha: base.object.sha,
-        branch: workBranchFor(target, runId),
+        branch: workBranchFor(trigger, runId),
       };
     } finally {
       await this.revoke(token).catch(() => {});
@@ -466,10 +514,11 @@ export class GitHubApp {
 
   async hasCommit(
     target: RepositoryTarget,
+    trigger: RunTrigger,
     runId: string,
     work: { branch: string; sha: string },
   ) {
-    if (work.branch !== workBranchFor(target, runId))
+    if (work.branch !== workBranchFor(trigger, runId))
       throw new Error("Unexpected work branch");
     const { token } = await this.token(target, { contents: "read" });
     try {
@@ -487,6 +536,7 @@ export class GitHubApp {
 
   async commitCheckedWork(
     target: RepositoryTarget,
+    trigger: RunTrigger,
     runId: string,
     work: Pick<
       CheckedPublication,
@@ -494,7 +544,7 @@ export class GitHubApp {
     >,
     deadlineAt: number,
   ): Promise<string | null> {
-    const branch = workBranchFor(target, runId);
+    const branch = workBranchFor(trigger, runId);
     if (work.branch !== branch || branch === target.defaultBranch)
       throw new Error("Unexpected work branch");
     const repo = "/repos/" + target.repository;
@@ -575,11 +625,13 @@ export class GitHubApp {
 
   async publish(
     target: RepositoryTarget,
+    trigger: RunTrigger,
     runId: string,
     publication: { branch: string; sha: string; headline?: string },
     deadlineAt = Infinity,
   ) {
-    const branch = workBranchFor(target, runId);
+    const branch = workBranchFor(trigger, runId);
+    const issue = triggerIssue(trigger);
     if (publication.branch !== branch)
       throw new Error("Unexpected work branch");
 
@@ -626,10 +678,14 @@ export class GitHubApp {
         pullSchema,
         await this.json(`${repo}/pulls`, token, "POST", {
           title:
-            publication.headline ?? `Implement issue #${target.issueNumber}`,
+            publication.headline ??
+            (issue
+              ? `Implement issue #${issue.issueNumber}`
+              : `Tailos run ${runId}`),
           head: branch,
           base: target.defaultBranch,
-          body: `Closes #${target.issueNumber}\n\nCreated by Tailos run \`${runId}\`.`,
+          // Without an issue, the PR wording is left to the prompt.
+          body: `${issue ? `Closes #${issue.issueNumber}\n\n` : ""}Created by Tailos run \`${runId}\`.`,
         }),
       );
       if (

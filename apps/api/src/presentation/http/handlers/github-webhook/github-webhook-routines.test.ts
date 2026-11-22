@@ -151,10 +151,12 @@ test.for([false, true])(
       connectionId: `codex/${owner.id}`,
       model: "test-model",
       effort: "high",
-      repository: {
-        agentNetworkAccess,
+      repository: { agentNetworkAccess },
+      trigger: {
+        kind: "github.issue-label",
+        issueNumber: event.issue.number,
         issueContentHash: await githubIssueDigest(event.issue),
-        triggerLabel: "build",
+        label: "build",
       },
     });
     expect(stored!.duration).toBe(180_000);

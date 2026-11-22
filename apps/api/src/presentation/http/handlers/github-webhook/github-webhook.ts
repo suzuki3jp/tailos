@@ -214,9 +214,12 @@ export function createGithubWebhook(
           repository: target.repository,
           repositoryId: target.repositoryId,
           installationId: target.installationId,
-          issueNumber: data.issue.number,
           defaultBranch: data.repository.default_branch,
           agentNetworkAccess: target.agentNetworkAccess,
+        },
+        trigger: {
+          kind: "github.issue-comment",
+          issueNumber: data.issue.number,
         },
       } satisfies ExecutionContext;
       const sessionMetadata = {

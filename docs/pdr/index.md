@@ -79,4 +79,5 @@
 | [PDR-20261121-session-realtime-transport](records/PDR-20261121-session-realtime-transport.md) | accepted | sessions.realtime-transport | Session 単位の WebSocket 配信で履歴の後から更新を受け取る |
 | [PDR-20261122-codex-model-catalog-in-source](records/PDR-20261122-codex-model-catalog-in-source.md) | accepted | triggers.routine-model-catalog-transport | Codex のモデル・effort 候補を Tailos のソースに定義する |
 | [PDR-20261122-codex-model-catalog-no-fetch-cache](records/PDR-20261122-codex-model-catalog-no-fetch-cache.md) | accepted | triggers.routine-model-catalog-cache | モデル候補取得のまとめ・キャッシュを廃止する |
+| [PDR-20261122-home-message-start](records/PDR-20261122-home-message-start.md) | accepted | sessions.home-message-start | ホームの入力から Project の Session と Run を開始する |
 | [PDR-20261122-routine-model-options-from-source](records/PDR-20261122-routine-model-options-from-source.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を Tailos 定義の候補から選択する |

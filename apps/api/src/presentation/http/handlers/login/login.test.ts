@@ -1,25 +1,32 @@
-import { assert, expect, test, vi } from "vitest";
+import { assert, expect, test, type TestContext, vi } from "vitest";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
-import app from "@/bootstrap/http.ts";
+import app, { browserProxy } from "@/bootstrap/http.ts";
+import {
+  createTestOperator,
+  testLoginBindings,
+} from "@/infrastructure/auth/testing.ts";
 import {
   createLoginAuth,
   findOperatorUserId,
 } from "@/infrastructure/auth/login.ts";
 
-test("GitHub login authenticates the configured account and persists only the Tailos session", async (t) => {
+test.for([false, true])(
+  "GitHub login persists only the Tailos session (Web proxy: %s)",
+  exerciseGitHubLogin,
+);
+
+async function exerciseGitHubLogin(viaWeb: boolean, t: TestContext) {
   const DB = await createTestDb(t);
-  const origin = "https://api.tailos.example";
-  const webOrigin = "https://tailos.example";
+  const bindings = testLoginBindings(DB);
+  const webOrigin = bindings.TAILOS_WEB_ORIGIN;
+  const origin = viaWeb ? webOrigin : bindings.TAILOS_PUBLIC_ORIGIN;
+  const base = viaWeb ? "/api/v1" : "/v1";
+  const router = viaWeb ? browserProxy : app;
   const env = {
-    DB,
-    TAILOS_PUBLIC_ORIGIN: origin,
-    TAILOS_WEB_ORIGIN: webOrigin,
-    BETTER_AUTH_SECRET: "test-only-47-characters-of-random-looking-value",
-    TAILOS_GITHUB_OAUTH_CLIENT_ID: "test-client",
-    TAILOS_GITHUB_OAUTH_CLIENT_SECRET: "test-secret",
-    TAILOS_OPERATOR_GITHUB_ID: "123",
+    ...bindings,
+    TAILOS_BROWSER_API_VIA_WEB: viaWeb ? "true" : undefined,
   };
-  const callback = origin + "/v1/auth/callback/github";
+  const callback = `${origin}${base}/auth/callback/github`;
   const fetch = globalThis.fetch;
   let githubId = 999;
   let exchanges = 0;
@@ -62,9 +69,9 @@ test("GitHub login authenticates the configured account and persists only the Ta
       .map((line) => line.split(";", 1)[0])
       .join("; ");
   const request = (path: string, init?: RequestInit) =>
-    app.request(origin + path, init, env);
+    router.request(origin + base + path, init, env);
   const start = async () => {
-    const response = await request("/v1/auth/login", {
+    const response = await request("/auth/login", {
       method: "POST",
       headers: { Origin: webOrigin },
     });
@@ -83,10 +90,17 @@ test("GitHub login authenticates the configured account and persists only the Ta
         .getSetCookie()
         .every((line) => !line.includes("Domain=")),
     ).toBe(true);
+    if (viaWeb) {
+      for (const line of response.headers.getSetCookie()) {
+        expect(line).toMatch(/^__Host-tailos\./);
+        expect(line).toContain("Secure");
+        expect(line).toContain("Path=/");
+      }
+    }
     return { state, cookie };
   };
   const finish = ({ state, cookie }: Awaited<ReturnType<typeof start>>) =>
-    app.request(
+    router.request(
       callback + "?" + new URLSearchParams({ state, code: "test-code" }),
       { headers: { Cookie: cookie } },
       env,
@@ -95,7 +109,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   expect((await app.request(origin + "/login")).status).toBe(404);
   expect(
     (
-      await request("/v1/auth/login", {
+      await request("/auth/login", {
         method: "POST",
         headers: { Origin: "null" },
       })
@@ -103,7 +117,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   ).toBe(403);
   expect(
     (
-      await request("/v1/auth/login", {
+      await request("/auth/login", {
         method: "POST",
         headers: { Origin: "https://other.example" },
       })
@@ -126,7 +140,7 @@ test("GitHub login authenticates the configured account and persists only the Ta
   expect(granted.headers.get("Location")).toBe(webOrigin + "/login");
   expect(granted.headers.get("Cache-Control")).toBe("private, no-store");
   const sessionCookie = cookieHeader(granted);
-  const account = await request("/v1/account", {
+  const account = await request("/account", {
     headers: { Cookie: sessionCookie, Origin: webOrigin },
   });
   expect(account.status).toBe(200);
@@ -138,16 +152,19 @@ test("GitHub login authenticates the configured account and persists only the Ta
       .getSetCookie()
       .some(
         (line) =>
-          line.includes("session_token") &&
+          line.startsWith(
+            `${viaWeb ? "__Host" : "__Secure"}-tailos.session_token=`,
+          ) &&
           line.includes("HttpOnly") &&
           line.includes("Secure") &&
-          line.includes("Domain=tailos.example") &&
+          !line.includes("Domain=") &&
+          line.includes("Path=/") &&
           line.includes("SameSite=Lax"),
       ),
   );
   expect(
     (
-      await request("/v1/account", {
+      await request("/account", {
         headers: {
           Cookie: sessionCookie.replaceAll(
             "tailos.session_token",
@@ -178,13 +195,13 @@ test("GitHub login authenticates the configured account and persists only the Ta
 
   expect(
     (
-      await request("/v1/auth/logout", {
+      await request("/auth/logout", {
         method: "POST",
         headers: { Origin: "https://other.example", Cookie: sessionCookie },
       })
     ).status,
   ).toBe(403);
-  const logout = await request("/v1/auth/logout", {
+  const logout = await request("/auth/logout", {
     method: "POST",
     headers: { Origin: webOrigin, Cookie: sessionCookie },
   });
@@ -196,4 +213,25 @@ test("GitHub login authenticates the configured account and persists only the Ta
       headers: new Headers({ Cookie: sessionCookie }),
     }),
   ).toBe(null);
+}
+
+test("the production proxy rejects old signatures and closes the public browser API", async (t) => {
+  const DB = await createTestDb(t);
+  const bindings = testLoginBindings(DB);
+  const { cookie } = await createTestOperator(bindings);
+  const env = { ...bindings, TAILOS_BROWSER_API_VIA_WEB: "true" };
+  const headers = { Cookie: cookie.replace("__Secure-", "__Host-") };
+
+  expect(
+    (
+      await app.request(
+        `${bindings.TAILOS_PUBLIC_ORIGIN}/v1/account`,
+        { headers },
+        env,
+      )
+    ).status,
+  ).toBe(404);
+  const url = `${bindings.TAILOS_WEB_ORIGIN}/api/v1/account`;
+  expect((await app.request(url, { headers }, env)).status).toBe(404);
+  expect((await browserProxy.request(url, { headers }, env)).status).toBe(401);
 });

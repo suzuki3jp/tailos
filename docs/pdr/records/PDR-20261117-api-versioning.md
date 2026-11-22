@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261117-api-versioning
 key: api.url-versioning
-status: accepted
+status: superseded
 date: "2026-11-17"
 decided_by: suzuki3jp
 areas: [api, web, auth]

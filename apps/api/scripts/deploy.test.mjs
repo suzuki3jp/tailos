@@ -212,6 +212,7 @@ test("deploy uses existing resources and removes temporary runtime secrets", (t)
     "https://api.tailos.app",
   );
   expect(published.config.vars.TAILOS_WEB_ORIGIN).toBe("https://tailos.app");
+  expect(published.config.vars.TAILOS_BROWSER_API_VIA_WEB).toBe("true");
   expect(published.config.vars.TAILOS_OPERATOR_GITHUB_ID).toBe("123");
   expect(published.config.vars.TAILOS_GITHUB_OAUTH_CLIENT_ID).toBe(
     "test-client",

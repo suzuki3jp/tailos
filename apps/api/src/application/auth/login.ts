@@ -12,3 +12,14 @@ export type LoginAuth = {
   };
   handler(request: Request): Promise<Response>;
 };
+export type BrowserApiOrigins = {
+  TAILOS_PUBLIC_ORIGIN?: string;
+  TAILOS_WEB_ORIGIN?: string;
+  TAILOS_BROWSER_API_VIA_WEB?: string;
+};
+
+export function browserApiOrigin(env?: BrowserApiOrigins) {
+  return env?.TAILOS_BROWSER_API_VIA_WEB === "true"
+    ? env.TAILOS_WEB_ORIGIN
+    : env?.TAILOS_PUBLIC_ORIGIN;
+}

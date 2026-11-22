@@ -5,7 +5,8 @@ import type {
   ExecutionContext,
   ScheduledController,
 } from "@cloudflare/workers-types";
-import app from "@/bootstrap/http.ts";
+import app, { browserProxy } from "@/bootstrap/http.ts";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Bindings } from "@/bindings.ts";
 import { rescheduleDueRuns } from "@/application/runs/recovery.ts";
 import { observeRun } from "@/infrastructure/diagnostics/store.ts";
@@ -15,6 +16,19 @@ import { expireTimeline } from "@/infrastructure/d1/timeline.ts";
 export { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
 export { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 export { SessionStream } from "@/infrastructure/cloudflare/session-stream.ts";
+
+// Only the Web Worker binds to this entrypoint for browser and SSR requests.
+export class BrowserApiProxy extends WorkerEntrypoint<Bindings> {
+  fetch(request: Request) {
+    if (
+      this.env.TAILOS_BROWSER_API_VIA_WEB !== "true" ||
+      new URL(request.url).origin !== this.env.TAILOS_WEB_ORIGIN
+    ) {
+      return new Response(null, { status: 404 });
+    }
+    return browserProxy.fetch(request, this.env, this.ctx);
+  }
+}
 
 export default {
   fetch: app.fetch,

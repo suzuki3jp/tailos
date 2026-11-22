@@ -150,6 +150,7 @@ config.vars = {
   ...login.vars,
   TAILOS_PUBLIC_ORIGIN: origin,
   TAILOS_WEB_ORIGIN: webOrigin,
+  TAILOS_BROWSER_API_VIA_WEB: "true",
   TAILOS_GH_APP_ID: appId,
 };
 

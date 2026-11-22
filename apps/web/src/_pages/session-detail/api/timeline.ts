@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { parseTimelineSnapshot } from "@tailos/core/timeline";
 import { api } from "@/shared/api";
-import { apiOrigin } from "@/shared/config";
+import { browserApiBaseUrl } from "@/shared/config";
 
 export class TimelineRequestError extends Error {
   constructor(public readonly status: number) {
@@ -16,7 +16,9 @@ export function timelinePath(projectId: string | undefined, id: string) {
 }
 
 export function timelineStreamUrl(projectId: string | undefined, id: string) {
-  const url = new URL(`/v1${timelinePath(projectId, id)}/stream`, apiOrigin);
+  const url = new URL(
+    `${browserApiBaseUrl}${timelinePath(projectId, id)}/stream`,
+  );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.href;
 }

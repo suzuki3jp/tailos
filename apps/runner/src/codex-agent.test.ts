@@ -954,3 +954,141 @@ test("explicit model and effort reach Codex and unsupported selections fail befo
       ).rejects.toThrow("Requested model or effort is unavailable");
   }
 });
+
+function failingTurnStub(events: unknown[]) {
+  return (cwd: string) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const readline = require("node:readline");
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+const events = ${JSON.stringify(events)};
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const r = JSON.parse(line);
+  const respond = (result) => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/start") respond({ thread: { id: "failing-thread" } });
+  if (r.method !== "turn/start") return;
+  respond({});
+  for (const event of events) send(event);
+});`,
+      ],
+      { cwd, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    );
+}
+
+const retried = {
+  method: "error",
+  params: {
+    threadId: "failing-thread",
+    turnId: "turn",
+    willRetry: true,
+    error: {
+      message: "stream disconnected before completion",
+      codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      additionalDetails: null,
+    },
+  },
+};
+const failed = (error?: unknown) => ({
+  method: "turn/completed",
+  params: {
+    threadId: "failing-thread",
+    turn: { status: "failed", ...(error !== undefined && { error }) },
+  },
+});
+
+test.for([
+  {
+    name: "the failed turn's error",
+    events: [
+      retried,
+      failed({
+        message: "unexpected status 403 Forbidden",
+        codexErrorInfo: {
+          responseStreamConnectionFailed: { httpStatusCode: 403 },
+        },
+        additionalDetails: "blocked old-access",
+      }),
+    ],
+    cause:
+      'CodexTurnError: {"responseStreamConnectionFailed":{"httpStatusCode":403}}: unexpected status 403 Forbidden (blocked old-access)',
+  },
+  {
+    name: "the last error notice",
+    events: [retried, failed()],
+    cause:
+      'CodexTurnError: {"responseStreamDisconnected":{"httpStatusCode":null}}: stream disconnected before completion',
+  },
+  {
+    name: "a category",
+    events: [
+      failed({
+        message: "You've hit your usage limit.",
+        codexErrorInfo: "usageLimitExceeded",
+      }),
+    ],
+    cause: "CodexTurnError: usageLimitExceeded: You've hit your usage limit.",
+  },
+  { name: "nothing", events: [failed(null)], cause: undefined },
+])("a failed turn keeps $name as the cause", async ({ events, cause }) => {
+  const agent = createCodexAgent(failingTurnStub(events));
+  const error = await agent
+    .run(testJob(), AbortSignal.timeout(5000), process.cwd())
+    .catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("Codex turn failed");
+  const reason = (error as Error).cause;
+  expect(reason === undefined ? undefined : String(reason)).toBe(cause);
+});
+
+test("records Codex error notices and the failure reason without credentials", async () => {
+  const job = testJob();
+  job.diagnostics = {
+    traceId: `run/${job.runId}`,
+    parentSpanId: `run/${job.runId}`,
+    producerId: randomUUID(),
+    url: "https://tailos.example/diagnostics",
+    bearer: "b".repeat(64),
+    expiresAt: Date.now() + 60_000,
+  };
+  const sent: string[] = [];
+  const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+    sent.push(String(init?.body));
+    return new Response(null, { status: 204 });
+  });
+  const agent = createCodexAgent(
+    failingTurnStub([
+      retried,
+      failed({
+        message: "unauthorized old-access",
+        codexErrorInfo: "unauthorized",
+      }),
+    ]),
+  );
+  await expect(
+    agent.run(job, AbortSignal.timeout(5000), process.cwd(), diagnostics),
+  ).rejects.toThrow("Codex turn failed");
+  await diagnostics.finish();
+  const text = sent.join("");
+  expect(text).not.toContain("old-access");
+  const records = sent.flatMap(
+    (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+  );
+  const agentSpan = records.find(
+    (record) =>
+      record.attributes.operation === "agent" && record.name === "span.started",
+  )?.spanId;
+  const bodies = records
+    .filter((record) => record.spanId === agentSpan)
+    .map((record) => record.body ?? "");
+  expect(bodies.some((body) => body.includes('"willRetry":true'))).toBe(true);
+  expect(
+    bodies.some((body) =>
+      body.includes("unauthorized: unauthorized [REDACTED]"),
+    ),
+  ).toBe(true);
+});

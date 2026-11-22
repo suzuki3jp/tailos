@@ -22,7 +22,6 @@ const empty: ProjectSettings = {
   repositoryId: 0,
   installationId: 0,
   allowedActors: [],
-  agentNetworkAccess: false,
   maxRunMinutes: 30,
 };
 const fieldClass =
@@ -48,10 +47,6 @@ function Snapshot({ project }: { project: ProjectChange["before"] }) {
       <div>
         <dt className="text-muted-foreground">plan の許可ユーザー</dt>
         <dd>{project.allowedActors.join(", ")}</dd>
-      </div>
-      <div>
-        <dt className="text-muted-foreground">通信</dt>
-        <dd>{project.agentNetworkAccess ? "許可" : "無効"}</dd>
       </div>
       <div>
         <dt className="text-muted-foreground">制限時間</dt>
@@ -300,7 +295,6 @@ export function ProjectsPage() {
                           repositoryId: item.project.repositoryId,
                           installationId: item.project.installationId,
                           allowedActors: item.project.allowedActors,
-                          agentNetworkAccess: item.project.agentNetworkAccess,
                           maxRunMinutes: item.project.maxRunMinutes,
                         });
                         setActors(item.project.allowedActors.join(", "));
@@ -327,7 +321,6 @@ export function ProjectsPage() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  通信 {item.project.agentNetworkAccess ? "許可" : "無効"} ·
                   上限 {item.project.maxRunMinutes}分
                 </p>
                 <RoutinePanel projectId={item.project.id} />
@@ -434,24 +427,6 @@ export function ProjectsPage() {
             ログイン名をカンマまたは空白で区切って入力します（1〜100件）。
           </span>
         </label>
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={settings.agentNetworkAccess}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  agentNetworkAccess: e.target.checked,
-                })
-              }
-            />
-            Agent のコマンドによる通信を許可する
-          </label>
-          <p className="text-sm text-muted-foreground">
-            有効にすると依存関係のスクリプトを含むコマンドが任意の宛先へ通信でき、非公開ソースや読み取り可能なデータを外部に送信できるようになります。
-          </p>
-        </div>
         <div className="flex gap-3">
           <button
             className="action action-primary"

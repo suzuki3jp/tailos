@@ -102,7 +102,6 @@ test("redacts the credentials of a Claude job", async () => {
         repository: "acme/widgets",
         baseSha: "a".repeat(40),
         branch: `tailos/issue-1/${crypto.randomUUID()}`,
-        token: "checkout-token",
       },
     },
     async (_url, init) => {
@@ -110,13 +109,9 @@ test("redacts the credentials of a Claude job", async () => {
       return new Response(null, { status: 204 });
     },
   );
-  const span = diagnostics.start(
-    "command",
-    `echo ${token} ${leaseBearer} checkout-token`,
-  );
+  const span = diagnostics.start("command", `echo ${token} ${leaseBearer}`);
   diagnostics.end(span);
   await diagnostics.finish();
   expect(sent.join("")).not.toContain(token);
   expect(sent.join("")).not.toContain(leaseBearer);
-  expect(sent.join("")).not.toContain("checkout-token");
 });

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   CheckedPublication,
   maxPublicationBytes,
@@ -21,7 +22,19 @@ import { runInGitWorkspace } from "@/git-workspace.ts";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
 import { diagnosticErrorBody } from "@/diagnostic-operations.ts";
 
-type CurrentJob = { input: RunnerJob; state: RunnerStatus };
+type CurrentJob = { input: RunnerJob; state: RunnerStatus; key: Buffer };
+
+// Agent commands may reach this server: the Run's controller proves itself
+// with the key it sent with the job. No Agent runs before a job arrives, so
+// the first key is the controller's, and it lives only in this process.
+function controlKey(request: IncomingMessage) {
+  const match = /^Bearer ([a-f0-9]{64})$/.exec(
+    request.headers.authorization ?? "",
+  );
+  return match ? createHash("sha256").update(match[1]!).digest() : undefined;
+}
+const sameKey = (a: Buffer | undefined, b: Buffer) =>
+  a !== undefined && timingSafeEqual(a, b);
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -196,6 +209,12 @@ export function createRunnerServer(
         return;
       }
       if (request.method === "POST" && request.url === "/job") {
+        const key = controlKey(request);
+        if (!key || (current && !sameKey(key, current.key))) {
+          request.resume();
+          json(response, 401, { error: "unauthorized" });
+          return;
+        }
         const parsed = v.safeParse(RunnerJob, await readJson(request));
         if (
           !parsed.success ||
@@ -205,7 +224,11 @@ export function createRunnerServer(
           return;
         }
         if (!current) {
-          current = { input: parsed.output, state: { status: "running" } };
+          current = {
+            input: parsed.output,
+            state: { status: "running" },
+            key,
+          };
           void execute(current, agents[parsed.output.engine], requestId);
         } else if (
           JSON.stringify(current.input) !== JSON.stringify(parsed.output)
@@ -221,6 +244,10 @@ export function createRunnerServer(
         current &&
         request.url === `/job/${current.input.runId}`
       ) {
+        if (!sameKey(controlKey(request), current.key)) {
+          json(response, 401, { error: "unauthorized" });
+          return;
+        }
         json(response, 200, current.state);
         return;
       }

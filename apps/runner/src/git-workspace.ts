@@ -14,6 +14,7 @@ import {
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { PublicationFailed, type AgentResult } from "@/agent.ts";
+import { trustEnvironment } from "@/egress.ts";
 import {
   diagnosticErrorBody,
   systemErrorDetails,
@@ -54,23 +55,16 @@ export async function runInGitWorkspace(
       throw error;
     },
   );
-  const baseEnv = {
+  // No credentials here: GitHub requests get the Run's token outside the
+  // container, and only the CA for that interception is added.
+  const env = {
     PATH: process.env.PATH,
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
+    ...trustEnvironment(),
   };
-  const git = async (args: string[], network = false) => {
-    const env = network
-      ? {
-          ...baseEnv,
-          GIT_CONFIG_COUNT: "1",
-          GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
-          GIT_CONFIG_VALUE_0:
-            "Authorization: Basic " +
-            Buffer.from("x-access-token:" + checkout.token).toString("base64"),
-        }
-      : baseEnv;
+  const git = async (args: string[]) => {
     try {
       return (
         await exec(
@@ -122,18 +116,15 @@ export async function runInGitWorkspace(
     );
     await git(["init", "--quiet"]);
     await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, { flag: "wx" });
-    await git(
-      [
-        "fetch",
-        "--quiet",
-        "--depth",
-        "1",
-        "--no-tags",
-        remote,
-        checkout.baseSha,
-      ],
-      true,
-    );
+    await git([
+      "fetch",
+      "--quiet",
+      "--depth",
+      "1",
+      "--no-tags",
+      remote,
+      checkout.baseSha,
+    ]);
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
     if (activeSpan) diagnostics?.end(activeSpan);
     activeSpan = undefined;

@@ -20,7 +20,6 @@ const settings = {
   repositoryId: 42,
   installationId: 19,
   allowedActors: ["allowed"],
-  agentNetworkAccess: false,
   maxRunMinutes: 30,
 };
 type Kind = "label" | "comment";
@@ -81,7 +80,6 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
       {
         ...settings,
         maxRunMinutes: 2,
-        agentNetworkAccess: true,
         ...(change === "actor" && { allowedActors: ["someone-else"] }),
         ...(change === "installation" && { installationId: 20 }),
         ...(change === "repository" && { repositoryId: 43 }),
@@ -168,17 +166,17 @@ test.for(["label", "comment"] as const)(
       const row = await f.DB.prepare(
         "SELECT execution_context, deadline_at - created_at AS timeout FROM runs",
       ).first<{ execution_context: string; timeout: number }>();
-      expect(
-        JSON.parse(row!.execution_context).repository.agentNetworkAccess,
-      ).toBe(true);
+      expect(JSON.parse(row!.execution_context).repository).not.toHaveProperty(
+        "agentNetworkAccess",
+      );
       expect(row!.timeout).toBe(120_000);
     } else {
       const row = await f.DB.prepare(
         "SELECT execution_context, timeout_ms AS timeout FROM planning_inbox",
       ).first<{ execution_context: string; timeout: number }>();
-      expect(
-        JSON.parse(row!.execution_context).repository.agentNetworkAccess,
-      ).toBe(true);
+      expect(JSON.parse(row!.execution_context).repository).not.toHaveProperty(
+        "agentNetworkAccess",
+      );
       expect(row!.timeout).toBe(120_000);
     }
   },

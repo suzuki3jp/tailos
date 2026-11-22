@@ -22,7 +22,6 @@ const settings = {
   repositoryId: 42,
   installationId: 19,
   allowedActors: ["planner"],
-  agentNetworkAccess: true,
   maxRunMinutes: 3,
 };
 
@@ -141,7 +140,6 @@ test("a home message starts a Session and Run with the user's message, options a
         repositoryId: 42,
         installationId: 19,
         defaultBranch: "trunk",
-        agentNetworkAccess: true,
       },
       trigger: { kind: "web.message" },
     },

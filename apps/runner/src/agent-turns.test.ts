@@ -24,7 +24,6 @@ const job: RepositoryJob = {
     repository: "owner/repo",
     baseSha: "b".repeat(40),
     branch: `tailos/issue-3/${crypto.randomUUID()}`,
-    token: "checkout",
   },
 };
 

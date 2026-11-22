@@ -10,6 +10,7 @@ import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
 import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
+import { seal } from "@/infrastructure/auth/sealed-store.ts";
 
 test("a diagnostics lease accepts late telemetry but cannot publish or refresh credentials", async (t) => {
   const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
@@ -86,6 +87,7 @@ vi.mock("cloudflare:workers", () => ({
       protected env: unknown,
     ) {}
   },
+  WorkerEntrypoint: class {},
 }));
 
 test("a failed container cleanup preserves the runner health result", async (t) => {
@@ -229,10 +231,14 @@ async function preparedRun(
     .run();
   const setAlarm = vi.fn(async (_at: number) => {});
   const destroy = vi.fn(async () => {});
+  const stored = new Map<string, unknown>([["runId", runId]]);
   const ctx = {
     storage: {
       async get(key: string) {
-        return key === "runId" ? runId : undefined;
+        return stored.get(key);
+      },
+      async put(key: string, value: unknown) {
+        stored.set(key, value);
       },
       async delete(_key: string) {},
       setAlarm,
@@ -267,13 +273,13 @@ async function preparedRun(
   t.onTestFinished(() => {
     vi.restoreAllMocks();
   });
-  return { DB, runId, runner, target, pending, setAlarm };
+  return { DB, runId, runner, target, pending, setAlarm, stored };
 }
 
 test.for(["failed", "lost"] as const)(
   "ends a prepared publication promptly when the Runner is %s and its commit was not pushed",
   async (state, t) => {
-    const { DB, runId, runner, setAlarm } = await preparedRun(t, state);
+    const { DB, runId, runner, setAlarm, stored } = await preparedRun(t, state);
     const verify = vi
       .spyOn(GitHubApp.prototype, "hasCommit")
       .mockResolvedValue(false);
@@ -282,6 +288,8 @@ test.for(["failed", "lost"] as const)(
     expect(verify).toHaveBeenCalledTimes(1);
     expect(publish).not.toHaveBeenCalled();
     expect(setAlarm).not.toHaveBeenCalled();
+    // A pending publication means the Agent is done with GitHub.
+    expect(stored.get("githubEgressClosed")).toBe(true);
     expect(
       await DB.prepare("SELECT status, error_code FROM runs WHERE id = ?")
         .bind(runId)
@@ -491,7 +499,13 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
       baseSha: "e".repeat(40),
     }),
   ).toBe(false);
+  // Rejected attempts leave the Agent's GitHub access as it was.
+  expect(values.has("githubEgressClosed")).toBe(false);
   expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
+  // Checked work is final: the egress Worker stops adding the Run's token
+  // before the controller commits and opens the pull request.
+  expect(values.get("githubEgressClosed")).toBe(true);
+  expect(await runner.githubToken(runId)).toBeNull();
   expect(
     await runner.stagePublication(runId, bearer, {
       ...work,
@@ -628,6 +642,7 @@ test("planning refuses publication recovery and stops its container after saving
         async get(key: string) {
           return key === "runId" ? runId : undefined;
         },
+        async put() {},
         async delete() {},
         async setAlarm() {
           throw new Error("Planning must end");
@@ -692,7 +707,6 @@ test.for([
         repositoryId: 1,
         installationId: 2,
         allowedActors: ["allowed"],
-        agentNetworkAccess: false,
         maxRunMinutes: 1,
       },
       "owner",
@@ -719,9 +733,12 @@ test.for([
     });
     const [runId] = await dispatchPlanningInputs(DB);
     const memory = new Map<string, unknown>([["runId", runId]]);
+    const order: string[] = [];
+    const controlKeys = new Set<string | null>();
     const submit = vi.fn(async (_url: string, init?: RequestInit) => {
       if (_url.endsWith("/health"))
         return Response.json({ status: "ok", service: "runner" });
+      controlKeys.add(new Headers(init?.headers).get("Authorization"));
       if (init?.method !== "POST")
         return Response.json({
           status: "succeeded",
@@ -744,6 +761,9 @@ test.for([
         requestBody,
       );
       expect(job.checkout.baseSha).toBe("a".repeat(40));
+      // The GitHub token stays outside the container.
+      expect(job.checkout).not.toHaveProperty("token");
+      expect(String(init.body)).not.toContain("read-token");
       return Response.json(
         {
           status: "succeeded",
@@ -754,7 +774,13 @@ test.for([
         { status: 202 },
       );
     });
-    const start = vi.fn();
+    const start = vi.fn(() => {
+      order.push("start");
+    });
+    const interceptOutboundHttps = vi.fn(async (host: string) => {
+      order.push(host);
+    });
+    const egress = vi.fn((options: unknown) => options);
     const destroy = vi.fn(async () => {});
     vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
       token: "read-token",
@@ -787,11 +813,13 @@ test.for([
         container: {
           images: { runner: "image" },
           start,
+          interceptOutboundHttps,
           running: true,
           async setInactivityTimeout() {},
           getTcpPort: () => ({ fetch: submit }),
           destroy,
         },
+        exports: { GitHubEgress: egress },
       } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
       {
         DB,
@@ -824,7 +852,21 @@ test.for([
       expect(
         await DB.prepare("SELECT error_code FROM runs").first("error_code"),
       ).toBe("planning_input_too_large");
-    } else expect(start).toHaveBeenCalledOnce();
+    } else {
+      expect(start).toHaveBeenCalledOnce();
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({ enableInternet: true }),
+      );
+      // HTTPS intercepts exist before the container starts.
+      expect(order).toEqual(["github.com", "api.github.com", "start"]);
+      expect(egress).toHaveBeenCalledWith({ props: { runId } });
+      expect([...controlKeys]).toEqual([
+        expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
+      ]);
+      expect(memory.has("runnerKey")).toBe(false);
+      // Planning results arrived: the Agent's GitHub access ended before them.
+      expect(memory.get("githubEgressClosed")).toBe(true);
+    }
     expect(
       await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
     ).toBe(largeIssue ? "長".repeat(32_000) : "Current issue");
@@ -834,3 +876,40 @@ test.for([
     ).toBe(1);
   },
 );
+
+test("hands the Run's GitHub token only to its own unexpired grant", async () => {
+  const runId = crypto.randomUUID();
+  const key = Buffer.alloc(32, 7).toString("base64");
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    [
+      "repositoryGrant",
+      {
+        value: await seal("run-token", key, `tailos:github:${runId}`),
+        expiresAt: Date.now() + 60_000,
+        attempts: 0,
+      },
+    ],
+  ]);
+  const runner = new RunnerContainer(
+    {
+      storage: { get: async (name: string) => memory.get(name) },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { CREDENTIAL_ENCRYPTION_KEY: key } as ConstructorParameters<
+      typeof RunnerContainer
+    >[1],
+  );
+  expect(await runner.githubToken(runId)).toBe("run-token");
+  expect(await runner.githubToken(crypto.randomUUID())).toBeNull();
+  // Once the Agent's work is over, publication must not race its processes.
+  memory.set("githubEgressClosed", true);
+  expect(await runner.githubToken(runId)).toBeNull();
+  memory.delete("githubEgressClosed");
+  memory.set("repositoryGrant", {
+    ...(memory.get("repositoryGrant") as object),
+    expiresAt: Date.now() - 1,
+  });
+  expect(await runner.githubToken(runId)).toBeNull();
+  memory.delete("repositoryGrant");
+  expect(await runner.githubToken(runId)).toBeNull();
+});

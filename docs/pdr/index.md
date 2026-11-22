@@ -62,7 +62,7 @@
 | [PDR-20261118-home-prefetch-deadline](records/PDR-20261118-home-prefetch-deadline.md) | accepted | web.home.design-preview | ホームの初期取得に全体10秒の期限を設ける |
 | [PDR-20261118-home-recent-sessions-limit](records/PDR-20261118-home-recent-sessions-limit.md) | accepted | web.home.recent-sessions-limit | ホームの Recent Sessions を最大5件表示する |
 | [PDR-20261118-label-automation-dispatch](records/PDR-20261118-label-routine-dispatch.md) | accepted | triggers.label-automation-dispatch | Project に属する Routine を照合して label Run を独立して受け付ける |
-| [PDR-20261118-project-routine-settings](records/PDR-20261118-project-routine-settings.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、共通の実行制約は Project に置く |
+| [PDR-20261118-project-routine-settings](records/PDR-20261118-project-routine-settings.md) | superseded | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、共通の実行制約は Project に置く |
 | [PDR-20261118-automation-agent-selection](records/PDR-20261118-routine-agent-selection.md) | accepted | agent.selection | label の実行設定を Routine ごとに選び Codex から対応する |
 | [PDR-20261118-routine-configuration-validation](records/PDR-20261118-routine-configuration-validation.md) | accepted | triggers.routine-configuration-validation | 接続やモデル情報を確認できない Routine も無効状態で保存する |
 | [PDR-20261118-routine-initial-migration](records/PDR-20261118-routine-initial-migration.md) | accepted | triggers.routine-initial-migration | Routine と呼び、初回移行は Run のない状態で行う |
@@ -77,9 +77,11 @@
 | [PDR-20261121-session-list-resize](records/PDR-20261121-session-list-resize.md) | superseded | web.project.session-list-resize | セッション一覧とチャットの境界を動かして幅を調整する |
 | [PDR-20261121-session-list-width-persistence](records/PDR-20261121-session-list-width-persistence.md) | accepted | web.project.session-list-resize | セッション一覧の調整済みの幅を保存する |
 | [PDR-20261121-session-realtime-transport](records/PDR-20261121-session-realtime-transport.md) | accepted | sessions.realtime-transport | Session 単位の WebSocket 配信で履歴の後から更新を受け取る |
+| [PDR-20261122-agent-egress-credential-proxy](records/PDR-20261122-agent-egress-credential-proxy.md) | accepted | agent.network.egress | Agent の外部通信を常に許可し、GitHub の認証情報はコンテナの外で差し込む |
 | [PDR-20261122-api-versioning](records/PDR-20261122-api-versioning.md) | accepted | api.url-versioning | 本番のブラウザー向け API を Web の `/api/v1` で提供する |
 | [PDR-20261122-codex-model-catalog-in-source](records/PDR-20261122-codex-model-catalog-in-source.md) | accepted | triggers.routine-model-catalog-transport | Codex のモデル・effort 候補を Tailos のソースに定義する |
 | [PDR-20261122-codex-model-catalog-no-fetch-cache](records/PDR-20261122-codex-model-catalog-no-fetch-cache.md) | accepted | triggers.routine-model-catalog-cache | モデル候補取得のまとめ・キャッシュを廃止する |
 | [PDR-20261122-home-message-start](records/PDR-20261122-home-message-start.md) | accepted | sessions.home-message-start | ホームの入力から Project の Session と Run を開始する |
 | [PDR-20261122-login-cookie-scope](records/PDR-20261122-login-cookie-scope.md) | accepted | auth.login.cookie-scope | 本番のログイン Cookie を Web ホストに限定する |
+| [PDR-20261122-project-settings-without-network](records/PDR-20261122-project-settings-without-network.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、Project には通信許可を置かない |
 | [PDR-20261122-routine-model-options-from-source](records/PDR-20261122-routine-model-options-from-source.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を Tailos 定義の候補から選択する |

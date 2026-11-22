@@ -18,6 +18,7 @@ import {
   githubTool,
   githubToolCallSchema,
 } from "@/github-tool.ts";
+import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
 
 const threadSchema = v.object({
   thread: v.object({ id: v.string() }),
@@ -84,6 +85,7 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
           join(environment, "tools"),
           process.env.PATH,
         ].join(delimiter),
+        ...trustEnvironment(),
       }
     : {};
   return spawn(
@@ -138,12 +140,14 @@ export function createCodexAgent(
       try {
         signal.throwIfAborted();
         await mkdir(directory);
-        if (environment)
+        if (environment) {
           await Promise.all(
             ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
               mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
             ),
           );
+          await prepareGitHubCli(join(environment, "home"));
+        }
         return await runTurn(
           launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
@@ -182,16 +186,18 @@ async function runTurn(
   environment?: string,
   diagnostics?: Diagnostics,
 ) {
+  // Commands may always reach the internet: GitHub credentials are added
+  // outside the container, so none are here to send.
   const sandboxPolicy =
     environment && job.mode !== "plan"
       ? {
           type: "workspaceWrite" as const,
           writableRoots: [cwd, environment],
-          networkAccess: job.checkout?.agentNetworkAccess === true,
+          networkAccess: true,
           excludeSlashTmp: true,
           excludeTmpdirEnvVar: true,
         }
-      : { type: "readOnly" as const };
+      : { type: "readOnly" as const, networkAccess: true };
   const rpc = new CodexRpc(child);
   if (job.githubContext && !job.checkout) {
     rpc.close();
@@ -246,7 +252,6 @@ async function runTurn(
     }),
   });
   const sensitive = new Set([access.accessToken, job.refresh.bearer]);
-  if (job.checkout) sensitive.add(job.checkout.token);
   const loginParams = () => ({
     accessToken: access.accessToken,
     chatgptAccountId: access.accountId,

@@ -116,16 +116,27 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
     await created.json(),
   );
   expect(item).toMatchObject({
-    project: { agentNetworkAccess: false, maxRunMinutes: 30 },
+    project: { maxRunMinutes: 30 },
     revision: 1,
   });
   expect((await send("", settings)).status).toBe(409);
+  expect(item.project).not.toHaveProperty("agentNetworkAccess");
+  // The network setting no longer exists: Agent egress is always allowed.
   expect(
     (
       await send(`/${item.project.id}`, {
         ...settings,
         revision: 1,
         agentNetworkAccess: true,
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await send(`/${item.project.id}`, {
+        ...settings,
+        revision: 1,
+        maxRunMinutes: 10,
       })
     ).status,
   ).toBe(200);

@@ -1,4 +1,5 @@
 import { createMiddleware } from "hono/factory";
+import { browserApiOrigin } from "@/application/auth/login.ts";
 import type { Bindings } from "@/bindings.ts";
 
 export type OperatorEnv = {
@@ -13,7 +14,7 @@ export function createOperatorAuth(
   ) => Promise<{ user: { id: string }; session?: { id: string } } | null>,
 ) {
   return createMiddleware<OperatorEnv>(async (c, next) => {
-    const origin = c.env?.TAILOS_PUBLIC_ORIGIN;
+    const origin = browserApiOrigin(c.env);
     const webOrigin = c.env?.TAILOS_WEB_ORIGIN;
     c.header("Cache-Control", "private, no-store");
     if (

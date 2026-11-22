@@ -52,6 +52,7 @@ import { d1McpKeys } from "@/infrastructure/d1/mcp-keys.ts";
 import { d1Projects } from "@/infrastructure/d1/projects.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { createProjectRoutes } from "@/presentation/http/handlers/projects/projects.ts";
+import { directBrowserApiPath, webBrowserApiPath } from "@tailos/core/auth";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -201,8 +202,17 @@ export type BrowserApi = ApplyGlobalResponse<
   }
 >;
 
-app.route("/v1", browserApi);
-app.route("/v1/auth", loginRoutes);
+export const browserProxy = new Hono<{ Bindings: Bindings }>()
+  .use("*", requestDiagnostics)
+  .route(webBrowserApiPath, browserApi)
+  .route(`${webBrowserApiPath}/auth`, loginRoutes);
+
+app.use(`${directBrowserApiPath}/*`, async (c, next) => {
+  if (c.env?.TAILOS_BROWSER_API_VIA_WEB === "true") return c.notFound();
+  await next();
+});
+app.route(directBrowserApiPath, browserApi);
+app.route(`${directBrowserApiPath}/auth`, loginRoutes);
 app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);

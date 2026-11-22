@@ -1,1 +1,1 @@
-export { apiOrigin } from "./api-origin";
+export { apiOrigin, browserApiBaseUrl, usesWebApiProxy } from "./api-origin";

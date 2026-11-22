@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-project-routine-settings
 key: project.configuration.editable-fields
-status: accepted
+status: superseded
 date: "2026-11-18"
 areas: [projects, triggers, api, database]
 keywords: [Routine, Project, triggerLabel, allowedActors, 許可ユーザー, 通信許可, 時間上限]

@@ -15,7 +15,7 @@ paths:
   - apps/runner/entrypoint.sh
   - apps/runner/src/codex-agent.ts
   - apps/runner/src/claude-agent.ts
-  - apps/runner/src/egress-proxy.ts
+  - apps/runner/src/egress.ts
   - apps/runner/src/git-workspace.ts
   - apps/runner/src/github-tool.ts
   - apps/runner/src/server.ts

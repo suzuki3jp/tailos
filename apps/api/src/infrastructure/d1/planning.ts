@@ -141,11 +141,11 @@ export async function dispatchPlanningInputs(
         .bind(messageId, now, scope),
       db
         .prepare(`INSERT INTO runs (id, session_id, start_message_id, status, concurrency_key, execution_context, deadline_at, next_action_at, created_at)
-        SELECT ?, p.session_id, ?, 'queued', ?, json_set(i.execution_context,
+        SELECT ?, p.session_id, ?, 'queued', ?, json_remove(json_set(i.execution_context,
           '$.repository.repository', json_extract(project.config, '$.repository'),
           '$.repository.repositoryId', project.repository_id,
-          '$.repository.installationId', json_extract(project.config, '$.installationId'),
-          '$.repository.agentNetworkAccess', json(CASE WHEN json_extract(project.config, '$.agentNetworkAccess') THEN 'true' ELSE 'false' END)),
+          '$.repository.installationId', json_extract(project.config, '$.installationId')),
+          '$.repository.agentNetworkAccess'),
           ? + json_extract(project.config, '$.maxRunMinutes') * 60000, ?, ?
         FROM planning_issues p JOIN planning_inbox i ON i.scope = p.scope
         JOIN sessions s ON s.id = p.session_id JOIN projects project ON project.id = s.project_id WHERE p.scope = ?

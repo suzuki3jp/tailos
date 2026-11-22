@@ -104,8 +104,8 @@ export function createGitHubReader(
           const response = await http(url, {
             method: "GET",
             redirect: "error",
+            // The Run's token is added outside the container.
             headers: {
-              Authorization: `Bearer ${checkout.token}`,
               Accept: "application/vnd.github+json",
               "X-GitHub-Api-Version": "2026-03-10",
               "User-Agent": "Tailos",

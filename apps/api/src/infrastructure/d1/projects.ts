@@ -33,11 +33,14 @@ function readProject(value: string, name?: string): Project {
   const {
     name: storedName,
     triggerLabel: _legacyLabel,
+    // Agent egress is always allowed now; stored rows are not rewritten.
+    agentNetworkAccess: _removedNetworkSetting,
     ...config
   } = v.parse(
     v.looseObject({
       name: v.optional(v.string()),
       triggerLabel: v.optional(v.string()),
+      agentNetworkAccess: v.optional(v.unknown()),
     }),
     JSON.parse(value),
   );

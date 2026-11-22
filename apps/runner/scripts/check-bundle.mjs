@@ -52,9 +52,10 @@ test(
       assert.ok(ready, `Runner did not become ready: ${stderr}`);
       const runId = randomUUID();
       const prompt = `bundle smoke test ${runId}`;
+      const control = { Authorization: `Bearer ${"c".repeat(64)}` };
       const accepted = await fetch(`${origin}/job`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...control },
         body: JSON.stringify({
           version: 1,
           engine: "fake",
@@ -69,6 +70,7 @@ test(
       let status;
       for (let attempt = 0; attempt < 100; attempt++) {
         const response = await fetch(`${origin}/job/${runId}`, {
+          headers: control,
           signal: AbortSignal.timeout(1_000),
         });
         assert.equal(response.status, 200);

@@ -69,7 +69,6 @@ export async function startSessionFromMessage(
         repositoryId: project.repositoryId,
         installationId: project.installationId,
         defaultBranch: await deps.defaultBranch(project),
-        agentNetworkAccess: project.agentNetworkAccess,
       },
       trigger: { kind: "web.message" },
     };

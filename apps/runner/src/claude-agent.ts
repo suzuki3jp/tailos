@@ -26,6 +26,11 @@ import {
 } from "@/agent-turns.ts";
 import { createGitHubReader, githubTool } from "@/github-tool.ts";
 import {
+  prepareGitHubCli,
+  startEgressProxy,
+  trustEnvironment,
+} from "@/egress.ts";
+import {
   diagnosticErrorBody,
   withDiagnosticSpan,
 } from "@/diagnostic-operations.ts";
@@ -43,6 +48,8 @@ export type ClaudeRuntime = {
   githubServer(read: GitHubRead): McpServerConfig;
   // Whether the command sandbox can start in this environment.
   sandboxAvailable(signal: AbortSignal): Promise<boolean>;
+  // The forward proxy that commands reach the internet through.
+  startProxy(): Promise<{ port: number; close(): Promise<void> }>;
 };
 
 const githubServerName = "tailos";
@@ -59,6 +66,7 @@ export const loadClaudeRuntime = async (): Promise<ClaudeRuntime> => {
   ]);
   return {
     query: sdk.query,
+    startProxy: () => startEgressProxy(),
     // Claude Code checks that bubblewrap is installed, not that it can create
     // namespaces here. Without this check every command of the Run would fail.
     sandboxAvailable: (signal) =>
@@ -91,8 +99,8 @@ export const loadClaudeRuntime = async (): Promise<ClaudeRuntime> => {
               number: z.number().int().min(1),
               bodyOffset: z.number().int().min(0).optional(),
             },
-            // The handler runs in the Runner process: the checkout token
-            // never reaches Claude Code.
+            // The handler runs in the Runner process, whose GitHub requests
+            // get the Run's token outside the container.
             async (input) => {
               const result = await read(input);
               return {
@@ -329,6 +337,7 @@ export function createClaudeAgent(
             )
             .map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
         );
+        await prepareGitHubCli(join(environment, "home"));
         return await runTurns(
           await load(),
           cwd ?? join(root, "workspace"),
@@ -374,14 +383,13 @@ async function runTurns(
       )
     : undefined;
   const sensitive = new Set([job.access.token, job.lease.bearer]);
-  if (job.checkout) sensitive.add(job.checkout.token);
   const agentSpan = diagnostics?.start(
     "agent",
     JSON.stringify({
       engine: "claude",
       version: process.env.TAILOS_CLAUDE_AGENT_SDK_VERSION ?? "unknown",
       sandbox: implementation ? "workspace-write" : "read-only",
-      ...(implementation && { commandNetwork: "blocked" }),
+      ...(implementation && { commandNetwork: "proxied" }),
     }),
   );
   const toolSpans = new Map<string, string>();
@@ -439,6 +447,7 @@ async function runTurns(
     pnpm_config_verify_deps_before_run: "false",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
+    ...trustEnvironment(),
     // Holds this Run's conversation only: no user settings exist in it.
     CLAUDE_CONFIG_DIR: configDirectory,
     CLAUDE_CODE_OAUTH_TOKEN: job.access.token,
@@ -455,7 +464,9 @@ async function runTurns(
   let sessionId: string | undefined;
   let agentSucceeded = false;
   let agentError: unknown;
+  let proxy: Awaited<ReturnType<ClaudeRuntime["startProxy"]>> | undefined;
   try {
+    if (implementation) proxy = await runtime.startProxy();
     if (implementation && !(await runtime.sandboxAvailable(signal))) {
       signal.throwIfAborted();
       throw new AgentSandboxUnavailable(
@@ -513,11 +524,16 @@ async function runTurns(
                       allowUnsandboxedCommands: false,
                       autoAllowBashIfSandboxed: true,
                       filesystem: { allowWrite: [cwd, environment] },
-                      // What agentNetworkAccess allows Claude Code is undecided,
-                      // so commands get no network whatever its value. The
-                      // strict list also ignores the repository's own
-                      // allowed domains.
-                      network: { allowedDomains: [], strictAllowlist: true },
+                      // Claude Code cannot allow every host itself, so
+                      // commands reach the internet through Tailos's proxy,
+                      // which is not checked against these lists. The strict
+                      // empty list keeps the repository's own domains and
+                      // every other route closed.
+                      network: {
+                        httpProxyPort: proxy!.port,
+                        allowedDomains: [],
+                        strictAllowlist: true,
+                      },
                     },
                   }),
                 }
@@ -572,6 +588,7 @@ async function runTurns(
     agentError = error;
     throw error;
   } finally {
+    await proxy?.close();
     if (agentSpan)
       diagnostics?.end(
         agentSpan,

@@ -10,6 +10,7 @@ import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
 import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
+import { seal } from "@/infrastructure/auth/sealed-store.ts";
 
 test("a diagnostics lease accepts late telemetry but cannot publish or refresh credentials", async (t) => {
   const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
@@ -86,6 +87,7 @@ vi.mock("cloudflare:workers", () => ({
       protected env: unknown,
     ) {}
   },
+  WorkerEntrypoint: class {},
 }));
 
 test("a failed container cleanup preserves the runner health result", async (t) => {
@@ -692,7 +694,6 @@ test.for([
         repositoryId: 1,
         installationId: 2,
         allowedActors: ["allowed"],
-        agentNetworkAccess: false,
         maxRunMinutes: 1,
       },
       "owner",
@@ -719,9 +720,12 @@ test.for([
     });
     const [runId] = await dispatchPlanningInputs(DB);
     const memory = new Map<string, unknown>([["runId", runId]]);
+    const order: string[] = [];
+    const controlKeys = new Set<string | null>();
     const submit = vi.fn(async (_url: string, init?: RequestInit) => {
       if (_url.endsWith("/health"))
         return Response.json({ status: "ok", service: "runner" });
+      controlKeys.add(new Headers(init?.headers).get("Authorization"));
       if (init?.method !== "POST")
         return Response.json({
           status: "succeeded",
@@ -744,6 +748,9 @@ test.for([
         requestBody,
       );
       expect(job.checkout.baseSha).toBe("a".repeat(40));
+      // The GitHub token stays outside the container.
+      expect(job.checkout).not.toHaveProperty("token");
+      expect(String(init.body)).not.toContain("read-token");
       return Response.json(
         {
           status: "succeeded",
@@ -754,7 +761,13 @@ test.for([
         { status: 202 },
       );
     });
-    const start = vi.fn();
+    const start = vi.fn(() => {
+      order.push("start");
+    });
+    const interceptOutboundHttps = vi.fn(async (host: string) => {
+      order.push(host);
+    });
+    const egress = vi.fn((options: unknown) => options);
     const destroy = vi.fn(async () => {});
     vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
       token: "read-token",
@@ -787,11 +800,13 @@ test.for([
         container: {
           images: { runner: "image" },
           start,
+          interceptOutboundHttps,
           running: true,
           async setInactivityTimeout() {},
           getTcpPort: () => ({ fetch: submit }),
           destroy,
         },
+        exports: { GitHubEgress: egress },
       } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
       {
         DB,
@@ -824,7 +839,19 @@ test.for([
       expect(
         await DB.prepare("SELECT error_code FROM runs").first("error_code"),
       ).toBe("planning_input_too_large");
-    } else expect(start).toHaveBeenCalledOnce();
+    } else {
+      expect(start).toHaveBeenCalledOnce();
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({ enableInternet: true }),
+      );
+      // HTTPS intercepts exist before the container starts.
+      expect(order).toEqual(["github.com", "api.github.com", "start"]);
+      expect(egress).toHaveBeenCalledWith({ props: { runId } });
+      expect([...controlKeys]).toEqual([
+        expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
+      ]);
+      expect(memory.has("runnerKey")).toBe(false);
+    }
     expect(
       await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
     ).toBe(largeIssue ? "長".repeat(32_000) : "Current issue");
@@ -834,3 +861,36 @@ test.for([
     ).toBe(1);
   },
 );
+
+test("hands the Run's GitHub token only to its own unexpired grant", async () => {
+  const runId = crypto.randomUUID();
+  const key = Buffer.alloc(32, 7).toString("base64");
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    [
+      "repositoryGrant",
+      {
+        value: await seal("run-token", key, `tailos:github:${runId}`),
+        expiresAt: Date.now() + 60_000,
+        attempts: 0,
+      },
+    ],
+  ]);
+  const runner = new RunnerContainer(
+    {
+      storage: { get: async (name: string) => memory.get(name) },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { CREDENTIAL_ENCRYPTION_KEY: key } as ConstructorParameters<
+      typeof RunnerContainer
+    >[1],
+  );
+  expect(await runner.githubToken(runId)).toBe("run-token");
+  expect(await runner.githubToken(crypto.randomUUID())).toBeNull();
+  memory.set("repositoryGrant", {
+    ...(memory.get("repositoryGrant") as object),
+    expiresAt: Date.now() - 1,
+  });
+  expect(await runner.githubToken(runId)).toBeNull();
+  memory.delete("repositoryGrant");
+  expect(await runner.githubToken(runId)).toBeNull();
+});

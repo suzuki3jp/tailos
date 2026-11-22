@@ -11,7 +11,6 @@ const configuration = v.strictObject({
   repositoryId: id,
   installationId: id,
   allowedActors: v.pipe(v.array(v.string()), v.minLength(1), v.maxLength(100)),
-  agentNetworkAccess: v.optional(v.boolean(), false),
   maxRunMinutes: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(30)),
     30,
@@ -23,11 +22,16 @@ export const projectSchema = v.strictObject({
   name: v.pipe(v.string(), v.minLength(1)),
   ...configuration.entries,
 });
-const legacyProject = v.strictObject({
-  id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
-  ...configuration.entries,
-  triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
-});
+const legacyProject = v.pipe(
+  v.strictObject({
+    id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
+    ...configuration.entries,
+    triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
+    // Agent egress is always allowed now; old exports still carry the setting.
+    agentNetworkAccess: v.optional(v.boolean()),
+  }),
+  v.transform(({ agentNetworkAccess: _removed, ...project }) => project),
+);
 const uniqueProjects = (items: { id: string; repositoryId: number }[]) =>
   new Set(items.map((item) => item.repositoryId)).size === items.length &&
   new Set(items.map((item) => item.id)).size === items.length;

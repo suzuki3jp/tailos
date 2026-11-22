@@ -312,7 +312,6 @@ test("actor removal applies to future acceptance while already accepted pending 
     {
       ...settings,
       allowedActors: ["replacement"],
-      agentNetworkAccess: true,
       maxRunMinutes: 3,
     },
     "operator",
@@ -334,8 +333,9 @@ test("actor removal applies to future acceptance while already accepted pending 
     )
     .bind(second)
     .first<{ execution_context: string; timeout: number }>();
-  expect(JSON.parse(row!.execution_context).repository.agentNetworkAccess).toBe(
-    true,
+  // Stored inputs may still carry the removed network setting; new Runs do not.
+  expect(JSON.parse(row!.execution_context).repository).not.toHaveProperty(
+    "agentNetworkAccess",
   );
   expect(row!.timeout).toBe(180_000);
 });

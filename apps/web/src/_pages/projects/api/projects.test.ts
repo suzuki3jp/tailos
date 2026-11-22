@@ -14,7 +14,6 @@ const settings = {
   repositoryId: 42,
   installationId: 19,
   allowedActors: ["operator"],
-  agentNetworkAccess: false,
   maxRunMinutes: 30,
 };
 test("reads protected projects, candidates and history with credentials and cancellation, preserving error statuses", async () => {

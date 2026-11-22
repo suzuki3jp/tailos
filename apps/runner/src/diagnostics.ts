@@ -53,14 +53,6 @@ export class RunnerDiagnostics implements Diagnostics {
         this.addSecret(job.access.token);
         this.addSecret(job.lease.bearer);
       }
-      if (job.checkout) {
-        this.addSecret(job.checkout.token);
-        this.addSecret(
-          Buffer.from(`x-access-token:${job.checkout.token}`).toString(
-            "base64",
-          ),
-        );
-      }
     }
     if (this.context) {
       this.addSecret(this.context.bearer);

@@ -22,7 +22,6 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
       repositoryId: 42,
       installationId: 19,
       allowedActors: ["planner"],
-      agentNetworkAccess: false,
       maxRunMinutes: 30,
     },
     owner.id,

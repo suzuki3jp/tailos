@@ -4,7 +4,7 @@
 
 GitHub Issue に有効な Routine の起動ラベルを付けると、Tailos が設定されたプロンプトで Session と最初の依頼を作る。既存設定の移行では従来の `tailos:run` 等のラベルを引き継ぐ。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は D1 に保存し、運用者が Web の `/projects` で管理する。PR 作成後のレビューとマージは人が行う。
 
-GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。Web チャットからの起動・続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
+GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。ホームの入力欄からは、選択した Project で新しい Session と Run を開始できる（[判断](pdr/records/PDR-20261122-home-message-start.md)）。Web チャットからの続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 
@@ -104,7 +104,7 @@ JSON の列はバージョン付きの Valibot スキーマで検証する。Iss
 1. Run と起点のメッセージ、メッセージと紐づく Run は、それぞれ複合外部キーで同じ Session 内に限定する。`start_message_id` を一意にし、一つの依頼から一つの Run を作る。各 Session の進行中の Run も一つに絞る。
 2. `(source, idempotency_key)` を一意にする。label のキーは Project・Routine・外部 delivery ID を含み、Routine 間を分離する。同じ配送の再送では、完了後も記録済みの Run と Session を返し、受信診断にも再送を記録する。
 3. 進行中の Run だけ `concurrency_key` を一意にする。label のキーは所有者・Project・Routine・GitHub リポジトリ ID・Issue 番号から作る。同じ Routine・Issue に対する別の配送が実行中に届いたら、`coalesced` として既存 Run に紐づける。完了後にラベルを付け直したら、新しい Session を作る。
-4. 新規 Webhook の受付では Session、最初のメッセージ、Run、`started` イベントを一つの D1 バッチトランザクションで作る。外部イベントで始まる Run の `started` は一件に制限する。将来、Web から始まる Run はユーザーのメッセージを起点にする。
+4. 新規 Webhook の受付では Session、最初のメッセージ、Run、`started` イベントを一つの D1 バッチトランザクションで作る。外部イベントで始まる Run の `started` は一件に制限する。ホームの入力から始まる Run は同じ受付で、利用者のメッセージを起点にする。`execution_context` の `trigger` は起動元ごとの値を持つ variant で、Issue の照合・通知は Issue を持つ trigger だけに適用する。
 
 Project はアカウントが所有する設定であり、運用者認証と Web の Origin 検査で管理する。`projects` は UUID、自由な名前 `name`、内部ユーザー ID の `owner_id`、設定 JSON、リポジトリ ID、版、更新者・時刻、削除時刻、移行元の旧 ID を保持する。名前は前後の空白除去後に 1〜100 文字で必須、同名を許可する。UUID はサーバーで発行し変更しない。稼働中の Project は最大 100 件で、今回の実装では同じリポジトリ ID を重複登録できない。重複登録と Webhook の複数配信は後続で一緒に有効にする。リポジトリは GitHub App の installation とアクセス可能な全ページの候補から選び、保存時にも metadata の読み取りトークンで名前・ID・installation の組み合わせを照合する。秘密鍵とトークンは API 内だけで扱う。 [GitHub App の installation API](https://docs.github.com/en/rest/apps/installations)
 

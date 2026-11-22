@@ -524,14 +524,23 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
   await runner.alarm();
   expect(publish).not.toHaveBeenCalled();
   await runner.alarm();
+  // The stored context predates triggers and is read as a label trigger.
+  const { issueNumber, triggerLabel, ...repository } = target;
+  const trigger = {
+    kind: "github.issue-label",
+    issueNumber,
+    label: triggerLabel,
+  };
   expect(commit).toHaveBeenLastCalledWith(
-    target,
+    repository,
+    trigger,
     runId,
     expect.objectContaining(work),
     expect.any(Number),
   );
   expect(publish).toHaveBeenCalledExactlyOnceWith(
-    target,
+    repository,
+    trigger,
     runId,
     {
       branch,

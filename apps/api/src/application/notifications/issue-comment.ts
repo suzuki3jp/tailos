@@ -1,5 +1,7 @@
 import type { RepositoryTarget } from "@tailos/core/runner";
 
+export type IssueTarget = RepositoryTarget & { issueNumber: number };
+
 export type NotificationState = "processing" | "succeeded" | "failed";
 const notificationLabels = {
   processing: "処理中",
@@ -13,6 +15,8 @@ export type IssueNotification = {
   reply_body?: string;
   session_id: string;
   target: string;
+  /** Absent for contexts stored before triggers, which kept the issue in target. */
+  trigger?: string | null;
   comment_id: number | null;
   desired_state: NotificationState;
   version: number;
@@ -78,11 +82,26 @@ function notificationRetryAt(
   );
 }
 
+function notificationTarget(n: IssueNotification): IssueTarget {
+  const target = JSON.parse(n.target) as IssueTarget;
+  const trigger: unknown = n.trigger ? JSON.parse(n.trigger) : null;
+  if (
+    typeof trigger === "object" &&
+    trigger !== null &&
+    "issueNumber" in trigger &&
+    typeof trigger.issueNumber === "number"
+  )
+    return { ...target, issueNumber: trigger.issueNumber };
+  if (typeof target.issueNumber !== "number")
+    throw new NotificationError("permanent");
+  return target;
+}
+
 export async function sendIssueNotifications(
   store: NotificationStore,
   origin: string,
   publish: (
-    target: RepositoryTarget,
+    target: IssueTarget,
     marker: string,
     body: string,
     commentId: number | null,
@@ -95,7 +114,7 @@ export async function sendIssueNotifications(
     if (!n) break;
     try {
       const id = await publish(
-        JSON.parse(n.target),
+        notificationTarget(n),
         notificationMarker(n),
         commentBody(origin, n),
         n.comment_id,

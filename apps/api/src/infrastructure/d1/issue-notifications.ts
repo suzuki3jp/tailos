@@ -17,7 +17,9 @@ export function issueNotificationStore(db: D1Database): NotificationStore {
         RETURNING *,
           (SELECT session_id FROM runs WHERE runs.id = issue_notifications.run_id) AS session_id,
           (SELECT json_extract(execution_context, '$.repository') FROM runs
-            WHERE runs.id = issue_notifications.run_id) AS target`)
+            WHERE runs.id = issue_notifications.run_id) AS target,
+          (SELECT json_extract(execution_context, '$.trigger') FROM runs
+            WHERE runs.id = issue_notifications.run_id) AS trigger`)
         .bind(lease, now + 300_000, now, now)
         .all<IssueNotification>();
       return result.results;

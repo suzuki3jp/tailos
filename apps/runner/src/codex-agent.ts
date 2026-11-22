@@ -34,10 +34,45 @@ const messageSchema = v.object({
   threadId: v.string(),
   item: v.object({ type: v.literal("agentMessage"), text: v.string() }),
 });
+// Codex explains a failed turn here; without it every failure looks the same.
+const turnErrorSchema = v.object({
+  message: v.string(),
+  codexErrorInfo: v.optional(v.nullable(v.unknown())),
+  additionalDetails: v.optional(v.nullable(v.string())),
+});
+type TurnError = v.InferOutput<typeof turnErrorSchema>;
 const completedSchema = v.object({
   threadId: v.string(),
-  turn: v.object({ status: v.string() }),
+  turn: v.object({
+    status: v.string(),
+    error: v.optional(v.nullable(turnErrorSchema)),
+  }),
 });
+const errorNotificationSchema = v.object({
+  threadId: v.string(),
+  willRetry: v.optional(v.boolean()),
+  error: turnErrorSchema,
+});
+
+const maxTurnErrorText = 2_000;
+
+function turnErrorCategory(info: TurnError["codexErrorInfo"]) {
+  if (info == null) return "unknown";
+  if (typeof info === "string") return info;
+  return JSON.stringify(info);
+}
+
+/** Why Codex failed a turn, in Codex's own words and category. */
+export class CodexTurnError extends Error {
+  override name = "CodexTurnError";
+  constructor(error: TurnError) {
+    const category = turnErrorCategory(error.codexErrorInfo);
+    const details = error.additionalDetails
+      ? ` (${error.additionalDetails.slice(0, maxTurnErrorText)})`
+      : "";
+    super(`${category}: ${error.message.slice(0, maxTurnErrorText)}${details}`);
+  }
+}
 
 function diagnosticOperation(itemType: string) {
   switch (itemType) {
@@ -261,6 +296,7 @@ async function runTurn(
   let resolveTurn = () => {};
   let rejectTurn = (_error: Error) => {};
   let failure: Error | undefined;
+  let lastTurnError: TurnError | undefined;
   const fail = (error: Error) => {
     failure ??= error;
     rejectTurn(error);
@@ -396,11 +432,38 @@ async function runTurn(
       if (item.success && item.output.threadId === threadId)
         reply = item.output.item.text;
     }
+    if (method === "error") {
+      const notice = v.safeParse(errorNotificationSchema, params);
+      if (!notice.success || notice.output.threadId !== threadId) return;
+      lastTurnError = notice.output.error;
+      if (agentSpan) {
+        try {
+          // Retried errors are kept too: they show what led to a failure.
+          diagnostics?.output(
+            agentSpan,
+            JSON.stringify({
+              codexError: notice.output.error,
+              willRetry: notice.output.willRetry ?? false,
+            }),
+          );
+        } catch {
+          // Recording diagnostics must not change the turn.
+        }
+      }
+    }
     if (method === "turn/completed") {
       const turn = v.parse(completedSchema, params);
       if (turn.threadId !== threadId) return;
       if (turn.turn.status === "completed") resolveTurn();
-      else fail(new Error("Codex turn failed"));
+      else {
+        const reason = turn.turn.error ?? lastTurnError;
+        fail(
+          new Error(
+            "Codex turn failed",
+            reason && { cause: new CodexTurnError(reason) },
+          ),
+        );
+      }
     }
   };
 
@@ -478,6 +541,7 @@ async function runTurn(
         // Arm a new completion before turn/start: notifications can arrive
         // before the RPC response. Never reuse a previous turn's reply or
         // completion.
+        lastTurnError = undefined;
         const completed = new Promise<void>((resolve, reject) => {
           resolveTurn = resolve;
           rejectTurn = reject;

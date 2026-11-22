@@ -118,7 +118,7 @@ D1 と R2 の横断トランザクションは前提にしない。R2 成功・D
 
 推奨ルールから `@secretlint/secretlint-rule-filter-comments` を明示的に除外する。本文内の `secretlint-disable`、対象リポジトリの設定や ignore によって検出を抑止させない。長時間動くプロセスでは profiler を無効にする。[推奨プリセット](https://github.com/secretlint/secretlint/blob/v13.1.0/packages/%40secretlint/secretlint-rule-preset-recommend/src/index.ts)
 
-Secretlint で検出できない形式の資格情報には、既知の秘密値の完全一致による除去も併用する。Runner が受け取った access token、更新用・診断用の Bearer、checkout token とその Git 認証用表現、更新後の token を対象にする。認証 RPC、全ヘッダー、環境変数全体、RunnerJob の丸ごとの保存はしない。
+Secretlint で検出できない形式の資格情報には、既知の秘密値の完全一致による除去も併用する。Runner が受け取った access token、更新用・診断用の Bearer、更新後の token を対象にする。GitHub のトークンはコンテナの外で差し込み、Runner は受け取らない。認証 RPC、全ヘッダー、環境変数全体、RunnerJob の丸ごとの保存はしない。
 
 本文検査で未知の秘密値をすべて検出できるとは限らない。非公開の Issue・ソース・出力として閲覧権限と保持期間を制限する。検査失敗や上限超過では、本文を未検査のまま保存する代替経路を設けない。
 

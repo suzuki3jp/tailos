@@ -231,10 +231,14 @@ async function preparedRun(
     .run();
   const setAlarm = vi.fn(async (_at: number) => {});
   const destroy = vi.fn(async () => {});
+  const stored = new Map<string, unknown>([["runId", runId]]);
   const ctx = {
     storage: {
       async get(key: string) {
-        return key === "runId" ? runId : undefined;
+        return stored.get(key);
+      },
+      async put(key: string, value: unknown) {
+        stored.set(key, value);
       },
       async delete(_key: string) {},
       setAlarm,
@@ -269,13 +273,13 @@ async function preparedRun(
   t.onTestFinished(() => {
     vi.restoreAllMocks();
   });
-  return { DB, runId, runner, target, pending, setAlarm };
+  return { DB, runId, runner, target, pending, setAlarm, stored };
 }
 
 test.for(["failed", "lost"] as const)(
   "ends a prepared publication promptly when the Runner is %s and its commit was not pushed",
   async (state, t) => {
-    const { DB, runId, runner, setAlarm } = await preparedRun(t, state);
+    const { DB, runId, runner, setAlarm, stored } = await preparedRun(t, state);
     const verify = vi
       .spyOn(GitHubApp.prototype, "hasCommit")
       .mockResolvedValue(false);
@@ -284,6 +288,8 @@ test.for(["failed", "lost"] as const)(
     expect(verify).toHaveBeenCalledTimes(1);
     expect(publish).not.toHaveBeenCalled();
     expect(setAlarm).not.toHaveBeenCalled();
+    // A pending publication means the Agent is done with GitHub.
+    expect(stored.get("githubEgressClosed")).toBe(true);
     expect(
       await DB.prepare("SELECT status, error_code FROM runs WHERE id = ?")
         .bind(runId)
@@ -493,7 +499,13 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
       baseSha: "e".repeat(40),
     }),
   ).toBe(false);
+  // Rejected attempts leave the Agent's GitHub access as it was.
+  expect(values.has("githubEgressClosed")).toBe(false);
   expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
+  // Checked work is final: the egress Worker stops adding the Run's token
+  // before the controller commits and opens the pull request.
+  expect(values.get("githubEgressClosed")).toBe(true);
+  expect(await runner.githubToken(runId)).toBeNull();
   expect(
     await runner.stagePublication(runId, bearer, {
       ...work,
@@ -630,6 +642,7 @@ test("planning refuses publication recovery and stops its container after saving
         async get(key: string) {
           return key === "runId" ? runId : undefined;
         },
+        async put() {},
         async delete() {},
         async setAlarm() {
           throw new Error("Planning must end");
@@ -851,6 +864,8 @@ test.for([
         expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
       ]);
       expect(memory.has("runnerKey")).toBe(false);
+      // Planning results arrived: the Agent's GitHub access ended before them.
+      expect(memory.get("githubEgressClosed")).toBe(true);
     }
     expect(
       await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
@@ -886,6 +901,10 @@ test("hands the Run's GitHub token only to its own unexpired grant", async () =>
   );
   expect(await runner.githubToken(runId)).toBe("run-token");
   expect(await runner.githubToken(crypto.randomUUID())).toBeNull();
+  // Once the Agent's work is over, publication must not race its processes.
+  memory.set("githubEgressClosed", true);
+  expect(await runner.githubToken(runId)).toBeNull();
+  memory.delete("githubEgressClosed");
   memory.set("repositoryGrant", {
     ...(memory.get("repositoryGrant") as object),
     expiresAt: Date.now() - 1,

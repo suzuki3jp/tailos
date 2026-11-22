@@ -87,6 +87,13 @@ type RunnerExports = {
   GitHubEgress(options: { props: GitHubEgressProps }): Fetcher;
 };
 
+/**
+ * Set once the Agent's work is over. Publication runs before the container is
+ * destroyed, so the egress Worker must stop adding the Run's token first:
+ * otherwise a process the Agent left behind could push to the work branch.
+ */
+const githubEgressClosed = "githubEgressClosed";
+
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
 const runnerHeaders = (key: string | undefined) =>
@@ -352,6 +359,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   /** The Run's GitHub token, for the egress Worker that adds it to requests. */
   async githubToken(runId: string): Promise<string | null> {
     if ((await this.ctx.storage.get<string>("runId")) !== runId) return null;
+    if (await this.ctx.storage.get<boolean>(githubEgressClosed)) return null;
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
     const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
@@ -360,6 +368,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       v.string(),
       await unseal(grant.value, key, `tailos:github:${runId}`),
     );
+  }
+
+  private async closeGitHubEgress() {
+    await this.ctx.storage.put(githubEgressClosed, true);
   }
 
   async refreshAccess(runId: string, bearer: string, accessVersion: string) {
@@ -443,6 +455,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
     if (!reserved) return false;
     await bucket.put(publicationKey(runId, digest), content);
+    // The Agent is done once its work is checked: nothing may add to it.
+    await this.closeGitHubEgress();
     const staged = await stageRunPublication(this.env.DB, runId, {
       ...checkpoint,
       digest,
@@ -691,6 +705,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const target = repository && trigger ? { repository, trigger } : undefined;
     if (context.mode === "plan") {
       const status = await this.readRunnerStatus(runId);
+      if (status.status !== "running") await this.closeGitHubEgress();
       if (status.status !== "succeeded") return status;
       if (!status.plan || status.publication)
         return {
@@ -701,6 +716,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return status;
     }
     const pending = target ? pendingPublication(stepState) : null;
+    if (pending) await this.closeGitHubEgress();
     if (target && pending?.kind === "checked") {
       const recoveryDeadline = publicationDeadline(stepState, deadlineAt);
       const github = this.github;
@@ -750,6 +766,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         return { status: "failed", errorCode: "runner_lost" } as const;
       },
     );
+    if (status.status !== "running") await this.closeGitHubEgress();
     if (target && pending && pending.kind !== "checked") {
       if (status.status === "running" && Date.now() < deadlineAt) return status;
       if (

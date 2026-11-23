@@ -5,11 +5,16 @@ import type { Bindings } from "@/bindings.ts";
 export const codexEgressHosts = ["chatgpt.com"] as const;
 
 /**
- * The paths that Codex uses for a Run: the model API under `codex/` and the
- * usage query. The token is not added to the rest of the account's API.
+ * The paths that Codex uses for a Run: the model API under `codex/`, the
+ * workspace routing discovery that Codex runs before its first model request,
+ * and the usage query. The token is not added to the rest of the account's
+ * API.
  */
 const codexPathPrefixes = ["/backend-api/codex/"] as const;
-const codexPaths = ["/backend-api/wham/usage"] as const;
+const codexPaths = [
+  "/backend-api/wham/accounts/check",
+  "/backend-api/wham/usage",
+] as const;
 
 /** Whether a path is one Codex uses, without encoded separators or dots. */
 export function isCodexPath(pathname: string) {
@@ -58,8 +63,16 @@ export async function forwardModelRequest(
     url.port !== "" ||
     !(codexEgressHosts as readonly string[]).includes(url.hostname) ||
     !isCodexPath(url.pathname)
-  )
+  ) {
+    // A Codex update may need a path that is not allowed yet: name it in the
+    // logs. Only the path is recorded, never headers or the query.
+    // oxlint-disable-next-line no-console -- Record denied paths without credentials.
+    console.warn("Model egress denied a request", {
+      host: url.hostname,
+      path: url.pathname,
+    });
     return denied(403, "Tailos forwards only model API requests here.");
+  }
   const current = await access().catch(() => null);
   if (!current)
     return denied(401, "Model access for this Run is no longer available.");

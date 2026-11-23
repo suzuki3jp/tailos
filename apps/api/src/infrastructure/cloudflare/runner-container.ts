@@ -59,6 +59,11 @@ import {
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
+import {
+  codexEgressHosts,
+  type ModelAccess,
+  type ModelEgressProps,
+} from "./model-egress.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -68,6 +73,7 @@ type RepositoryGrant = {
   attempts: number;
 };
 
+/** Authorizes the Runner's publication checkpoint and names the model connection. */
 type RefreshLease = {
   digest: string;
   runId: string;
@@ -85,14 +91,46 @@ type DiagnosticLease = {
 
 type RunnerExports = {
   GitHubEgress(options: { props: GitHubEgressProps }): Fetcher;
+  ModelEgress(options: { props: ModelEgressProps }): Fetcher;
 };
 
 /**
  * Set once the Agent's work is over. Publication runs before the container is
- * destroyed, so the egress Worker must stop adding the Run's token first:
- * otherwise a process the Agent left behind could push to the work branch.
+ * destroyed, so the egress Workers must stop adding the Run's credentials
+ * first: otherwise a process the Agent left behind could push to the work
+ * branch or keep using the model connection. The stored name predates model
+ * egress and is kept for Runs that were in progress.
  */
-const githubEgressClosed = "githubEgressClosed";
+const agentEgressClosed = "githubEgressClosed";
+/** The access version that the model API last rejected, forcing a refresh. */
+const rejectedModelAccess = "rejectedModelAccess";
+
+/**
+ * Stands in for the Codex access token inside the container. Codex reads the
+ * account and plan claims; the model egress Worker replaces the whole token.
+ */
+export function placeholderAccessToken(
+  accountId: string,
+  planType: string | undefined,
+  expiresAt: number,
+) {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replace(/=+$/, "");
+  return [
+    encode({ alg: "none", typ: "JWT" }),
+    encode({
+      exp: Math.ceil(expiresAt / 1000),
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+        ...(planType && { chatgpt_plan_type: planType }),
+      },
+    }),
+    "tailos-placeholder",
+  ].join(".");
+}
 
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
@@ -204,6 +242,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     await this.ctx.storage.delete("refreshLease");
+    await this.ctx.storage.delete(rejectedModelAccess);
     await this.ctx.storage.delete(runnerKeyStorage);
     const digest = await this.ctx.storage.get<string>("publicationDigest");
     if (digest && this.env.RUN_ARTIFACTS?.delete) {
@@ -233,7 +272,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   private async startRunner(
     deadlineAt: number,
     instance: "lite" | "standard-3",
-    githubRunId?: string,
+    egress?: { runId: string; github: boolean; codex: boolean },
   ) {
     const container = this.ctx.container;
     const image = container?.images.runner;
@@ -241,13 +280,21 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
     // Intercepts last until the container stops. HTTPS ones must exist before
     // it starts, so that its CA certificate is in place for the entrypoint.
-    if (githubRunId) {
+    if (egress) {
       const exports = this.ctx.exports as unknown as RunnerExports;
-      for (const host of githubEgressHosts)
-        await container.interceptOutboundHttps(
-          host,
-          exports.GitHubEgress({ props: { runId: githubRunId } }),
-        );
+      const props = { props: { runId: egress.runId } };
+      if (egress.github)
+        for (const host of githubEgressHosts)
+          await container.interceptOutboundHttps(
+            host,
+            exports.GitHubEgress(props),
+          );
+      if (egress.codex)
+        for (const host of codexEgressHosts)
+          await container.interceptOutboundHttps(
+            host,
+            exports.ModelEgress(props),
+          );
     }
     // Agent commands may always reach the internet: credentials stay outside.
     container.start({ image, instance, enableInternet: true });
@@ -359,7 +406,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   /** The Run's GitHub token, for the egress Worker that adds it to requests. */
   async githubToken(runId: string): Promise<string | null> {
     if ((await this.ctx.storage.get<string>("runId")) !== runId) return null;
-    if (await this.ctx.storage.get<boolean>(githubEgressClosed)) return null;
+    if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
     const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
@@ -371,45 +418,41 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   private async closeGitHubEgress() {
-    await this.ctx.storage.put(githubEgressClosed, true);
+    await this.ctx.storage.put(agentEgressClosed, true);
   }
 
-  async refreshAccess(runId: string, bearer: string, accessVersion: string) {
-    const digest = await hashRunLease(bearer);
-    const active = await this.env.DB.prepare(
-      "SELECT 1 AS active FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?",
-    )
-      .bind(runId, Date.now())
-      .first();
-    if (!active) return null;
-
-    const lease = await this.ctx.storage.transaction(async (storage) => {
-      const current = await storage.get<RefreshLease>("refreshLease");
-      const now = Date.now();
-      if (
-        !current ||
-        current.runId !== runId ||
-        current.expiresAt <= now ||
-        !matchRunLease(digest, current.digest) ||
-        now - current.lastRefreshAt < 5_000
-      )
-        return null;
-      await storage.put("refreshLease", { ...current, lastRefreshAt: now });
-      return current;
-    });
-    if (!lease) return null;
-
-    return observeRun(
-      this.env.DB,
-      runId,
-      "refresh",
-      async () =>
-        this.env.CREDENTIALS?.getByName(lease.connectionId).issueAccess({
-          accessVersion,
-          connectionVersion: lease.connectionVersion,
-        }),
-      (result) => (result ? "succeeded" : "failed"),
+  /** The Run's Codex access, for the egress Worker that adds it to requests. */
+  async modelAccess(runId: string): Promise<ModelAccess | null> {
+    if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (!lease || lease.runId !== runId || lease.expiresAt <= Date.now())
+      return null;
+    const rejected = await this.ctx.storage.get<string>(rejectedModelAccess);
+    const access = await this.env.CREDENTIALS?.getByName(
+      lease.connectionId,
+    ).issueAccess(
+      rejected
+        ? {
+            accessVersion: rejected,
+            connectionVersion: lease.connectionVersion,
+          }
+        : undefined,
     );
+    if (rejected) await this.ctx.storage.delete(rejectedModelAccess);
+    if (!access || access.connectionVersion !== lease.connectionVersion)
+      return null;
+    return {
+      accessToken: access.accessToken,
+      accountId: access.accountId,
+      accessVersion: access.accessVersion,
+    };
+  }
+
+  /** Records that the model API refused an access token of this Run. */
+  async rejectModelAccess(runId: string, accessVersion: string) {
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (lease?.runId === runId)
+      await this.ctx.storage.put(rejectedModelAccess, accessVersion);
   }
 
   async stagePublication(
@@ -513,8 +556,18 @@ export class RunnerContainer extends DurableObject<Bindings> {
       engine: "codex",
       ...(context.model && { model: context.model }),
       ...(context.effort && { effort: context.effort }),
-      access,
-      refresh: { url: origin + `/_runner/runs/${runId}/credentials`, bearer },
+      // The container never receives the token: the model egress Worker adds
+      // it to Codex's requests.
+      access: {
+        ...access,
+        accessToken: placeholderAccessToken(
+          access.accountId,
+          access.planType,
+          deadlineAt,
+        ),
+      },
+      // Base URL of the publication checkpoint.
+      refresh: { url: origin + `/_runner/runs/${runId}/`, bearer },
     };
   }
 
@@ -670,7 +723,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
       this.startRunner(
         job.deadlineAt,
         job.engine === "fake" ? "lite" : "standard-3",
-        job.engine !== "fake" && job.checkout ? request.runId : undefined,
+        job.engine === "fake"
+          ? undefined
+          : {
+              runId: request.runId,
+              github: !!job.checkout,
+              codex: job.engine === "codex",
+            },
       ),
     );
     let key = await this.ctx.storage.get<string>(runnerKeyStorage);

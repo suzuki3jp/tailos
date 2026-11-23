@@ -12,7 +12,7 @@ import type { DiagnosticBatch } from "@tailos/core/diagnostics";
 import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
 import { seal } from "@/infrastructure/auth/sealed-store.ts";
 
-test("a diagnostics lease accepts late telemetry but cannot publish or refresh credentials", async (t) => {
+test("a diagnostics lease accepts late telemetry but cannot publish or obtain model access", async (t) => {
   const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
   const { runId } = await admitTrigger(DB, {
     source: "test",
@@ -64,9 +64,7 @@ test("a diagnostics lease accepts late telemetry but cannot publish or refresh c
     await runner.ingestDiagnostics(crypto.randomUUID(), bearer, batch),
   ).toBe(false);
   expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(true);
-  expect(
-    await runner.refreshAccess(runId, bearer, crypto.randomUUID()),
-  ).toBeNull();
+  expect(await runner.modelAccess(runId)).toBeNull();
   expect(
     await runner.stagePublication(runId, bearer, {
       kind: "prepared",
@@ -735,6 +733,7 @@ test.for([
     const memory = new Map<string, unknown>([["runId", runId]]);
     const order: string[] = [];
     const controlKeys = new Set<string | null>();
+    const jobs: string[] = [];
     const submit = vi.fn(async (_url: string, init?: RequestInit) => {
       if (_url.endsWith("/health"))
         return Response.json({ status: "ok", service: "runner" });
@@ -746,6 +745,7 @@ test.for([
           plan: { planPresented: true, needsAnswer: false },
           events: [],
         });
+      jobs.push(String(init.body));
       const job = JSON.parse(String(init.body));
       expect(job.mode).toBe("plan");
       expect(job.githubContext).toMatchObject({
@@ -764,6 +764,7 @@ test.for([
       // The GitHub token stays outside the container.
       expect(job.checkout).not.toHaveProperty("token");
       expect(String(init.body)).not.toContain("read-token");
+
       return Response.json(
         {
           status: "succeeded",
@@ -819,7 +820,7 @@ test.for([
           getTcpPort: () => ({ fetch: submit }),
           destroy,
         },
-        exports: { GitHubEgress: egress },
+        exports: { GitHubEgress: egress, ModelEgress: egress },
       } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
       {
         DB,
@@ -858,8 +859,28 @@ test.for([
         expect.objectContaining({ enableInternet: true }),
       );
       // HTTPS intercepts exist before the container starts.
-      expect(order).toEqual(["github.com", "api.github.com", "start"]);
+      expect(order).toEqual([
+        "github.com",
+        "api.github.com",
+        "chatgpt.com",
+        "start",
+      ]);
       expect(egress).toHaveBeenCalledWith({ props: { runId } });
+      // The Codex token stays outside too: Codex gets a placeholder that
+      // carries only the account.
+      expect(jobs).toHaveLength(1);
+      const job = JSON.parse(jobs[0]!);
+      expect(job.access.accessToken).not.toBe("access");
+      const [, claims] = job.access.accessToken.split(".");
+      expect(
+        JSON.parse(Buffer.from(claims, "base64url").toString())[
+          "https://api.openai.com/auth"
+        ].chatgpt_account_id,
+      ).toBe("account");
+      expect(job.access.accountId).toBe("account");
+      expect(job.refresh.url).toBe(
+        `https://api.tailos.app/_runner/runs/${runId}/`,
+      );
       expect([...controlKeys]).toEqual([
         expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
       ]);

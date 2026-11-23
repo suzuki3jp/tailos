@@ -67,6 +67,9 @@ const maxTurnErrorText = 2_000;
 /** Tells the Agent that it starts over, so it can tell the user. */
 const lostWorkNotice =
   "Note: the work tree and conversation from this Session's previous turn could not be restored. You are starting from the repository's base commit without the earlier changes or conversation. Mention this to the user in your reply.\n\n";
+/** The work tree is back but the conversation is not: say exactly that. */
+const lostConversationNotice =
+  "Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it, including its changes. Review the current changes before continuing, and mention to the user that the earlier conversation is unavailable.\n\n";
 
 function turnErrorCategory(info: TurnError["codexErrorInfo"]) {
   if (info == null) return "unknown";
@@ -223,13 +226,15 @@ export function createCodexAgent(
           },
         );
       } finally {
-        if (conversation && thread?.path)
-          await saveConversation(
-            directory,
-            thread.id,
-            thread.path,
-            conversation,
-          );
+        // Codex may not report the path of a resumed thread: it is where
+        // the rollout was restored.
+        const path =
+          thread?.path ??
+          (thread && thread.id === conversation?.resume?.threadId
+            ? join(directory, conversation.resume.path)
+            : undefined);
+        if (conversation && thread && path)
+          await saveConversation(directory, thread.id, path, conversation);
         await withDiagnosticSpan(
           diagnostics,
           "cleanup",
@@ -239,6 +244,13 @@ export function createCodexAgent(
       }
     },
   };
+}
+
+/** What the Agent must know about the previous Turn before it starts. */
+function continuityNotice(lostWork: boolean, lostConversation: boolean) {
+  if (lostWork) return lostWorkNotice;
+  if (lostConversation) return lostConversationNotice;
+  return "";
 }
 
 /** Hands the thread's rollout to the Turn's saved work; never fails the Turn. */
@@ -548,7 +560,8 @@ async function runTurn(
       sandbox:
         job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
     };
-    let lost = conversation?.lost ?? false;
+    const lostWork = conversation?.lost ?? false;
+    let lostConversation = false;
     let thread: v.InferOutput<typeof threadSchema> | undefined;
     if (conversation?.resume) {
       // The rollout brings back the earlier turns and the dynamic tools.
@@ -558,8 +571,22 @@ async function runTurn(
           ...threadOptions,
         })
         .then((result) => v.parse(threadSchema, result))
-        .catch(() => undefined);
-      lost ||= !thread;
+        .catch((error: unknown) => {
+          // Shown with the other carry-over steps, so the cause can be found.
+          const span = diagnostics?.start(
+            "continuity",
+            JSON.stringify({ target: "conversation" }),
+            agentSpan,
+          );
+          if (span)
+            diagnostics?.end(
+              span,
+              { outcome: "failed" },
+              diagnosticErrorBody(error),
+            );
+          return undefined;
+        });
+      lostConversation = !thread;
     }
     thread ??= v.parse(
       threadSchema,
@@ -587,7 +614,9 @@ async function runTurn(
     const result = await runAgentTurns({
       job,
       signal,
-      prompt: (lost ? lostWorkNotice : "") + agentPrompt(job, githubTool.name),
+      prompt:
+        continuityNotice(lostWork, lostConversation) +
+        agentPrompt(job, githubTool.name),
       sensitive,
       failure: () => failure,
       async turn(prompt, revision, timeoutMs) {

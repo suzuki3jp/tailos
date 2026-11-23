@@ -1280,6 +1280,19 @@ test.for([
     kept: false,
   },
   {
+    name: "records lost work when the Runner lost its job",
+    respond: () => Response.json({}, { status: 404 }),
+    record: { lost: true },
+    kept: false,
+  },
+  {
+    name: "records lost work when the container is gone",
+    respond: () => new Response(null, { status: 204 }),
+    record: { lost: true },
+    kept: false,
+    running: false,
+  },
+  {
     name: "keeps the previous work when the Turn never reached it",
     respond: () => new Response(null, { status: 204 }),
     record: {
@@ -1288,7 +1301,7 @@ test.for([
     },
     kept: true,
   },
-])("$name", async ({ respond, record, kept }, t) => {
+])("$name", async ({ respond, record, kept, running = true }, t) => {
   const { DB } = await createTestBindings(t);
   const { runId, sessionId } = await admitTrigger(DB, {
     source: "test",
@@ -1317,7 +1330,7 @@ test.for([
     {
       storage: memoryStorage(memory),
       container: {
-        running: true,
+        running,
         getTcpPort: () => ({ fetch }),
         destroy: async () => {},
       },

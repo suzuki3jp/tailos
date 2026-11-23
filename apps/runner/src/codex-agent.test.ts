@@ -1087,7 +1087,11 @@ test("records Codex error notices and the failure reason without credentials", a
 });
 
 /** Keeps a rollout in CODEX_HOME as Codex does, and resumes it by thread ID. */
-function conversationStub(requests: unknown[], resumable = true) {
+function conversationStub(
+  requests: unknown[],
+  resumable = true,
+  reportPath = true,
+) {
   return (directory: string) =>
     spawn(
       process.execPath,
@@ -1111,7 +1115,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (r.method === "thread/resume") {
     if (${resumable} && r.params.threadId === "saved-thread" && fs.existsSync(saved)) {
       thread = { id: "saved-thread", path: saved };
-      respond({ thread });
+      // Codex does not always report where a resumed thread is kept.
+      respond({ thread: ${reportPath} ? thread : { id: thread.id } });
     } else send({ id: r.id, error: { code: -32600, message: "no rollout found" } });
   }
   if (r.method === "thread/start") {
@@ -1133,42 +1138,59 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     );
 }
 
-test("continues the saved Codex thread and hands its rollout back", async () => {
-  const requests: unknown[] = [];
-  const save = vi.fn();
-  const agent = createCodexAgent(conversationStub(requests));
-  const result = await agent.run(
-    testJob(),
-    AbortSignal.timeout(5000),
-    process.cwd(),
-    undefined,
-    {
-      resume: {
-        threadId: "saved-thread",
-        path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
-        content: Buffer.from("earlier turn\n"),
+test.for([true, false])(
+  "continues the saved Codex thread and hands its rollout back (path reported: %s)",
+  async (reportPath) => {
+    const requests: unknown[] = [];
+    const save = vi.fn();
+    const agent = createCodexAgent(
+      conversationStub(requests, true, reportPath),
+    );
+    const result = await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "saved-thread",
+          path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+          content: Buffer.from("earlier turn\n"),
+        },
+        save,
       },
-      save,
-    },
-  );
-  expect(result.reply).toBe("done");
-  expect(save).toHaveBeenCalledOnce();
-  const [saved] = save.mock.calls[0]!;
-  expect(saved.threadId).toBe("saved-thread");
-  expect(saved.path).toBe(
-    "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
-  );
-  const content = saved.content.toString();
-  expect(content.startsWith("earlier turn\nAnswer the prompt")).toBe(true);
-  expect(content).not.toContain("could not be restored");
-});
+    );
+    expect(result.reply).toBe("done");
+    expect(save).toHaveBeenCalledOnce();
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("saved-thread");
+    expect(saved.path).toBe(
+      "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+    );
+    const content = saved.content.toString();
+    expect(content.startsWith("earlier turn\nAnswer the prompt")).toBe(true);
+    expect(content).not.toContain("could not be restored");
+  },
+);
 
 test.for([
-  { name: "the previous work is lost", resumable: true, lost: true },
-  { name: "the thread cannot be resumed", resumable: false, lost: false },
+  {
+    name: "the previous work is lost",
+    resumable: true,
+    lost: true,
+    notice:
+      /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
+  },
+  {
+    name: "only the thread cannot be resumed",
+    resumable: false,
+    lost: false,
+    notice:
+      /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+  },
 ])(
   "starts a kept thread and tells the Agent when $name",
-  async ({ resumable, lost }) => {
+  async ({ resumable, lost, notice }) => {
     const save = vi.fn();
     const agent = createCodexAgent(conversationStub([], resumable));
     await agent.run(
@@ -1191,9 +1213,7 @@ test.for([
     );
     const [saved] = save.mock.calls[0]!;
     expect(saved.threadId).toBe("new-thread");
-    expect(saved.content.toString()).toMatch(
-      /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
-    );
+    expect(saved.content.toString()).toMatch(notice);
   },
 );
 

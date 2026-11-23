@@ -98,7 +98,6 @@ export async function dispatchIssueLabel(
             repositoryId: project.repositoryId,
             installationId: project.installationId,
             defaultBranch: event.repository.default_branch,
-            agentNetworkAccess: project.agentNetworkAccess,
           },
           trigger: {
             kind: "github.issue-label",

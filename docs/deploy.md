@@ -69,7 +69,7 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 2. 通常の Deploy で `0008_project_settings.sql` を含む D1 マイグレーションと API・Runner・Web を反映する。既存の Run は保存済みの実行設定で続行する。旧設定へのフォールバックは行わない。
 3. 運用者でログインし、`/projects` の「既存設定を初回インポート」を開く。退避した JSON 配列を貼り付けてインポートする。入力形式の例は [projects.example.json](../config/projects.example.json)。新規追加を行う前に移行を実施する。
 4. API は全件の制約と GitHub App からのリポジトリアクセスを確認する。旧 ID ごとに UUID を一つ発行し、Project、旧 ID と UUID の対応、既存 Session の `project_id`、計画会話と inbox の識別キー、移行履歴を同じ D1 トランザクションで確定する。失敗時はすべてロールバックする。登録履歴のある環境や完了済みのインポートへの再実行は拒否する。空配列のインポートも完了として記録する。
-5. 一覧の全 Project と、移行で作成された Routine の起動ラベル・許可ユーザー、Project の通信許可・上限時間、変更履歴を確認する。既存 Session が参照する UUID を次の読み取り専用 SQL でも照合できる。移行設定に存在しなかった旧 ID は推測で変換せず、そのまま残す。
+5. 一覧の全 Project と、移行で作成された Routine の起動ラベル・許可ユーザー、Project の上限時間、変更履歴を確認する。既存 Session が参照する UUID を次の読み取り専用 SQL でも照合できる。移行設定に存在しなかった旧 ID は推測で変換せず、そのまま残す。
 
    ```sql
    SELECT id, legacy_id, repository_id FROM projects ORDER BY legacy_id;
@@ -118,20 +118,27 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 恒久的な API エラー、または一時障害で通算 20 回の送信試行に達した通知は permanent 状態で停止する。原因を解消して手動で再送する場合は、該当する通知の `error_category` を NULL、`next_attempt_at` を 0、`attempts` を 0 に戻す。レート制限は指定された待機時間とバックオフに従って再試行する。
 
-既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Runner のトークンは、対象リポジトリの Contents・Issues・Pull requests の読み取りに限定される。Agent は Runner のツールを使って Issue と PR を番号で参照できる。PR の作成は Worker が別のトークンで行う。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
+既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Agent の GitHub 通信には、対象リポジトリに限定した App の権限のトークンを Worker が差し込む。Agent は gh・git と Runner のツールで Issue と PR を参照できる。Run の結果の PR は Worker が別のトークンで作る。 [GitHub App のインストール認証](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 
 デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、`/projects` でリポジトリを選び、「Routine を管理」から起動ラベル・許可ユーザー・プロンプト・必要な model / effort を保存して有効にする。無効状態なら接続やモデル情報を検証できなくても保存できるが、有効化には検証が必要になる。その後、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果の `results` 配列に含まれる各 `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。
 
 
 Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設定を参照し、作業ディレクトリで適用できる整形・lint・テストなどを実行する。実行結果と、実行できなかった検証の理由を返答に記載する。Runner イメージには Tailos 自体を検証するための pnpm・oxfmt・oxlint を組み込む。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。
 
-Codex の Run は `standard-3`（8 GiB、2 vCPU）で起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
+Codex の Run は `standard-3`（8 GiB、2 vCPU）で起動する。Run のコンテナはエンジンに関係なく外部通信を有効にして起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
 
 チェックアウトを伴う Run では、ホーム・一時領域・キャッシュ・pnpm のロック用領域・ユーザー用ツールの配置先を Run ごとに作成し、作業ディレクトリと合わせて書き込みを許可する。これらの環境変数はサンドボックス内のコマンドに渡し、app-server 自身は Agent のホームや一時領域を使用しない。領域は Codex の認証用ディレクトリと分け、Run 終了時に削除する。
 
 Runner イメージは `codex-linux-sandbox` を Codex のネイティブ実行ファイルへのリンクとして `/usr/local/bin` に配置する。Codex は `/tmp` 配下の使い捨て `CODEX_HOME` には helper の別名を作成しないため、外部の bubblewrap が PATH から helper を起動できるようにする。Codex の更新でパッケージ内の配置が変わった場合はイメージのビルドを失敗させ、配置を見直す。
 
-Agent のコマンドによるネットワーク利用は既定で無効。依存取得などで必要なプロジェクトは、運用者が `/projects` の対象 Project で「Agent のコマンドによる通信を許可する」を有効にする。設定は Run 作成時に保存され、Issue 本文やリポジトリ内の設定からは変更できない。有効にした Run では、依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信でき、非公開ソースや読み取り可能なデータが外部に送信される可能性がある。この条件を許容できるプロジェクトに限って有効にする。
+Agent のコマンドは常に外部と通信できる。通信を許可する設定はない（[判断](pdr/records/PDR-20261122-agent-egress-credential-proxy.md)）。依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信できるため、プロンプトインジェクションなどで非公開ソースや読み取り可能なデータが外部に送信される可能性がある。Tailos はこのリスクを受け入れ、GitHub の認証情報はコンテナに置かない。
+
+- リポジトリのある Run では、`github.com` と `api.github.com` への HTTPS を Worker（`GitHubEgress`）が受け、Run 用のトークンを付けて GitHub に転送する。コンテナ内の gh にはダミーのトークンだけを置き、横取り用の CA を gh・git・Node が信頼するよう Runner の起動時に設定する。
+- Run 用のトークンは対象リポジトリに限定し、GitHub App の権限をすべて持つ。Agent は gh や git で、対象リポジトリの Issue・PR へのコメント、ラベル変更、既定ブランチ以外への push、PR 作成などを行える。既定ブランチは下記の ruleset で守る。
+- Agent の作業が終わった時点で差し込みを止め、その後に API が署名付きコミットと PR を作る。
+- Codex・Claude の認証情報は、まだコンテナ内の Runner が持つ。
+- Claude Code のコマンドは、Runner 内の転送プロキシを経由して HTTP(S) で外部に出る。このプロキシはコンテナ内・内部ネットワークのアドレスを拒否する。
+- Runner の制御用 HTTP サーバーは、Run の制御側がジョブと一緒に渡した鍵がないと、状態の取得とジョブの再送を受け付けない。
 
 既存の実行可能ファイルは、実行ビットを維持したまま内容を更新できる。新規ファイルは非実行モードで作成する必要がある。
 
@@ -141,7 +148,7 @@ Agent のコマンドによるネットワーク利用は既定で無効。依�
 
 信頼された API が ExecutionContext の `mode: "plan"` を設定すると、RunnerJob までモードを引き継ぐ。本文・Agent 出力・リポジトリの指示からモードは変更できない。省略時は従来の実装動作であり、実装ジョブには互換性のため新しいキーを送らない。
 
-計画 checkout は対象リポジトリ、installation、open な Issue（PR ではないこと）と基準 SHA を確認する。実装ラベルと公開用 ruleset は要求しない。Runner のトークンは対象リポジトリの Contents・Issues・Pull requests の読み取りに限る。Agent は checkout があっても read-only sandbox を使い、ネットワーク許可設定を引き継がない。通常の turn RPC を使い、app-server の対話的 Plan 機能は使わない。質問は最終結果に含め、回答待ちでプロセスを維持しない。
+計画 checkout は対象リポジトリ、installation、open な Issue（PR ではないこと）と基準 SHA を確認する。実装ラベルと公開用 ruleset は要求しない。Agent の GitHub 通信には実装と同じく対象リポジトリに限定したトークンを差し込む。Agent は checkout があっても read-only sandbox を使い、通信は実装と同じく許可する。通常の turn RPC を使い、app-server の対話的 Plan 機能は使わない。質問は最終結果に含め、回答待ちでプロセスを維持しない。
 
 結果本文は計画・前提・変更対象・手順・検証方法・質問を記載できる自由文とし、`planPresented` と `needsAnswer` を別途返す。質問だけでも正常終了する。D1 の Run 結果には `kind: "plan"` と両フラグを保存し、本文は Session の Agent メッセージとして保存する。入力は 4,000 文字、本文は 8,000 文字で API と Runner の共有スキーマを使う。計画では staging を実行せず、API の公開受付と公開復旧経路も拒否する。基準 SHA、資格情報の失効、checkout の削除、終了時のコンテナ停止は既存経路を使う。
 

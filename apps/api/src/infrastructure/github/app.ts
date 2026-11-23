@@ -160,9 +160,10 @@ export class GitHubApp {
     return response.json();
   }
 
+  /** Without `permissions`, the token has everything the App was granted. */
   private async token(
     target: RepositoryTarget,
-    permissions: Record<string, "read" | "write">,
+    permissions?: Record<string, "read" | "write">,
   ) {
     const jwt = await this.appToken();
     return this.installationToken(target.installationId, jwt, {
@@ -487,11 +488,9 @@ export class GitHubApp {
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
       );
       return {
-        ...(await this.token(target, {
-          contents: "read",
-          issues: "read",
-          pull_requests: "read",
-        })),
+        // The Run's token, added to the Agent's GitHub requests outside the
+        // container. It is limited to the target repository only.
+        ...(await this.token(target)),
         ...(issueSnapshot && {
           issueSnapshot: {
             title: issueSnapshot.title,

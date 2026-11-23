@@ -38,10 +38,15 @@ async function listen(t: TestContext, agent?: AgentAdapter) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-const sendJob = (origin: string, job: RunnerJob) =>
+const key = "c".repeat(64);
+const control = { headers: { Authorization: `Bearer ${key}` } };
+const sendJob = (origin: string, job: RunnerJob, bearer = key) =>
   fetch(`${origin}/job`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bearer}`,
+    },
     body: JSON.stringify(job),
   });
 
@@ -82,7 +87,7 @@ async function terminalStatus(origin: string, runId: string) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const result = v.parse(
       RunnerStatus,
-      await (await fetch(`${origin}/job/${runId}`)).json(),
+      await (await fetch(`${origin}/job/${runId}`, control)).json(),
     );
     if (result.status !== "running") return result;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -121,7 +126,7 @@ test("keeps the job running until its final diagnostic marker is delivered", asy
   expect((await sendJob(origin, job)).status).toBe(202);
   await markerReady;
   expect(
-    await (await nativeFetch(`${origin}/job/${job.runId}`)).json(),
+    await (await nativeFetch(`${origin}/job/${job.runId}`, control)).json(),
   ).toEqual({ status: "running" });
   release();
   expect((await terminalStatus(origin, job.runId)).status).toBe("succeeded");
@@ -167,7 +172,7 @@ test("executes the selected agent once and rejects a different job", async (t) =
   expect(calls).toBe(1);
   const result = v.parse(
     RunnerStatus,
-    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+    await (await fetch(`${origin}/job/${job.runId}`, control)).json(),
   );
   assert(result.status === "succeeded");
   expect(result.reply).toBe("Received Fix the issue");
@@ -199,7 +204,7 @@ test("cancels an active adapter at the job deadline", async (t) => {
   if (!signal.aborted) await once(signal, "abort");
   const result = v.parse(
     RunnerStatus,
-    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+    await (await fetch(`${origin}/job/${job.runId}`, control)).json(),
   );
   assert(result.status === "failed");
   expect(result.errorCode).toBe("deadline_exceeded");
@@ -225,7 +230,7 @@ test("reports out-of-contract replies as agent failures", async (t) => {
   expect((await sendJob(origin, job)).status).toBe(202);
   const result = v.parse(
     RunnerStatus,
-    await (await fetch(`${origin}/job/${job.runId}`)).json(),
+    await (await fetch(`${origin}/job/${job.runId}`, control)).json(),
   );
   assert(result.status === "failed");
   expect(result.errorCode).toBe("agent_failed");
@@ -330,7 +335,7 @@ test("reports a sandbox startup failure as a failed job", async (t) => {
     deadlineAt: Date.now() + 60_000,
   };
   expect((await sendJob(origin, job)).status).toBe(202);
-  const response = await fetch(`${origin}/job/${job.runId}`);
+  const response = await fetch(`${origin}/job/${job.runId}`, control);
   expect(v.parse(RunnerStatus, await response.json())).toMatchObject({
     status: "failed",
     errorCode: "sandbox_unavailable",
@@ -428,11 +433,41 @@ test("runs a Claude job with the Claude agent and accepts only its own credentia
 
   expect((await sendJob(origin, job)).status).toBe(202);
   await vi.waitFor(async () => {
-    const status = await fetch(`${origin}/job/${job.runId}`);
+    const status = await fetch(`${origin}/job/${job.runId}`, control);
     expect(await status.json()).toMatchObject({
       status: "succeeded",
       reply: "from Claude",
     });
   });
   expect(run.mock.calls[0]![0]).toEqual(job);
+});
+
+test("only the controller that sent the job can read or resend it", async (t) => {
+  const origin = await listen(t);
+  const job: RunnerJob = {
+    version: 1,
+    engine: "fake",
+    runId: randomUUID(),
+    prompt: "Fix the issue",
+    deadlineAt: Date.now() + 60_000,
+  };
+  const unauthenticated = await fetch(`${origin}/job`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(job),
+  });
+  expect(unauthenticated.status).toBe(401);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  // An Agent command does not know the key: it can neither resend nor read.
+  expect((await sendJob(origin, job, "d".repeat(64))).status).toBe(401);
+  expect((await fetch(`${origin}/job/${job.runId}`)).status).toBe(401);
+  expect(
+    (
+      await fetch(`${origin}/job/${job.runId}`, {
+        headers: { Authorization: `Bearer ${"d".repeat(64)}` },
+      })
+    ).status,
+  ).toBe(401);
+  expect((await fetch(`${origin}/job/${job.runId}`, control)).status).toBe(200);
+  expect((await fetch(`${origin}/health`)).status).toBe(200);
 });

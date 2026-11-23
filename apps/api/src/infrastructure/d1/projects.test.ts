@@ -13,7 +13,6 @@ const settings = {
   repositoryId: 42,
   installationId: 19,
   allowedActors: ["operator"],
-  agentNetworkAccess: false,
   maxRunMinutes: 30,
 };
 
@@ -33,7 +32,7 @@ test("atomic CRUD keeps revisions and audit history, blocks repository duplicate
   const updated = await store.update(
     first.project.id,
     1,
-    { ...settings, agentNetworkAccess: true },
+    { ...settings, maxRunMinutes: 10 },
     "operator",
   );
   expect(updated?.revision).toBe(2);
@@ -55,12 +54,12 @@ test("atomic CRUD keeps revisions and audit history, blocks repository duplicate
   expect(history.changes[1]).toMatchObject({
     projectId: first.project.id,
     actorId: "operator",
-    before: { agentNetworkAccess: true },
+    before: { maxRunMinutes: 10 },
     after: null,
   });
   expect(history.changes[2]).toMatchObject({
-    before: { agentNetworkAccess: false },
-    after: { agentNetworkAccess: true },
+    before: { maxRunMinutes: 30 },
+    after: { maxRunMinutes: 10 },
   });
   await db
     .prepare(
@@ -202,7 +201,7 @@ test("new trigger admission checks the project revision and deletion in its tran
   await store.update(
     configured.project.id,
     1,
-    { ...settings, agentNetworkAccess: true },
+    { ...settings, maxRunMinutes: 10 },
     "operator",
   );
   await expect(admitTrigger(db, input)).rejects.toBeInstanceOf(ProjectChanged);
@@ -311,7 +310,7 @@ test("UUID import moves planning scopes atomically and preserves the existing co
   await store.update(
     project.id,
     1,
-    { ...settings, maxRunMinutes: 2, agentNetworkAccess: true },
+    { ...settings, maxRunMinutes: 2 },
     "operator",
   );
   const [runId] = await dispatchPlanningInputs(db);
@@ -327,9 +326,10 @@ test("UUID import moves planning scopes atomically and preserves the existing co
       created_at: number;
     }>();
   const context = v.parse(ExecutionContext, JSON.parse(run!.execution_context));
-  expect(
-    context.engine === "codex" && context.repository?.agentNetworkAccess,
-  ).toBe(true);
+  expect(JSON.parse(run!.execution_context).repository).not.toHaveProperty(
+    "agentNetworkAccess",
+  );
+  expect(context.engine === "codex" && context.repository).toBeTruthy();
   expect(run!.deadline_at - run!.created_at).toBe(120_000);
   await acceptPlanningInput(db, {
     ...input,
@@ -441,4 +441,41 @@ test("owner and planning scope mismatches remain distinct from project revision 
   await expect(
     acceptPlanningInput(db, { ...planning, ownerId: "other" }),
   ).rejects.not.toBeInstanceOf(ProjectChanged);
+});
+
+test("stored projects and history that still carry the removed network setting stay readable", async (t) => {
+  const db = await createTestDb(t);
+  const store = d1Projects(db);
+  const created = await store.create(settings, "operator");
+  const { name: _name, ...config } = created.project;
+  const legacy = JSON.stringify({ ...config, agentNetworkAccess: true });
+  await db
+    .prepare("UPDATE projects SET config = ? WHERE id = ?")
+    .bind(legacy, created.project.id)
+    .run();
+  const [stored] = await store.list();
+  expect(stored.project).toEqual(created.project);
+  expect(stored.project).not.toHaveProperty("agentNetworkAccess");
+  // The audit trigger stored the legacy configuration; history is not rewritten.
+  const [change] = (await store.history("operator")).changes;
+  expect(change?.after).toEqual(created.project);
+  expect(
+    await db
+      .prepare("SELECT after_config FROM project_changes ORDER BY id DESC")
+      .first("after_config"),
+  ).toContain("agentNetworkAccess");
+  expect(
+    await db
+      .prepare("SELECT config FROM projects WHERE id = ?")
+      .bind(created.project.id)
+      .first("config"),
+  ).toBe(legacy);
+  await expect(
+    store.update(
+      created.project.id,
+      1,
+      { ...settings, agentNetworkAccess: true } as typeof settings,
+      "operator",
+    ),
+  ).rejects.toThrow();
 });

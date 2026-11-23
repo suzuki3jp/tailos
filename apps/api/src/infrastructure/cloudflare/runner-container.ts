@@ -58,6 +58,7 @@ import {
 } from "@/infrastructure/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
+import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -81,6 +82,22 @@ type DiagnosticLease = {
   producerId: string;
   expiresAt: number;
 };
+
+type RunnerExports = {
+  GitHubEgress(options: { props: GitHubEgressProps }): Fetcher;
+};
+
+/**
+ * Set once the Agent's work is over. Publication runs before the container is
+ * destroyed, so the egress Worker must stop adding the Run's token first:
+ * otherwise a process the Agent left behind could push to the work branch.
+ */
+const githubEgressClosed = "githubEgressClosed";
+
+/** Authorizes the Run's controller on the Runner's HTTP server. */
+const runnerKeyStorage = "runnerKey";
+const runnerHeaders = (key: string | undefined) =>
+  key ? { Authorization: `Bearer ${key}` } : undefined;
 
 const publicationKey = (runId: string, digest: string) =>
   `tailos-api/v1/runs/${runId}/publication-${digest}.json`;
@@ -117,7 +134,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
   async checkHealth(): Promise<boolean> {
     try {
-      await this.startRunner(Date.now() + 15_000);
+      await this.startRunner(Date.now() + 15_000, "lite");
       return true;
     } finally {
       await this.ctx.container?.destroy().catch(() => {
@@ -187,6 +204,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     await this.ctx.storage.delete("refreshLease");
+    await this.ctx.storage.delete(runnerKeyStorage);
     const digest = await this.ctx.storage.get<string>("publicationDigest");
     if (digest && this.env.RUN_ARTIFACTS?.delete) {
       try {
@@ -212,16 +230,27 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
   }
 
-  private async startRunner(deadlineAt: number, enableInternet = false) {
+  private async startRunner(
+    deadlineAt: number,
+    instance: "lite" | "standard-3",
+    githubRunId?: string,
+  ) {
     const container = this.ctx.container;
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
 
-    container.start({
-      image,
-      instance: enableInternet ? "standard-3" : "lite",
-      enableInternet,
-    });
+    // Intercepts last until the container stops. HTTPS ones must exist before
+    // it starts, so that its CA certificate is in place for the entrypoint.
+    if (githubRunId) {
+      const exports = this.ctx.exports as unknown as RunnerExports;
+      for (const host of githubEgressHosts)
+        await container.interceptOutboundHttps(
+          host,
+          exports.GitHubEgress({ props: { runId: githubRunId } }),
+        );
+    }
+    // Agent commands may always reach the internet: credentials stay outside.
+    container.start({ image, instance, enableInternet: true });
     await container.setInactivityTimeout(
       Math.max(30_000, deadlineAt - Date.now() + 30_000),
     );
@@ -327,6 +356,24 @@ export class RunnerContainer extends DurableObject<Bindings> {
     };
   }
 
+  /** The Run's GitHub token, for the egress Worker that adds it to requests. */
+  async githubToken(runId: string): Promise<string | null> {
+    if ((await this.ctx.storage.get<string>("runId")) !== runId) return null;
+    if (await this.ctx.storage.get<boolean>(githubEgressClosed)) return null;
+    const grant =
+      await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
+    const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
+    if (!grant || grant.expiresAt <= Date.now() || !key) return null;
+    return v.parse(
+      v.string(),
+      await unseal(grant.value, key, `tailos:github:${runId}`),
+    );
+  }
+
+  private async closeGitHubEgress() {
+    await this.ctx.storage.put(githubEgressClosed, true);
+  }
+
   async refreshAccess(runId: string, bearer: string, accessVersion: string) {
     const digest = await hashRunLease(bearer);
     const active = await this.env.DB.prepare(
@@ -408,6 +455,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
     if (!reserved) return false;
     await bucket.put(publicationKey(runId, digest), content);
+    // The Agent is done once its work is checked: nothing may add to it.
+    await this.closeGitHubEgress();
     const staged = await stageRunPublication(this.env.DB, runId, {
       ...checkpoint,
       digest,
@@ -601,12 +650,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       }
+      // The token stays here: the egress Worker adds it to GitHub requests.
       job.checkout = {
         repository: target.repository,
         baseSha: checkout.baseSha,
         branch: checkout.branch,
-        token: checkout.token,
-        agentNetworkAccess: target.agentNetworkAccess ?? false,
       };
     }
     if (
@@ -619,11 +667,20 @@ export class RunnerContainer extends DurableObject<Bindings> {
         errorCode: "planning_input_too_large",
       } as const;
     const port = await observeRun(this.env.DB, request.runId, "container", () =>
-      this.startRunner(job.deadlineAt, job.engine === "codex"),
+      this.startRunner(
+        job.deadlineAt,
+        job.engine === "fake" ? "lite" : "standard-3",
+        job.engine !== "fake" && job.checkout ? request.runId : undefined,
+      ),
     );
+    let key = await this.ctx.storage.get<string>(runnerKeyStorage);
+    if (!key) {
+      key = newRunLease();
+      await this.ctx.storage.put(runnerKeyStorage, key);
+    }
     const response = await port.fetch("http://runner/job", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...runnerHeaders(key) },
       body: JSON.stringify(job),
       signal: AbortSignal.timeout(
         Math.max(0, Math.min(3_000, job.deadlineAt - Date.now())),
@@ -648,6 +705,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const target = repository && trigger ? { repository, trigger } : undefined;
     if (context.mode === "plan") {
       const status = await this.readRunnerStatus(runId);
+      if (status.status !== "running") await this.closeGitHubEgress();
       if (status.status !== "succeeded") return status;
       if (!status.plan || status.publication)
         return {
@@ -658,6 +716,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return status;
     }
     const pending = target ? pendingPublication(stepState) : null;
+    if (pending) await this.closeGitHubEgress();
     if (target && pending?.kind === "checked") {
       const recoveryDeadline = publicationDeadline(stepState, deadlineAt);
       const github = this.github;
@@ -707,6 +766,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         return { status: "failed", errorCode: "runner_lost" } as const;
       },
     );
+    if (status.status !== "running") await this.closeGitHubEgress();
     if (target && pending && pending.kind !== "checked") {
       if (status.status === "running" && Date.now() < deadlineAt) return status;
       if (
@@ -791,9 +851,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const container = this.ctx.container;
     if (!container?.running)
       return { status: "failed", errorCode: "runner_lost" } as const;
+    const key = await this.ctx.storage.get<string>(runnerKeyStorage);
     const reply = await container
       .getTcpPort(8080)
       .fetch(`http://runner/job/${runId}`, {
+        headers: runnerHeaders(key),
         signal: AbortSignal.timeout(3_000),
       });
     if (reply.status === 404) {

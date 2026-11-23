@@ -66,7 +66,6 @@ async function repository(t: TestContext) {
           repository: "owner/private",
           baseSha,
           branch,
-          token: "secret-repo-token",
         },
         AbortSignal.timeout(15_000),
         work,
@@ -152,8 +151,8 @@ test("stages changes without a package manifest, pushing, or storing credentials
     repo.run(async (cwd) => {
       const pointer = await readFile(join(cwd, ".git"), "utf8");
       const metadata = pointer.slice("gitdir: ".length).trim();
-      expect(await readFile(join(metadata, "config"), "utf8")).not.toContain(
-        "secret-repo-token",
+      expect(await readFile(join(metadata, "config"), "utf8")).not.toMatch(
+        /extraheader|Authorization/i,
       );
       await rm(join(cwd, ".git"));
       await rename(join(cwd, "README.md"), join(cwd, "Guide.md"));

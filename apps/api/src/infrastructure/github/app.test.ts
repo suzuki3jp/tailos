@@ -93,9 +93,9 @@ test("sends authenticated GitHub requests from Workers without following redirec
   expect(outboundUrls).toStrictEqual([endpoint, endpoint]);
 });
 
-test("scopes app grants to one repository and protects the default branch and gives the Runner a read-only grant", async () => {
+test("scopes app grants to one repository and protects the default branch and gives the Run every App permission on it", async () => {
   let protectedBranch = false;
-  const permissions: object[] = [];
+  const permissions: (object | undefined)[] = [];
   const github = new GitHubApp(
     { appId: "100", privateKey },
     async (input, init) => {
@@ -148,10 +148,12 @@ test("scopes app grants to one repository and protects the default branch and gi
     baseSha: sha,
     branch: workBranchFor(trigger, runId),
   });
+  // The Run's grant omits permissions: it gets what the App was granted,
+  // still for the target repository only.
   expect(permissions).toStrictEqual([
     { contents: "read", issues: "read" },
     { contents: "read", issues: "read" },
-    { contents: "read", issues: "read", pull_requests: "read" },
+    undefined,
   ]);
 });
 
@@ -631,8 +633,9 @@ test("planning checks out an unlabelled issue without publication branch rules",
       if (path.endsWith("/access_tokens")) {
         const body = JSON.parse(String(init?.body));
         expect(body.repository_ids).toEqual([42]);
+        // Checks use read grants; the Run's grant has the App's permissions.
         expect(
-          Object.values(body.permissions).every(
+          Object.values(body.permissions ?? { all: "read" }).every(
             (permission) => permission === "read",
           ),
         ).toBe(true);

@@ -106,7 +106,6 @@ export const RepositoryTarget = v.strictObject({
   repositoryId: positiveId,
   installationId: positiveId,
   defaultBranch: branch,
-  agentNetworkAccess: v.optional(v.boolean()),
 });
 
 const issueTrigger = {
@@ -152,17 +151,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 // Stored Runs and planning inputs predate `trigger` and kept the issue values
-// inside `repository`. Read them in the current shape without rewriting rows.
+// inside `repository`. Some also carry the removed per-Project network
+// setting. Read them in the current shape without rewriting rows.
 function upgradeStoredContext(input: unknown) {
-  if (
-    !isRecord(input) ||
-    input.trigger !== undefined ||
-    !isRecord(input.repository) ||
-    input.repository.issueNumber === undefined
-  )
-    return input;
+  if (!isRecord(input) || !isRecord(input.repository)) return input;
+  const { agentNetworkAccess: _removed, ...current } = input.repository;
+  if (input.trigger !== undefined || current.issueNumber === undefined)
+    return { ...input, repository: current };
   const { issueNumber, issueContentHash, triggerLabel, ...repository } =
-    input.repository;
+    current;
   const issue = {
     issueNumber,
     ...(issueContentHash !== undefined && { issueContentHash }),
@@ -264,8 +261,6 @@ const repositoryJob = {
       repository: repositoryName,
       baseSha: gitSha,
       branch: workBranch,
-      token: secret,
-      agentNetworkAccess: v.optional(v.boolean()),
     }),
   ),
 };

@@ -15,7 +15,6 @@ const settings = {
   repositoryId: 42,
   installationId: 19,
   allowedActors: ["plan-user"],
-  agentNetworkAccess: true,
   maxRunMinutes: 2,
 };
 const routineSettings: RoutineSettings = {
@@ -214,7 +213,9 @@ test("label dispatch isolates matching Routines, snapshots options, replays afte
         model: "test-model",
         effort: "high",
         routine: { id: first.id, revision: 1, projectRevision: 1 },
-        repository: expect.objectContaining({ agentNetworkAccess: true }),
+        repository: expect.not.objectContaining({
+          agentNetworkAccess: expect.anything(),
+        }),
         trigger: expect.objectContaining({
           kind: "github.issue-label",
           label: "build",

@@ -215,7 +215,6 @@ export function createGithubWebhook(
           repositoryId: target.repositoryId,
           installationId: target.installationId,
           defaultBranch: data.repository.default_branch,
-          agentNetworkAccess: target.agentNetworkAccess,
         },
         trigger: {
           kind: "github.issue-comment",

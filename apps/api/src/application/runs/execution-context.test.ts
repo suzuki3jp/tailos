@@ -72,3 +72,27 @@ test("each trigger kind carries only its own values, and repository Runs need on
     expect(v.safeParse(ExecutionContext, invalid).success).toBe(false);
   expect(v.safeParse(ExecutionContext, base).success).toBe(true);
 });
+
+test("stored contexts keep reading after the network setting was removed", () => {
+  const trigger = { kind: "web.message" };
+  for (const agentNetworkAccess of [true, false])
+    expect(
+      v.parse(ExecutionContext, {
+        ...base,
+        repository: { ...repository, agentNetworkAccess },
+        trigger,
+      }),
+    ).toEqual({ ...base, repository, trigger });
+  expect(
+    v.parse(ExecutionContext, {
+      ...base,
+      mode: "plan",
+      repository: { ...repository, issueNumber: 8, agentNetworkAccess: true },
+    }),
+  ).toEqual({
+    ...base,
+    mode: "plan",
+    repository,
+    trigger: { kind: "github.issue-comment", issueNumber: 8 },
+  });
+});

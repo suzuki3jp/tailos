@@ -27,7 +27,6 @@ const checkout = {
   repository: "acme/widgets",
   baseSha: "a".repeat(40),
   branch: `tailos/issue-1/${randomUUID()}`,
-  token: "checkout-token",
 };
 const job = (overrides: Partial<ClaudeJob> = {}): ClaudeJob => ({
   version: 1,
@@ -60,8 +59,18 @@ function runtime(
   sandboxAvailable = true,
 ) {
   const calls: Call[] = [];
+  const proxies = { started: 0, closed: 0 };
   let read: GitHubRead | undefined;
   const fake: ClaudeRuntime = {
+    async startProxy() {
+      proxies.started++;
+      return {
+        port: 41_000,
+        close: async () => {
+          proxies.closed++;
+        },
+      };
+    },
     query(call) {
       calls.push(call);
       const turn = turns[calls.length - 1];
@@ -78,6 +87,7 @@ function runtime(
   };
   return {
     calls,
+    proxies,
     agent: (http = fetch) => createClaudeAgent(async () => fake, http),
   };
 }
@@ -162,7 +172,11 @@ test("runs an implementation turn inside the workspace with only the Run's crede
       enabled: true,
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
-      network: { allowedDomains: [], strictAllowlist: true },
+      network: {
+        httpProxyPort: 41_000,
+        allowedDomains: [],
+        strictAllowlist: true,
+      },
     },
     outputFormat: { type: "json_schema" },
   });
@@ -172,34 +186,35 @@ test("runs an implementation turn inside the workspace with only the Run's crede
   expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(token);
   expect(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe("1");
   expect(env.CLAUDE_CONFIG_DIR).not.toContain(cwd);
-  // Nothing of the Runner's own environment or the checkout token leaks in.
-  expect(JSON.stringify(env)).not.toContain(checkout.token);
+  // Nothing of the Runner's own environment leaks in.
   expect(
     Object.keys(env).filter((name) => /TAILOS|ANTHROPIC/.test(name)),
   ).toEqual([]);
   await expect(stat(env.CLAUDE_CONFIG_DIR!)).rejects.toThrow();
 });
 
-test("blocks command network access even when the project allows it", async (t) => {
+test("commands reach the internet only through the Runner's proxy, stopped after the Run", async (t) => {
   const cwd = await workspace(t);
-  const { calls, agent } = runtime([
+  const { calls, proxies, agent } = runtime([
     [success({ reply: "Done", headline: null })],
   ]);
   const { diagnostics, spans } = recorder();
 
   await agent().run(
-    job({ checkout: { ...checkout, agentNetworkAccess: true } }),
+    job({ checkout }),
     new AbortController().signal,
     cwd,
     diagnostics,
   );
 
   expect(calls[0]!.options.sandbox?.network).toEqual({
+    httpProxyPort: 41_000,
     allowedDomains: [],
     strictAllowlist: true,
   });
+  expect(proxies).toEqual({ started: 1, closed: 1 });
   expect(JSON.parse(spans[0]!.body!)).toMatchObject({
-    commandNetwork: "blocked",
+    commandNetwork: "proxied",
   });
 });
 
@@ -274,9 +289,8 @@ test("serves the GitHub tool from the Runner and requires the assigned issue to 
   expect(String(url)).toBe(
     "https://api.github.com/repos/acme/widgets/issues/7",
   );
-  expect(new Headers(init?.headers).get("Authorization")).toBe(
-    `Bearer ${checkout.token}`,
-  );
+  // The Run's token is added outside the container.
+  expect(new Headers(init?.headers).get("Authorization")).toBeNull();
   expect(spans.find((span) => span.operation === "tool")).toMatchObject({
     body: JSON.stringify({
       name: "mcp__tailos__github_get",

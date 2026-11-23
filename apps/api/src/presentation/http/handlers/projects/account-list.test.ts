@@ -24,7 +24,6 @@ const config = {
   repositoryId: 1,
   installationId: 1,
   allowedActors: ["owner"],
-  agentNetworkAccess: false,
   maxRunMinutes: 30,
 };
 async function fixture(t: TestContext) {

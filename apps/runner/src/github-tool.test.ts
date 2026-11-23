@@ -6,7 +6,6 @@ const checkout = {
   repository: "owner/repo",
   baseSha: "a".repeat(40),
   branch: "tailos/issue-17/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
-  token: "checkout-token",
 };
 const item = {
   number: 17,
@@ -62,9 +61,8 @@ test("reads every Unicode-safe body page from one immutable assigned issue", asy
   const [url, init] = http.mock.calls[0]!;
   expect(String(url)).toBe("https://api.github.com/repos/owner/repo/issues/17");
   expect(init).toMatchObject({ method: "GET", redirect: "error" });
-  expect(new Headers(init?.headers).get("Authorization")).toBe(
-    "Bearer checkout-token",
-  );
+  // The Run's token is added to GitHub requests outside the container.
+  expect(new Headers(init?.headers).get("Authorization")).toBeNull();
 });
 
 test("cannot satisfy assigned-issue coverage with unrelated reads, gaps or invalid offsets", async () => {

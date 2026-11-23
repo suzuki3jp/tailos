@@ -75,7 +75,7 @@ decided_by: suzuki3jp
 
 今回の実装は計画の 1・2 とその検証を対象にする。Webhook の複数配信と重複制約の緩和は、所有者の割り当て方針に従い後続の実装にする。
 
-実装後の検証は CI と同じ `pnpm run format:check`、`pnpm run lint`、`pnpm run test`、`pnpm run typecheck`、`pnpm --filter @tailos/web run build` を使う。PDR の変更後は `pnpm pdr catalog --write` と `pnpm pdr check` を実行する。
+実装後の検証は CI と同じ `pnpm run format:check`、`pnpm run lint`、`pnpm run test`、`pnpm run typecheck`、`pnpm --filter @tailos/web run build` を使う。PDR の変更後は `pnpm pdr check` を実行する。
 
 ## 未決事項
 

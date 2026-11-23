@@ -102,4 +102,4 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 検証
 
-各 PR で CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を通す。PDR を変えた PR では `pnpm pdr catalog --write` と `pnpm pdr check` を通す。本番の Cloudflare での確認が必要な段階（2、4、4b）は、deploy の前にユーザーに確認する。
+各 PR で CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を通す。PDR を変えた PR では `pnpm pdr check` を通す。本番の Cloudflare での確認が必要な段階（2、4、4b）は、deploy の前にユーザーに確認する。

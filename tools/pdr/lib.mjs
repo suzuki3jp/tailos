@@ -524,13 +524,11 @@ export function catalog(records) {
   return [
     "# PDR 一覧",
     "",
-    "`pnpm pdr catalog --write` で生成。直接編集しない。Agent は一覧全体を読み込まず検索 CLI を使う。",
-    "",
     "| ID | 状態 | 論点 | 決定 |",
     "| --- | --- | --- | --- |",
     ...records.map(
       (r) =>
-        `| [${r.id}](${posix(relative("docs/pdr", r.file))}) | ${r.status} | ${r.key} | ${r.title.replaceAll("|", "\\|")} |`,
+        `| [${r.id}](${r.file}) | ${r.status} | ${r.key} | ${r.title.replaceAll("|", "\\|")} |`,
     ),
     "",
   ].join("\n");

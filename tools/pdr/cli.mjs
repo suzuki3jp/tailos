@@ -1,4 +1,3 @@
-import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -18,7 +17,7 @@ const help = `PDR: Markdown is authoritative; SQLite is a disposable local cache
   pnpm pdr resolve decision.key
   pnpm pdr history decision.key [--limit 5] [--offset 0]
   pnpm pdr context --diff main...HEAD [--query "intent"] [--path planned/file]
-  pnpm pdr catalog [--write]
+  pnpm pdr catalog
   pnpm pdr check
 All commands except catalog emit JSON. --root overrides the repository root.
 Search excerpts are previews, not complete policies. Read scope/exceptions before applying a decision.`;
@@ -48,7 +47,6 @@ try {
       section: { type: "string" },
       diff: { type: "string" },
       history: { type: "boolean" },
-      write: { type: "boolean" },
       help: { type: "boolean" },
     },
   });
@@ -117,21 +115,10 @@ try {
         };
         break;
       }
-      case "catalog": {
-        const body = catalog(records);
-        if (values.write)
-          writeFileSync(resolve(root, "docs/pdr/index.md"), body);
-        process.stdout.write(
-          values.write ? "Generated docs/pdr/index.md\n" : body,
-        );
+      case "catalog":
+        process.stdout.write(catalog(records));
         break;
-      }
       case "check": {
-        const expected = catalog(records);
-        if (
-          readFileSync(resolve(root, "docs/pdr/index.md"), "utf8") !== expected
-        )
-          throw new Error("PDR catalog is stale. Run pnpm pdr catalog --write");
         result = {
           ok: true,
           records: records.length,

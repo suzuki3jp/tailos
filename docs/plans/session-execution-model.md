@@ -57,18 +57,19 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 4. 作業の引き継ぎ
 
-- コンテナ内の作業領域を固定の場所（例: `/work`）に置き、`CODEX_HOME` もその下に移す。`thread/start` から `ephemeral` を外し、threadId を Session に保存して `thread/resume` で続ける。
+- コンテナ内の作業領域を固定の場所（例: `/work`）に置く。`CODEX_HOME` は Codex のサンドボックスの書き込み可能な範囲（`writableRoots`）の外に置き、次の Turn に戻すのは rollout（`sessions/` 配下）だけにする。`config.toml` などは Runner が毎回作り直す。`thread/start` から `ephemeral` を外し、threadId を Session に保存して `thread/resume` で続ける。
 - Turn の返答を保存した後、`snapshotContainer()` を取り、ID と作成時のイメージの digest を Durable Object に保存する。待機時間は定数（既定 0）で決める。
-- 毎 Turn の終わりに rollout と作業ツリーの変更（`git diff --binary` と未追跡ファイル）を R2 に保存する。復元時はスナップショット（digest が一致する場合）を優先し、使えなければ R2 から checkout と変更を戻す。
+- 毎 Turn の終わりに rollout と作業ツリーを R2 に保存する。作業ツリーは、基準のコミットと HEAD の SHA、基準から HEAD までのコミット（`git bundle`）、HEAD に対する未コミットの変更と未追跡ファイルを保存する。復元時はスナップショット（digest が一致する場合）を優先し、使えなければ記録した基準のコミットを checkout してから R2 の内容を戻す。
+- R2 への保存は数回再試行し、それでも失敗したら Turn は成功のまま Session に「引き継ぎ不可」を記録する。次の Turn で戻せなければ新しい作業ツリーから始め、そのことを Agent と利用者に伝える。
 - git メタデータの改ざん検知の基準（今の `trustedConfig`）を Session 側に持ち、復元のたびに比べる。
 - Codex の再開を CI 相当で確かめるテスト（別プロセスで threadId から再開できること）を追加する。
 
-完了条件: 続きのメッセージで、前の Turn の作業ツリーと Codex の会話が戻る。イメージを更新した後も R2 から戻せる。
+完了条件: 続きのメッセージで、前の Turn の作業ツリー（Agent のコミットを含む）と Codex の会話が戻る。イメージを更新した後も R2 から戻せる。Agent のコマンドが書いた Codex の設定が次の Turn で読まれない。
 
 ## 5. 公開ツールと Session ごとの PR
 
 - Codex の dynamic tool（Claude は MCP）として公開ツールを追加する。Runner が今の検査を行って API に預け、API が署名付きコミットを作る。
-- 作業ブランチを Session ごと（例: `tailos/session/<sessionId>`）にし、2 回目以降は同じブランチにコミットを足して PR を更新する。PR が閉じられていれば新しく作る。
+- 作業ブランチを Session ごと（例: `tailos/session/<sessionId>`）にし、2 回目以降は同じブランチにコミットを足して PR を更新する。PR がマージ済みなら次の Turn の始めに作業ツリーを既定ブランチの最新に合わせ、新しい作業ブランチで PR を作る。マージせずに閉じていれば同じブランチ（削除済みなら作業ツリーの先頭から作り直す）で新しい PR を作る。
 - Turn の終わりに必ず公開する作りをやめる。label 起動の既定のプロンプトに公開の指示を入れる。
 - 置き換える判断: Run の結果として PR を保存する既存の判断。
 

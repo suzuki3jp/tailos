@@ -1506,3 +1506,98 @@ test("keeps the saved work when the Run's cleanup is retried", async (t) => {
   await runner.alarm();
   expect(memory.get("continuity")).toStrictEqual(saved);
 });
+
+/** A container that records how the Runner was started, and is always ready. */
+function startingContainer(inspected: string, idle = false) {
+  const order: string[] = [];
+  const container = {
+    running: idle,
+    images: { runner: "image" },
+    async interceptOutboundHttps(host: string) {
+      order.push(`intercept ${host}`);
+    },
+    start(options: { image?: string; containerSnapshot?: { id: string } }) {
+      container.running = true;
+      order.push(options.image ? "start image" : "start snapshot");
+    },
+    async inspect() {
+      return { image: inspected, labels: {} };
+    },
+    async destroy() {
+      container.running = false;
+      order.push("destroy");
+    },
+    async setInactivityTimeout() {},
+    getTcpPort: () => ({
+      fetch: async () => Response.json({ status: "ok", service: "runner" }),
+    }),
+  };
+  return { container, order };
+}
+
+type Starting = {
+  startRunner(
+    deadlineAt: number,
+    instance: "standard-3",
+    egress: { sessionId: string; github: boolean; codex: boolean },
+    snapshot?: { id: string; image: string },
+  ): Promise<unknown>;
+};
+
+test("registers the intercepts again when a snapshot is not used after all", async () => {
+  // The restored container reports another image: it runs an older Runner.
+  const { container, order } = startingContainer("old-image");
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(new Map()),
+      container,
+      exports: { GitHubEgress: () => ({}), ModelEgress: () => ({}) },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {} as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await (runner as unknown as Starting).startRunner(
+    Date.now() + 60_000,
+    "standard-3",
+    { sessionId: "session", github: false, codex: true },
+    { id: "snapshot", image: "image" },
+  );
+  expect(order).toStrictEqual([
+    "intercept chatgpt.com",
+    "start snapshot",
+    "destroy",
+    // A destroyed container loses its intercepts, and with them the CA.
+    "intercept chatgpt.com",
+    "start image",
+  ]);
+});
+
+test.for([
+  { name: "keeps using", inspected: "image", order: [] },
+  {
+    name: "replaces",
+    inspected: "old-image",
+    order: ["destroy", "intercept chatgpt.com", "start image"],
+  },
+])(
+  "$name a waiting container depending on its Runner image",
+  async ({ inspected, order: expected }) => {
+    const { container, order } = startingContainer(inspected, true);
+    class WaitingRunner extends RunnerContainer {
+      protected override idleMs = 60_000;
+    }
+    const runner = new WaitingRunner(
+      {
+        storage: memoryStorage(new Map([["idleUntil", Date.now() + 60_000]])),
+        container,
+        exports: { GitHubEgress: () => ({}), ModelEgress: () => ({}) },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+      {} as ConstructorParameters<typeof RunnerContainer>[1],
+    );
+    await (runner as unknown as Starting).startRunner(
+      Date.now() + 60_000,
+      "standard-3",
+      { sessionId: "session", github: false, codex: true },
+    );
+    expect(order).toStrictEqual(expected);
+  },
+);

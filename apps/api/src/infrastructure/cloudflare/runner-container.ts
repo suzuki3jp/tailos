@@ -527,33 +527,20 @@ export class RunnerContainer extends DurableObject<Bindings> {
       (await this.ctx.storage.get<number>(idleUntilStorage))
     ) {
       await this.ctx.storage.delete(idleUntilStorage);
-      await container.setInactivityTimeout(this.inactivity(deadlineAt));
-      return this.ready(container, deadlineAt);
+      // A Runner image deployed while it waited must not keep running. When
+      // the image cannot be told, the container is started again.
+      const kept = await container.inspect().catch(() => null);
+      if (kept?.image === image) {
+        await container.setInactivityTimeout(this.inactivity(deadlineAt));
+        return this.ready(container, deadlineAt);
+      }
+      await container.destroy().catch(() => {});
     }
 
-    // Intercepts last until the container stops. HTTPS ones must exist before
-    // it starts, so that its CA certificate is in place for the entrypoint.
-    if (egress) {
-      const exports = this.ctx.exports as unknown as RunnerExports;
-      // A kept container serves the Session's later Runs too, so the egress
-      // Workers ask for the Run that is current then.
-      const props = { props: { sessionId: egress.sessionId } };
-      if (egress.github)
-        for (const host of githubEgressHosts)
-          await container.interceptOutboundHttps(
-            host,
-            exports.GitHubEgress(props),
-          );
-      if (egress.codex)
-        for (const host of codexEgressHosts)
-          await container.interceptOutboundHttps(
-            host,
-            exports.ModelEgress(props),
-          );
-    }
     // Agent commands may always reach the internet: credentials stay outside.
     // A snapshot of an older image would silently run the older Runner.
     if (snapshot?.image === image) {
+      await this.intercept(container, egress);
       container.start({
         containerSnapshot: { id: snapshot.id },
         instance,
@@ -568,9 +555,39 @@ export class RunnerContainer extends DurableObject<Bindings> {
         return restored;
       await container.destroy().catch(() => {});
     }
+    // The intercepts of a destroyed container are gone with it.
+    await this.intercept(container, egress);
     container.start({ image, instance, enableInternet: true });
     await container.setInactivityTimeout(this.inactivity(deadlineAt));
     return this.ready(container, deadlineAt);
+  }
+
+  /**
+   * Sends the container's GitHub and model API traffic to the egress Workers.
+   * Intercepts last until the container stops. HTTPS ones must exist before
+   * it starts, so that its CA certificate is in place for the entrypoint.
+   */
+  private async intercept(
+    container: Container,
+    egress?: { sessionId: string; github: boolean; codex: boolean },
+  ) {
+    if (!egress) return;
+    const exports = this.ctx.exports as unknown as RunnerExports;
+    // A kept container serves the Session's later Runs too, so the egress
+    // Workers ask for the Run that is current then.
+    const props = { props: { sessionId: egress.sessionId } };
+    if (egress.github)
+      for (const host of githubEgressHosts)
+        await container.interceptOutboundHttps(
+          host,
+          exports.GitHubEgress(props),
+        );
+    if (egress.codex)
+      for (const host of codexEgressHosts)
+        await container.interceptOutboundHttps(
+          host,
+          exports.ModelEgress(props),
+        );
   }
 
   /**

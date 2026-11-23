@@ -56,13 +56,19 @@ test("durable deduplication, exclusive lease, terminal race and separate reruns"
     .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
     .bind(next.runId)
     .run();
+  await db
+    .prepare("UPDATE sessions SET project_id = ? WHERE id = ?")
+    .bind("project/id", next.sessionId)
+    .run();
   await sendIssueNotifications(
     store,
     "https://tailos.app",
     async (actualTarget, _marker, body, id) => {
       expect(actualTarget).toEqual(target);
       expect(body).toContain("tailos-failed-v1.png");
-      expect(body).toContain(`/sessions/${next.sessionId}`);
+      expect(body).toContain(
+        `https://tailos.app/project%2Fid/sessions/${next.sessionId})`,
+      );
       expect(id).toBeNull();
       return 43;
     },
@@ -168,6 +174,7 @@ test("comment renders only image and session link plus hidden marker", () => {
     commentBody("https://tailos.app", {
       run_id: "run",
       session_id: "session",
+      project_id: null,
       desired_state: "processing",
     }),
   ).toBe(

@@ -471,3 +471,71 @@ test("only the controller that sent the job can read or resend it", async (t) =>
   expect((await fetch(`${origin}/job/${job.runId}`, control)).status).toBe(200);
   expect((await fetch(`${origin}/health`)).status).toBe(200);
 });
+
+test("takes the previous work only from the controller before the job and reports what was saved", async (t) => {
+  const codex: AgentAdapter = { run: async () => ({ reply: "done" }) };
+  const server = createRunnerServer({
+    fake: fakeAgent,
+    codex,
+    claude: claudeAgent,
+  });
+  t.onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const other = "d".repeat(64);
+  const upload = (bearer: string) =>
+    fetch(`${origin}/continuity`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: new Uint8Array([1, 2, 3]),
+    });
+
+  expect((await upload(key)).status).toBe(204);
+  // The first control request names the controller for the whole Run.
+  expect((await upload(other)).status).toBe(401);
+  const job: RunnerJob = {
+    version: 1,
+    engine: "codex",
+    runId: randomUUID(),
+    prompt: "test",
+    deadlineAt: Date.now() + 10_000,
+    continuity: { restore: "saved" },
+    access: {
+      accessToken: "placeholder",
+      accountId: "account",
+      connectionVersion: randomUUID(),
+      accessVersion: randomUUID(),
+    },
+    refresh: { url: "https://tailos.example/runs/", bearer: "a".repeat(64) },
+  };
+  expect((await sendJob(origin, job, other)).status).toBe(401);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await upload(key)).status).toBe(409);
+
+  await vi.waitFor(async () => {
+    const status = await fetch(`${origin}/job/${job.runId}`, control);
+    expect(v.parse(RunnerStatus, await status.json()).status).toBe("succeeded");
+  });
+  const saved = `${origin}/job/${job.runId}/continuity`;
+  expect(
+    (await fetch(saved, { headers: { Authorization: `Bearer ${other}` } }))
+      .status,
+  ).toBe(401);
+  // Without a work tree the Turn left nothing: the previous work stays.
+  expect((await fetch(saved, control)).status).toBe(204);
+});
+
+test("has no saved work for a job that does not carry work over", async (t) => {
+  const origin = await listen(t);
+  const job = diagnosticJob(Date.now() + 10_000);
+  delete job.diagnostics;
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect(
+    (await fetch(`${origin}/job/${job.runId}/continuity`, control)).status,
+  ).toBe(404);
+});

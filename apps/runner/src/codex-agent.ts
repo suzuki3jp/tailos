@@ -1,12 +1,17 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import type { RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { supportsCodexSelection } from "@tailos/core/models";
-import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
+import {
+  AgentSandboxUnavailable,
+  type AgentAdapter,
+  type Conversation,
+} from "@/agent.ts";
+import { rolloutPath } from "@/continuity.ts";
 import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import {
@@ -21,7 +26,10 @@ import {
 import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
 
 const threadSchema = v.object({
-  thread: v.object({ id: v.string() }),
+  thread: v.object({
+    id: v.string(),
+    path: v.optional(v.nullable(v.string())),
+  }),
   model: v.optional(v.string()),
   modelProvider: v.optional(v.string()),
 });
@@ -55,6 +63,10 @@ const errorNotificationSchema = v.object({
 });
 
 const maxTurnErrorText = 2_000;
+
+/** Tells the Agent that it starts over, so it can tell the user. */
+const lostWorkNotice =
+  "Note: the work tree and conversation from this Session's previous turn could not be restored. You are starting from the repository's base commit without the earlier changes or conversation. Mention this to the user in your reply.\n\n";
 
 function turnErrorCategory(info: TurnError["codexErrorInfo"]) {
   if (info == null) return "unknown";
@@ -170,14 +182,23 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics) {
+    async run(job, signal, cwd, diagnostics, conversation) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      // Outside the Agent's writable roots, and rebuilt every Turn: only the
+      // conversation itself is carried over.
       const directory = join(root, "codex");
       const environment = job.checkout ? join(root, "environment") : undefined;
+      let thread: { id: string; path?: string } | undefined;
       try {
         signal.throwIfAborted();
         await mkdir(directory);
+        const resume = conversation?.resume;
+        if (resume) {
+          const path = join(directory, v.parse(rolloutPath, resume.path));
+          await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+          await writeFile(path, resume.content, { mode: 0o600 });
+        }
         if (environment) {
           await Promise.all(
             ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
@@ -194,8 +215,21 @@ export function createCodexAgent(
           http,
           environment,
           diagnostics,
+          conversation && {
+            ...conversation,
+            started: (started) => {
+              thread = started;
+            },
+          },
         );
       } finally {
+        if (conversation && thread?.path)
+          await saveConversation(
+            directory,
+            thread.id,
+            thread.path,
+            conversation,
+          );
         await withDiagnosticSpan(
           diagnostics,
           "cleanup",
@@ -205,6 +239,19 @@ export function createCodexAgent(
       }
     },
   };
+}
+
+/** Hands the thread's rollout to the Turn's saved work; never fails the Turn. */
+async function saveConversation(
+  directory: string,
+  threadId: string,
+  path: string,
+  conversation: Conversation,
+) {
+  const saved = v.safeParse(rolloutPath, relative(directory, path));
+  if (!saved.success) return;
+  const content = await readFile(path).catch(() => undefined);
+  if (content) conversation.save({ threadId, path: saved.output, content });
 }
 
 async function initialize(rpc: CodexRpc) {
@@ -223,6 +270,9 @@ async function runTurn(
   http: typeof fetch,
   environment?: string,
   diagnostics?: Diagnostics,
+  conversation?: Conversation & {
+    started(thread: { id: string; path?: string }): void;
+  },
 ) {
   // Commands may always reach the internet: GitHub credentials are added
   // outside the container, so none are here to send.
@@ -491,19 +541,40 @@ async function runTurn(
     });
     if (supportsCodexSelection(job.model, job.effort))
       throw new Error("Requested model or effort is unavailable");
-    const thread = v.parse(
+    const threadOptions = {
+      cwd,
+      ...(job.model && { model: job.model }),
+      approvalPolicy: "never",
+      sandbox:
+        job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
+    };
+    let lost = conversation?.lost ?? false;
+    let thread: v.InferOutput<typeof threadSchema> | undefined;
+    if (conversation?.resume) {
+      // The rollout brings back the earlier turns and the dynamic tools.
+      thread = await rpc
+        .call("thread/resume", {
+          threadId: conversation.resume.threadId,
+          ...threadOptions,
+        })
+        .then((result) => v.parse(threadSchema, result))
+        .catch(() => undefined);
+      lost ||= !thread;
+    }
+    thread ??= v.parse(
       threadSchema,
       await rpc.call("thread/start", {
-        cwd,
-        ...(job.model && { model: job.model }),
-        ephemeral: true,
-        approvalPolicy: "never",
-        sandbox:
-          job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
+        ...threadOptions,
+        // A Session's conversation is kept for its next Turn.
+        ephemeral: !conversation,
         ...(job.checkout && { dynamicTools: [githubTool] }),
       }),
     );
     threadId = thread.thread.id;
+    conversation?.started({
+      id: thread.thread.id,
+      ...(thread.thread.path && { path: thread.thread.path }),
+    });
     if (agentSpan && (thread.model || thread.modelProvider))
       diagnostics?.output(
         agentSpan,
@@ -516,7 +587,7 @@ async function runTurn(
     const result = await runAgentTurns({
       job,
       signal,
-      prompt: agentPrompt(job, githubTool.name),
+      prompt: (lost ? lostWorkNotice : "") + agentPrompt(job, githubTool.name),
       sensitive,
       failure: () => failure,
       async turn(prompt, revision, timeoutMs) {

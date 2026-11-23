@@ -1,5 +1,6 @@
 import type { PlanResult, RunnerJob } from "@tailos/core/runner";
 import type { Diagnostics } from "@tailos/core/diagnostics";
+import type { SavedConversation } from "@/continuity.ts";
 
 export type AgentResult = {
   reply: string;
@@ -8,12 +9,25 @@ export type AgentResult = {
   plan?: PlanResult;
 };
 
+/**
+ * The Agent's conversation across the Turns of a Session. `resume` continues
+ * the previous Turn's conversation; `lost` says the previous Turn's work could
+ * not be carried over; `save` receives the conversation at the end of the
+ * Turn, whether it succeeded or not.
+ */
+export type Conversation = {
+  resume?: SavedConversation;
+  lost?: boolean;
+  save(conversation: SavedConversation): void;
+};
+
 export interface AgentAdapter {
   run(
     job: RunnerJob,
     signal: AbortSignal,
     cwd?: string,
     diagnostics?: Diagnostics,
+    conversation?: Conversation,
   ): Promise<AgentResult>;
 }
 

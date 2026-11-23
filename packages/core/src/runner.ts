@@ -264,6 +264,23 @@ const repositoryJob = {
     }),
   ),
 };
+/** The largest saved work of a Session that the next Turn can restore. */
+export const maxContinuityBytes = 100 * 1024 * 1024;
+/**
+ * How long saving the Turn's work may take after the Agent stops, beyond the
+ * Run's own time limit.
+ */
+export const continuitySaveMs = 2 * 60_000;
+/**
+ * Carries a Session's work between its Turns. `restore` says what the previous
+ * Turn left: its saved work, which the controller uploads before the job, or
+ * nothing because saving it failed. A first Turn has no `restore`.
+ */
+export const RunnerContinuity = v.strictObject({
+  restore: v.optional(v.picklist(["saved", "lost"])),
+});
+export type RunnerContinuity = v.InferOutput<typeof RunnerContinuity>;
+
 // Authorizes the Runner to call back into its Run's controller.
 const lease = v.strictObject({
   url: v.pipe(v.string(), v.url()),
@@ -282,6 +299,7 @@ export const RunnerJob = v.variant("engine", [
     ...repositoryJob,
     engine: v.literal("codex"),
     ...codexOptions,
+    continuity: v.optional(RunnerContinuity),
     access: CodexAccess,
     // Also the base URL of the publication checkpoint.
     refresh: lease,

@@ -25,7 +25,9 @@ import {
 } from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
+  continuitySaveMs,
   FileChanges,
+  maxContinuityBytes,
   maxRunnerJobBytes,
   RunnerStatus,
   type CheckedPublication,
@@ -136,6 +138,19 @@ export function placeholderAccessToken(
 
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
+/**
+ * Where the Session's work stands for its next Turn: saved in R2 on top of
+ * its base commit, or lost because the last Turn's work could not be saved.
+ * It belongs to the Session, so it outlives each Run.
+ */
+type ContinuityRecord = { key: string; baseSha: string } | { lost: true };
+const continuityStorage = "continuity";
+/** The Run whose work is saved when it ends, and the base it works on. */
+type ContinuityRun = { runId: string; baseSha: string };
+const continuityRunStorage = "continuityRun";
+const continuityKey = (sessionId: string, runId: string) =>
+  `sessions/v1/${sessionId}/continuity/${runId}`;
+
 /** Runs of this Session that wait for the current one to finish. */
 const queuedRuns = "queuedRuns";
 /**
@@ -151,6 +166,7 @@ const runStorage = [
   rejectedModelAccess,
   runnerKeyStorage,
   agentEgressClosed,
+  continuityRunStorage,
 ] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
@@ -288,6 +304,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
     try {
       const container = this.ctx.container;
+      // Keep the Turn's work for the Session before the container goes.
+      const continuing =
+        await this.ctx.storage.get<ContinuityRun>(continuityRunStorage);
+      if (continuing?.runId === runId && container?.running)
+        await this.saveContinuity(container, continuing).catch(() => {
+          // oxlint-disable-next-line no-console -- Record save failures without work data.
+          console.warn("Saving the Session's work failed", { runId });
+        });
       if (container?.running)
         await observeRun(this.env.DB, runId, "cleanup", () =>
           container.destroy(),
@@ -321,6 +345,80 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return first;
     });
     if (next) await this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /**
+   * Collects the Turn's work from the Runner and keeps it in R2 for the next
+   * Turn, retrying a few times within the save window. When it cannot be
+   * kept, the Session records that its work was lost; when the Turn never
+   * worked on it, the previous saved work stays current.
+   */
+  private async saveContinuity(container: Container, run: ContinuityRun) {
+    const bucket = this.env.RUN_ARTIFACTS;
+    const sessionId = await this.ctx.storage.get<string>("sessionId");
+    const runnerKey = await this.ctx.storage.get<string>(runnerKeyStorage);
+    const key = sessionId && continuityKey(sessionId, run.runId);
+    const until = Date.now() + continuitySaveMs;
+    const outcome = await observeRun(
+      this.env.DB,
+      run.runId,
+      "continuity",
+      async () => {
+        if (!bucket || !key) return "lost" as const;
+        let failures = 0;
+        while (failures < 3 && Date.now() < until) {
+          try {
+            const response = await container
+              .getTcpPort(8080)
+              .fetch(`http://runner/job/${run.runId}/continuity`, {
+                headers: runnerHeaders(runnerKey),
+                signal: AbortSignal.timeout(
+                  Math.max(0, Math.min(60_000, until - Date.now())),
+                ),
+              });
+            if (response.status === 202) {
+              await response.body?.cancel();
+              await pause();
+              continue;
+            }
+            if (response.status === 204 || response.status === 404) {
+              await response.body?.cancel();
+              return "skipped" as const;
+            }
+            const size = Number(response.headers.get("Content-Length"));
+            if (
+              response.status !== 200 ||
+              !response.body ||
+              !(size > 0 && size <= maxContinuityBytes)
+            ) {
+              await response.body?.cancel();
+              return "lost" as const;
+            }
+            // R2 takes a stream of known length, as this response is.
+            await (
+              bucket.put as (key: string, value: unknown) => Promise<unknown>
+            ).call(bucket, key, response.body);
+            return "saved" as const;
+          } catch {
+            failures += 1;
+            await pause();
+          }
+        }
+        return "lost" as const;
+      },
+      (result) => (result === "lost" ? "failed" : "succeeded"),
+    );
+    if (outcome === "skipped") return;
+    const previous =
+      await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
+    await this.ctx.storage.put(
+      continuityStorage,
+      outcome === "saved" && key
+        ? ({ key, baseSha: run.baseSha } satisfies ContinuityRecord)
+        : ({ lost: true } satisfies ContinuityRecord),
+    );
+    if (previous && "key" in previous && previous.key !== key)
+      await bucket?.delete?.(previous.key).catch(() => {});
   }
 
   private async startRunner(
@@ -359,8 +457,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
     // Agent commands may always reach the internet: credentials stay outside.
     container.start({ image, instance, enableInternet: true });
+    // The Turn's work is saved after the Agent's time is over.
     await container.setInactivityTimeout(
-      Math.max(30_000, deadlineAt - Date.now() + 30_000),
+      Math.max(30_000, deadlineAt - Date.now() + 30_000 + continuitySaveMs),
     );
     const startupDeadline = Math.min(deadlineAt, Date.now() + 15_000);
     while (Date.now() < startupDeadline) {
@@ -688,6 +787,29 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return true;
   }
 
+  /**
+   * What the Session's previous Turn left for this one: its saved work and
+   * base, a record that it was lost, or nothing for a first Turn. Null when
+   * the saved work cannot be read now, so that this Turn does not replace it.
+   */
+  private async previousWork(): Promise<{
+    restore?: "saved" | "lost";
+    baseSha?: string;
+    archive?: { body?: unknown };
+  } | null> {
+    const record =
+      await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
+    if (!record) return {};
+    if (!("key" in record)) return { restore: "lost" };
+    const bucket = this.env.RUN_ARTIFACTS;
+    if (!bucket) return null;
+    const archive = await bucket.get(record.key).catch(() => undefined);
+    if (archive === undefined) return null;
+    return archive?.body
+      ? { restore: "saved", baseSha: record.baseSha, archive }
+      : { restore: "lost" };
+  }
+
   private async submitJob(request: RunRequest) {
     const job = await this.prepareJob(request).catch(() => null);
     if (!job)
@@ -699,6 +821,15 @@ export class RunnerContainer extends DurableObject<Bindings> {
         : undefined;
     const trigger =
       request.context.engine === "codex" ? request.context.trigger : undefined;
+    // Planning keeps its own conversation until it becomes a Routine.
+    const previous =
+      target && trigger && job.engine === "codex" && job.mode !== "plan"
+        ? await this.previousWork()
+        : undefined;
+    if (previous === null)
+      return { status: "failed", errorCode: "runner_unavailable" } as const;
+    if (previous && job.engine === "codex")
+      job.continuity = previous.restore ? { restore: previous.restore } : {};
     if (target && trigger && job.engine === "codex") {
       const issue = triggerIssue(trigger);
       if (issue)
@@ -750,6 +881,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "planning_snapshot_failed",
         } as const;
       }
+      // The saved work sits on the base it started from, not on the latest
+      // default branch.
+      if (previous?.baseSha) checkout.baseSha = previous.baseSha;
       try {
         await this.ctx.storage.put("repositoryGrant", {
           value: await seal(
@@ -816,6 +950,30 @@ export class RunnerContainer extends DurableObject<Bindings> {
     if (!key) {
       key = newRunLease();
       await this.ctx.storage.put(runnerKeyStorage, key);
+    }
+    if (job.engine === "codex" && job.continuity && job.checkout) {
+      // Set before the job: a job whose acknowledgement is lost still saves.
+      await this.ctx.storage.put(continuityRunStorage, {
+        runId: request.runId,
+        baseSha: job.checkout.baseSha,
+      } satisfies ContinuityRun);
+      if (previous?.archive?.body) {
+        const upload = await port.fetch("http://runner/continuity", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            ...runnerHeaders(key),
+          },
+          body: previous.archive.body as ReadableStream,
+          signal: AbortSignal.timeout(
+            Math.max(0, Math.min(60_000, job.deadlineAt - Date.now())),
+          ),
+        });
+        await upload.body?.cancel();
+        // Never start over silently: the saved work stays for a later Turn.
+        if (upload.status !== 204)
+          return { status: "failed", errorCode: "runner_unavailable" } as const;
+      }
     }
     const response = await port.fetch("http://runner/job", {
       method: "POST",

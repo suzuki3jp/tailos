@@ -42,6 +42,7 @@ export const DiagnosticAttributes = v.strictObject({
       "container",
       "runner",
       "checkout",
+      "continuity",
       "workspace",
       "agent",
       "initialize",

@@ -90,3 +90,4 @@
 | [PDR-20261123-publication-tool](records/PDR-20261123-publication-tool.md) | accepted | publication.tool | 作業の公開は Agent が Tailos の公開ツールを呼び、API が検査してから署名付きコミットと PR を作る |
 | [PDR-20261123-repository-settings-session-boundary](records/PDR-20261123-repository-settings-session-boundary.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Session のコンテナとファイルシステムに置く |
 | [PDR-20261123-session-continuity](records/PDR-20261123-session-continuity.md) | accepted | session.continuity | Session の作業はコンテナのスナップショットと R2 の保存で引き継ぎ、待機せずに眠らせる |
+| [PDR-20261124-session-continuity-limits](records/PDR-20261124-session-continuity-limits.md) | accepted | session.continuity.limits | Session の作業の保存は 100 MiB まで、Turn の後に別に 2 分を取り、失敗した Turn も引き継ぐ |

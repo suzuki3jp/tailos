@@ -30,7 +30,8 @@
 | 1 | `claude/execution-model-pdr` | PDR と計画書（この文書） | `pnpm pdr check` が通る |
 | 2 | `claude/agent-credentials-outside` | #131: Codex・Claude の認証情報をコンテナに置かない | 下記 |
 | 3 | `claude/session-runner` | Session の Durable Object と Turn の順番待ち | 下記 |
-| 4 | `claude/session-continuity` | 作業の引き継ぎ（スナップショット、R2、Codex の再開） | 下記 |
+| 4 | `claude/session-continuity` | 作業の引き継ぎ（R2、Codex の再開） | 下記 |
+| 4b | `claude/session-snapshot` | スナップショットでの高速な復元 | 下記 |
 | 5 | `claude/publication-tool` | 公開ツールと Session ごとの PR | 下記 |
 | 6 | `claude/routine-triggers` | label と計画を Routine に統一し、専用の経路を廃止 | 下記 |
 
@@ -59,16 +60,26 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 完了条件: 同じ Session の Turn が同じ Durable Object で処理される。前の Turn が終わる前に予約された Turn は、前の Turn の状態が消えてから始まる。既存の label 起動と計画会話が回帰しない。
 
-## 4. 作業の引き継ぎ
+## 4. 作業の引き継ぎ（R2 と Codex の再開）
 
-- コンテナ内の作業領域を固定の場所（例: `/work`）に置く。`CODEX_HOME` は Codex のサンドボックスの書き込み可能な範囲（`writableRoots`）の外に置き、次の Turn に戻すのは rollout（`sessions/` 配下）だけにする。`config.toml` などは Runner が毎回作り直す。`thread/start` から `ephemeral` を外し、threadId を Session に保存して `thread/resume` で続ける。
-- Turn の返答を保存した後、`snapshotContainer()` を取り、ID と作成時のイメージの digest を Durable Object に保存する。待機時間は定数（既定 0）で決める。
-- 毎 Turn の終わりに rollout と作業ツリーを R2 に保存する。作業ツリーは、基準のコミットと HEAD の SHA、基準から HEAD までのコミット（`git bundle`）、HEAD に対する未コミットの変更と未追跡ファイルを保存する。復元時はスナップショット（digest が一致する場合）を優先し、使えなければ記録した基準のコミットを checkout してから R2 の内容を戻す。
-- R2 への保存は数回再試行し、それでも失敗したら Turn は成功のまま Session に「引き継ぎ不可」を記録する。次の Turn で戻せなければ新しい作業ツリーから始め、そのことを Agent と利用者に伝える。
-- git メタデータの改ざん検知の基準（今の `trustedConfig`）を Session 側に持ち、復元のたびに比べる。
-- Codex の再開を CI 相当で確かめるテスト（別プロセスで threadId から再開できること）を追加する。
+正本である R2 での引き継ぎを先に入れ、スナップショットによる高速化は 4b に分ける。スナップショットは公開ベータで削除できないため、R2 だけで正しく動くことを先に確かめる。
 
-完了条件: 続きのメッセージで、前の Turn の作業ツリー（Agent のコミットを含む）と Codex の会話が戻る。イメージを更新した後も R2 から戻せる。Agent のコマンドが書いた Codex の設定が次の Turn で読まれない。
+- Codex の `thread/start` から `ephemeral` を外し、Turn の終わりに rollout（`CODEX_HOME/sessions/` 配下）を取り出す。次の Turn は同じ相対パスに rollout を置き、threadId を指定した `thread/resume` で続ける。`CODEX_HOME` は今どおり Codex のサンドボックスの書き込み可能な範囲（`writableRoots`）の外に毎回作り、戻すのは rollout だけにする。
+- 作業ツリーは、HEAD の上に作業ツリー全体（未コミットの変更と未追跡のファイル、`.gitignore` の対象を除く）を載せたコミットを作り、基準のコミットからの `git bundle` にする。rollout と合わせて 1 つの圧縮した保存にまとめる（[上限などの判断](../pdr/records/PDR-20261124-session-continuity-limits.md)）。
+- Session の Durable Object は、Turn の終わりにコンテナを捨てる前に Runner から保存を受け取り、R2（`sessions/v1/<sessionId>/continuity/<runId>`）に置いて、基準のコミットとともに記録する。次の Turn は記録した基準のコミットで checkout し、ジョブの前に保存を Runner に渡す。
+- 保存に失敗したら再試行し、それでも駄目なら「引き継ぎ不可」を記録する。次の Turn は基準のコミットから始め、Agent にはプロンプトで、利用者には Timeline の実行ステージ（`continuity`）で伝える。Turn が作業ツリーに届かなかった場合は前の保存を残す。
+- 計画会話は対象外とし、段階 6 で Routine に移すときに扱う。
+
+完了条件: 続きのメッセージで、前の Turn の作業ツリー（Agent のコミットを含む）と Codex の会話が戻る。失敗した Turn の作業も戻る。Runner を更新した後も R2 から戻せる。Agent のコマンドが書いた Codex の設定が次の Turn で読まれない。
+
+## 4b. スナップショットでの高速な復元
+
+- コンテナ内の作業領域と `CODEX_HOME` を固定の場所（例: `/work`）に移し、`CODEX_HOME` は `writableRoots` の外に保つ。
+- Turn の保存の後に `snapshotContainer()` を取り、ID と作成時のイメージの digest を Durable Object に保存する。待機時間は定数（既定 0）で決める。次の Turn は digest が一致すればスナップショットから起動し、使えなければ段階 4 の R2 から戻す。
+- git メタデータの改ざん検知の基準（今の `trustedConfig`）を Session 側に持ち、スナップショットから戻すたびに比べる。R2 から戻す場合は git メタデータを毎回作り直すので不要。
+- Codex の再開を本物の Codex CLI で確かめるテスト（別プロセスで threadId から再開できること。PoC の `codex-resume/probe.mjs` と同じ方法）を追加する。Codex を更新するたびに、古い rollout から再開できるかを確かめる。
+
+完了条件: 同じイメージの間はスナップショットから戻り、イメージを更新した後は R2 から戻る。スナップショットから戻した後も git の設定の改ざんを検知できる。
 
 ## 5. 公開ツールと Session ごとの PR
 
@@ -90,4 +101,4 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 検証
 
-各 PR で CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を通す。PDR を変えた PR では `pnpm pdr catalog --write` と `pnpm pdr check` を通す。本番の Cloudflare での確認が必要な段階（2、4）は、deploy の前にユーザーに確認する。
+各 PR で CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を通す。PDR を変えた PR では `pnpm pdr catalog --write` と `pnpm pdr check` を通す。本番の Cloudflare での確認が必要な段階（2、4、4b）は、deploy の前にユーザーに確認する。

@@ -19,7 +19,7 @@
 - リポジトリを対象にした実装の Run は、終わりに必ず公開（`pushed` か `no_changes`）を返し、`pushed` なら PR を作る。作業ブランチは `tailos/issue-<番号>/<runId>` か `tailos/run/<runId>`。
 - 計画会話は `planning_inbox`・`planning_snapshots`・`planning_replies` の専用の経路を持ち、会話全体をジョブに埋め込む（32 KiB の上限）。
 - Codex の ChatGPT のアクセストークンと更新用のリース、Claude のトークン、診断の Bearer はコンテナに渡している。
-- suzuki3jp/tailos#132 のマージ後、本番で Codex のターンが失敗している。原因の特定のため suzuki3jp/tailos#137 で失敗理由を診断記録に残すようにした。
+- suzuki3jp/tailos#132 のマージ後に本番で Codex のターンが失敗したが、suzuki3jp/tailos#137 で残すようにした診断記録から、原因は Codex の利用上限で、通信の横取りとは関係ないと分かった。
 
 ## train の構成
 
@@ -42,7 +42,7 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 - トークンの更新は API 側だけで行う。Runner の更新用リース（`account/chatgptAuthTokens/refresh` の転送）は、置き換え用の値を返すだけにするか廃止する。
 - 診断の送信用 Bearer など Runner 自身の秘密は、Agent のコマンドから読めない形にする（別ユーザーでの実行、または Runner の外への移動）。
 
-**先に確かめること**: #132 以降の本番の失敗が、HTTPS の横取りがモデル API の通信（WebSocket を含む）に影響したものかを #137 の診断記録で確認する。横取りが WebSocket を通せない場合、この方式は成り立たないので方針を見直す。
+**先に確かめること**: Codex はモデル API に WebSocket（失敗時は HTTPS）でつなぐ。`interceptOutboundHttps()` で横取りした WebSocket を Workers から中継できるかを、本番の Containers で確かめる。中継できない場合は方針を見直す。
 
 完了条件: コンテナの環境変数・ファイル・プロセスの引数に Codex・Claude のトークンがないこと。置き換え用の値で Codex と Claude のターンが本番で完了すること。
 

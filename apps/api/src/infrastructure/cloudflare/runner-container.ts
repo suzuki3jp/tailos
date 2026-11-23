@@ -58,6 +58,7 @@ import {
 } from "@/infrastructure/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
+import { runStarter } from "./run-start.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
 import {
   codexEgressHosts,
@@ -98,10 +99,9 @@ type RunnerExports = {
  * Set once the Agent's work is over. Publication runs before the container is
  * destroyed, so the egress Workers must stop adding the Run's credentials
  * first: otherwise a process the Agent left behind could push to the work
- * branch or keep using the model connection. The stored name predates model
- * egress and is kept for Runs that were in progress.
+ * branch or keep using the model connection.
  */
-const agentEgressClosed = "githubEgressClosed";
+const agentEgressClosed = "agentEgressClosed";
 /** The access version that the model API last rejected, forcing a refresh. */
 const rejectedModelAccess = "rejectedModelAccess";
 /** The shortest time between refreshes that a rejected token forces. */
@@ -136,6 +136,23 @@ export function placeholderAccessToken(
 
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
+/** Runs of this Session that wait for the current one to finish. */
+const queuedRuns = "queuedRuns";
+/**
+ * Diagnostics leases outlive their Run for late telemetry, so each Run of the
+ * Session has its own.
+ */
+const diagnosticLeasePrefix = "diagnosticLease/";
+const diagnosticLeaseKey = (runId: string) => diagnosticLeasePrefix + runId;
+/** What a Run leaves in storage, cleared before the next Run of the Session. */
+const runStorage = [
+  "runId",
+  "refreshLease",
+  "publicationDigest",
+  rejectedModelAccess,
+  runnerKeyStorage,
+  agentEgressClosed,
+] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
 
@@ -150,6 +167,10 @@ async function publicationDigest(content: string) {
   return Buffer.from(bytes).toString("hex");
 }
 
+/**
+ * Processes the Turns of one Session, one at a time, in a container of its
+ * own. The Durable Object is named after the Session; a Turn is a Run.
+ */
 export class RunnerContainer extends DurableObject<Bindings> {
   private pollUnavailable = false;
   async cleanupDiagnostics() {
@@ -184,8 +205,21 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
   }
 
-  async schedule(runId: string): Promise<void> {
-    await this.ctx.storage.put("runId", runId);
+  /**
+   * Starts a Run of this Session, or queues it behind the Run in progress:
+   * the container and its storage belong to one Run at a time.
+   */
+  async schedule(runId: string, sessionId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (storage) => {
+      await storage.put("sessionId", sessionId);
+      const current = await storage.get<string>("runId");
+      if (!current) await storage.put("runId", runId);
+      else if (current !== runId) {
+        const queue = (await storage.get<string[]>(queuedRuns)) ?? [];
+        if (!queue.includes(runId))
+          await storage.put(queuedRuns, [...queue, runId]);
+      }
+    });
     await this.ctx.storage.setAlarm(Date.now());
   }
 
@@ -243,9 +277,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return;
     }
 
-    await this.ctx.storage.delete("refreshLease");
-    await this.ctx.storage.delete(rejectedModelAccess);
-    await this.ctx.storage.delete(runnerKeyStorage);
+    // The Run is over: nothing may use its credentials while the rest of the
+    // cleanup, including revocation retries, is still pending.
+    await this.closeGitHubEgress();
+    await this.ctx.storage.delete(["refreshLease", rejectedModelAccess]);
     const digest = await this.ctx.storage.get<string>("publicationDigest");
     if (digest && this.env.RUN_ARTIFACTS?.delete) {
       try {
@@ -253,7 +288,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
         await this.ctx.storage.delete("publicationDigest");
       } catch {
         // oxlint-disable-next-line no-console -- Record cleanup failures without artifact data.
-        console.warn("Checked publication cleanup failed", { runId });
+        console.warn("Checked publication cleanup failed", {
+          runId,
+          key: publicationKey(runId, digest),
+        });
       }
     }
     try {
@@ -263,18 +301,45 @@ export class RunnerContainer extends DurableObject<Bindings> {
           container.destroy(),
         );
     } finally {
-      await this.revokeRepositoryGrant(runId);
+      // A revocation that will be retried keeps the Run current until then.
+      if (await this.revokeRepositoryGrant(runId)) await this.finishRun();
       const next = await dispatchPlanningInputs(this.env.DB);
-      await Promise.all(
-        next.map((id) => this.env.RUNNER?.getByName(id).schedule(id)),
-      );
+      const schedule = runStarter(this.env);
+      if (schedule) await Promise.all(next.map((id) => schedule(id)));
     }
+  }
+
+  /** Clears what the finished Run left and starts the next queued Run. */
+  private async finishRun() {
+    const now = Date.now();
+    const leases = await this.ctx.storage.list<DiagnosticLease>({
+      prefix: diagnosticLeasePrefix,
+    });
+    const next = await this.ctx.storage.transaction(async (storage) => {
+      await storage.delete([...runStorage]);
+      await storage.delete(
+        [...leases]
+          .filter(([, lease]) => lease.expiresAt <= now)
+          .map(([key]) => key),
+      );
+      const [first, ...rest] = (await storage.get<string[]>(queuedRuns)) ?? [];
+      if (rest.length) await storage.put(queuedRuns, rest);
+      else await storage.delete(queuedRuns);
+      if (first) await storage.put("runId", first);
+      return first;
+    });
+    if (next) await this.ctx.storage.setAlarm(Date.now());
   }
 
   private async startRunner(
     deadlineAt: number,
     instance: "lite" | "standard-3",
-    egress?: { runId: string; github: boolean; codex: boolean },
+    egress?: {
+      runId: string;
+      sessionId: string;
+      github: boolean;
+      codex: boolean;
+    },
   ) {
     const container = this.ctx.container;
     const image = container?.images.runner;
@@ -284,7 +349,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
     // it starts, so that its CA certificate is in place for the entrypoint.
     if (egress) {
       const exports = this.ctx.exports as unknown as RunnerExports;
-      const props = { props: { runId: egress.runId } };
+      const props = {
+        props: { runId: egress.runId, sessionId: egress.sessionId },
+      };
       if (egress.github)
         for (const host of githubEgressHosts)
           await container.interceptOutboundHttps(
@@ -336,8 +403,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
     bearer: string,
     batch: DiagnosticBatch,
   ) {
-    const lease =
-      await this.ctx.storage.get<DiagnosticLease>("diagnosticLease");
+    const lease = await this.ctx.storage.get<DiagnosticLease>(
+      diagnosticLeaseKey(runId),
+    );
     if (
       !lease ||
       lease.runId !== runId ||
@@ -389,7 +457,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const bearer = newRunLease();
     const expiresAt = deadlineAt + diagnosticGraceMs;
     await registerDiagnosticProducer(this.env.DB, runId, producerId);
-    await this.ctx.storage.put("diagnosticLease", {
+    await this.ctx.storage.put(diagnosticLeaseKey(runId), {
       runId,
       producerId,
       expiresAt,
@@ -591,13 +659,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return appId && privateKey ? new GitHubApp({ appId, privateKey }) : null;
   }
 
+  /** Revokes the Run's GitHub token; false while a retry is scheduled. */
   private async revokeRepositoryGrant(runId: string) {
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
-    if (!grant) return;
+    if (!grant) return true;
     if (grant.expiresAt <= Date.now()) {
       await this.ctx.storage.delete("repositoryGrant");
-      return;
+      return true;
     }
 
     try {
@@ -618,12 +687,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
         await this.ctx.storage.setAlarm(
           Math.min(grant.expiresAt, Date.now() + 15_000),
         );
-        return;
+        return false;
       }
       // oxlint-disable-next-line no-console -- Record revocation exhaustion without token data.
       console.warn("Repository grant revocation failed; relying on expiry");
     }
     await this.ctx.storage.delete("repositoryGrant");
+    return true;
   }
 
   private async submitJob(request: RunRequest) {
@@ -733,6 +803,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
         status: "failed",
         errorCode: "planning_input_too_large",
       } as const;
+    const sessionId = await this.ctx.storage.get<string>("sessionId");
+    if (!sessionId)
+      return { status: "failed", errorCode: "runner_unavailable" } as const;
     const port = await observeRun(this.env.DB, request.runId, "container", () =>
       this.startRunner(
         job.deadlineAt,
@@ -741,6 +814,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           ? undefined
           : {
               runId: request.runId,
+              sessionId,
               github: !!job.checkout,
               codex: job.engine === "codex",
             },

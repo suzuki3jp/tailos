@@ -4,7 +4,8 @@ import type { Bindings } from "@/bindings.ts";
 /** The GitHub hosts whose HTTPS traffic from a Run's container is intercepted. */
 export const githubEgressHosts = ["github.com", "api.github.com"] as const;
 
-export type GitHubEgressProps = { runId: string };
+/** The Run whose token is added, and the Session whose Runner holds it. */
+export type GitHubEgressProps = { runId: string; sessionId: string };
 
 const denied = (status: number, message: string) =>
   new Response(message, {
@@ -64,9 +65,9 @@ export class GitHubEgress extends WorkerEntrypoint<
   GitHubEgressProps
 > {
   override fetch(request: Request) {
-    const { runId } = this.ctx.props;
+    const { runId, sessionId } = this.ctx.props;
     return forwardGitHubRequest(request, async () =>
-      this.env.RUNNER?.getByName(runId).githubToken(runId),
+      this.env.RUNNER?.getByName(sessionId).githubToken(runId),
     );
   }
 }

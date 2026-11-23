@@ -35,6 +35,8 @@ supersedes: [PDR-20261121-pr-preview-approval]
 
 ビルドは権限を限定した `pull_request` CI で実行する。公開ジョブは `main` のデプロイ手順で指定した CI の成果物をアップロードする。公開前に PR が open で、ラベルと承認時の head が揃っていることを確認する。ラベルを外すと待機中の公開が止まり、すでに公開した環境は PR 終了まで利用できる。新しい head を公開するにはラベルを付け直す。
 
+現在の Cloudflare アカウントには本番と Preview のリソースがある。アカウント全体に設定されたトークン権限は本番にも及ぶため、公開・削除トークンは `main` の手順で動く GitHub Actions のジョブ内だけで使う。Worker の実行環境には Preview 専用のデータと実行時の資格情報を設定する。
+
 close・merge 後は Web と API の Preview を削除し、日次照合で削除漏れを回収する。GitHub で閉じた状態を確認できない場合は削除せず、失敗を記録する。共有 D1・R2 は保持し、PR 固有の migration は共有 DB に自動適用しない。
 
 対象は Web、ブラウザー向け API、設定済み運用者の GitHub ログイン。Runner、Cron、GitHub App Webhook は対象外。本番の認証は [本番 Cookie の方針](PDR-20261122-login-cookie-scope.md) に従う。

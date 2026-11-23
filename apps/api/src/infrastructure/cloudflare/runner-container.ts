@@ -163,6 +163,7 @@ const diagnosticLeaseKey = (runId: string) => diagnosticLeasePrefix + runId;
 const runStorage = [
   "runId",
   "refreshLease",
+  "publicationDigest",
   rejectedModelAccess,
   runnerKeyStorage,
   agentEgressClosed,
@@ -292,6 +293,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return;
     }
 
+    // The Run is over: nothing may use its credentials while the rest of the
+    // cleanup, including revocation retries, is still pending.
+    await this.closeGitHubEgress();
+    await this.ctx.storage.delete(["refreshLease", rejectedModelAccess]);
     const digest = await this.ctx.storage.get<string>("publicationDigest");
     if (digest && this.env.RUN_ARTIFACTS?.delete) {
       try {
@@ -299,7 +304,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
         await this.ctx.storage.delete("publicationDigest");
       } catch {
         // oxlint-disable-next-line no-console -- Record cleanup failures without artifact data.
-        console.warn("Checked publication cleanup failed", { runId });
+        console.warn("Checked publication cleanup failed", {
+          runId,
+          key: publicationKey(runId, digest),
+        });
       }
     }
     try {

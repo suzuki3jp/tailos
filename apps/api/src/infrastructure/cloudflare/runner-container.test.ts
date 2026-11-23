@@ -159,6 +159,71 @@ test("runs the Turns of a Session one at a time and clears each Run's state", as
   expect(values.has("diagnosticLease/expired")).toBe(false);
 });
 
+test("stops a finished Run's credentials while its token revocation is retried", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "revocation",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const values = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    [
+      "refreshLease",
+      {
+        runId,
+        digest: "digest",
+        connectionId: "connection",
+        connectionVersion: "connection-1",
+        expiresAt: Date.now() + 60_000,
+        lastRefreshAt: 0,
+      },
+    ],
+    ["rejectedModelAccess", "version-1"],
+    ["publicationDigest", "digest"],
+    [
+      "repositoryGrant",
+      { value: {}, expiresAt: Date.now() + 60_000, attempts: 0 },
+    ],
+  ]);
+  const setAlarm = vi.fn(async (_at: number) => {});
+  // Without the GitHub App the revocation fails and is retried.
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(values, setAlarm),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { DB },
+  );
+  await runner.alarm();
+  expect(setAlarm).toHaveBeenCalledOnce();
+  expect(values.get("runId")).toBe(runId);
+  expect(values.get("agentEgressClosed")).toBe(true);
+  expect(values.has("refreshLease")).toBe(false);
+  expect(values.has("rejectedModelAccess")).toBe(false);
+  expect(await runner.modelAccess(runId)).toBeNull();
+  expect(await runner.githubToken(runId)).toBeNull();
+
+  // Once the grant is gone, nothing of the Run is left for the next one.
+  values.set("repositoryGrant", {
+    value: {},
+    expiresAt: Date.now() - 1,
+    attempts: 1,
+  });
+  await runner.alarm();
+  for (const key of ["runId", "publicationDigest", "agentEgressClosed"])
+    expect(values.has(key), key).toBe(false);
+});
+
 test("a rejected model token forces a refresh at most once every five seconds", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   try {

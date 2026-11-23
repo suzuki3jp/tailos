@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { CodexAccess, type RunnerJob } from "@tailos/core/runner";
+import type { RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { supportsCodexSelection } from "@tailos/core/models";
@@ -152,6 +152,9 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
       env: {
         PATH: process.env.PATH,
         CODEX_HOME: directory,
+        // Codex reaches the model API through the interception that adds the
+        // Run's token, so it must trust the same CA as the Agent's commands.
+        ...trustEnvironment(),
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
         GIT_CONFIG_GLOBAL: "/dev/null",
@@ -249,7 +252,7 @@ async function runTurn(
     : undefined;
   const abort = () => rpc.close();
   signal.addEventListener("abort", abort, { once: true });
-  let access = job.access;
+  const access = job.access;
   let threadId: string | undefined;
   let reply = "";
   const agentSpan = diagnostics?.start(
@@ -344,28 +347,8 @@ async function runTurn(
       throw new Error("Interactive requests are disabled");
     }
 
-    const url = new URL(job.refresh.url);
-    if (url.protocol !== "https:" || url.username || url.password)
-      throw new Error("Invalid refresh URL");
-    const response = await http(url, {
-      method: "POST",
-      redirect: "error",
-      headers: {
-        Authorization: `Bearer ${job.refresh.bearer}`,
-        "X-Tailos-Access-Version": access.accessVersion,
-      },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-    });
-    if (!response.ok) throw new Error("Refresh unavailable");
-    const next = v.parse(CodexAccess, await response.json());
-    if (
-      next.accountId !== access.accountId ||
-      next.connectionVersion !== access.connectionVersion
-    )
-      throw new Error("Connection changed");
-    access = next;
-    sensitive.add(next.accessToken);
-    diagnostics?.addSecret(next.accessToken);
+    // The token is a placeholder: the model egress Worker outside the
+    // container adds the real one and refreshes it when the API rejects it.
     return loginParams();
   };
   rpc.onNotification = (method, params) => {

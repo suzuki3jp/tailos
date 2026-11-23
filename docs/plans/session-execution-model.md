@@ -38,13 +38,16 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 2. 認証情報をコンテナに置かない（#131）
 
-- Codex のモデル API（`chatgpt.com` のバックエンド）と Claude の API（`api.anthropic.com`）への通信を、GitHub と同じく `interceptOutboundHttps()` で Workers 側に受け、Run の認証情報を差し込む。コンテナには置き換え用の値だけを渡す。
-- トークンの更新は API 側だけで行う。Runner の更新用リース（`account/chatgptAuthTokens/refresh` の転送）は、置き換え用の値を返すだけにするか廃止する。
-- 診断の送信用 Bearer など Runner 自身の秘密は、Agent のコマンドから読めない形にする（別ユーザーでの実行、または Runner の外への移動）。
+判断: [Codex のモデル API の認証情報をコンテナに置かない](../pdr/records/PDR-20261123-model-credentials-outside.md)。
 
-**先に確かめること**: Codex はモデル API に WebSocket（失敗時は HTTPS）でつなぐ。`interceptOutboundHttps()` で横取りした WebSocket を Workers から中継できるかを、本番の Containers で確かめる。中継できない場合は方針を見直す。
+- Codex のモデル API（`chatgpt.com`）への通信を、GitHub と同じく `interceptOutboundHttps()` で Workers 側（`ModelEgress`）に受け、Run の接続の現在のアクセストークンを差し込む。コンテナにはアカウントとプランだけを持つ置き換え用のトークンを渡す。
+- トークンの更新は API 側だけで行う。モデル API が 401 を返したら拒否されたアクセストークンを記録し、次の通信の前に更新する。Runner がトークンを更新する経路は廃止する。
+- Claude は今の API ではまだ Run を起動しないので、Claude を有効にする段階（suzuki3jp/tailos#60）で `api.anthropic.com` に同じ方式を適用する。
+- Runner 自身の秘密（公開のリース、診断の Bearer、制御用の鍵）を Agent のコマンドから隔離する方法は後続とする。
 
-完了条件: コンテナの環境変数・ファイル・プロセスの引数に Codex・Claude のトークンがないこと。置き換え用の値で Codex と Claude のターンが本番で完了すること。
+**deploy 後に確かめること**: Codex はモデル API に WebSocket（失敗時は HTTPS）でつなぐ。横取りした WebSocket を Workers から中継でき、Codex のターンが本番で完了すること。
+
+完了条件: Runner に渡すジョブ・環境変数に Codex の本物のトークンが含まれないこと。置き換え用のトークンで Codex のターンが本番で完了すること。
 
 ## 3. Session の Durable Object と順番待ち
 

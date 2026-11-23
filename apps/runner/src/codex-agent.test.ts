@@ -103,23 +103,23 @@ const script = `
     }
     if (request.id === "refresh") {
       if (
-        request.result.accessToken !== "new-access" ||
+        request.result.accessToken !== "old-access" ||
         request.result.chatgptAccountId !== "account-id"
       ) throw new Error("Unexpected credential refresh response");
       send({ method: "item/started", params: { threadId: "test-thread", item: {
         id: "command-1", type: "commandExecution", command: "pnpm test", cwd: workspace, status: "inProgress",
       } } });
       send({ method: "item/completed", params: { threadId: "test-thread", item: {
-        id: "progress-1", type: "agentMessage", phase: "commentary", text: "Checking tests new-access",
+        id: "progress-1", type: "agentMessage", phase: "commentary", text: "Checking tests old-access",
       } } });
       send({ method: "item/completed", params: { threadId: "test-thread", item: {
-        id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed new-access", exitCode: 0, status: "completed",
+        id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed old-access", exitCode: 0, status: "completed",
       } } });
       send({ method: "item/completed", params: {
         threadId: "test-thread",
         item: { type: "agentMessage", text: mode === "workspaceWrite"
-          ? JSON.stringify({ reply: "Reply containing new-access", headline: "fix(api): handle refresh", sessionTitle: "Credential refresh" })
-          : "Reply containing new-access" },
+          ? JSON.stringify({ reply: "Reply containing old-access", headline: "fix(api): handle refresh", sessionTitle: "Credential refresh" })
+          : "Reply containing old-access" },
       } });
       send({ method: "turn/completed", params: {
         threadId: "test-thread",
@@ -167,7 +167,7 @@ function launchStub(
 }
 
 test.for(["readOnly", "workspaceWrite"] as const)(
-  "always allows network, scopes GitHub reads and refreshes credentials (%s)",
+  "always allows network, scopes GitHub reads and answers refreshes with the placeholder (%s)",
   async (mode) => {
     const job = testJob();
     if (mode === "workspaceWrite") {
@@ -199,15 +199,8 @@ test.for(["readOnly", "workspaceWrite"] as const)(
           html_url: "https://github.com/owner/repo",
         });
       }
-      expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
-      expect(headers.get("X-Tailos-Access-Version")).toBe(
-        job.access.accessVersion,
-      );
-      return Response.json({
-        ...job.access,
-        accessToken: "new-access",
-        accessVersion: randomUUID(),
-      });
+      // Tokens are refreshed outside the container, never through the Runner.
+      throw new Error("Codex token refresh reached the API");
     });
 
     expect(

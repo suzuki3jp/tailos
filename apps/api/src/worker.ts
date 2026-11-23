@@ -15,6 +15,7 @@ import { expireTimeline } from "@/infrastructure/d1/timeline.ts";
 
 export { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
 export { GitHubEgress } from "@/infrastructure/cloudflare/github-egress.ts";
+export { ModelEgress } from "@/infrastructure/cloudflare/model-egress.ts";
 export { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 export { SessionStream } from "@/infrastructure/cloudflare/session-stream.ts";
 

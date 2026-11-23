@@ -104,6 +104,8 @@ type RunnerExports = {
 const agentEgressClosed = "githubEgressClosed";
 /** The access version that the model API last rejected, forcing a refresh. */
 const rejectedModelAccess = "rejectedModelAccess";
+/** The shortest time between refreshes that a rejected token forces. */
+const forcedRefreshInterval = 5_000;
 
 /**
  * Stands in for the Codex access token inside the container. Codex reads the
@@ -448,11 +450,23 @@ export class RunnerContainer extends DurableObject<Bindings> {
     };
   }
 
-  /** Records that the model API refused an access token of this Run. */
+  /**
+   * Records that the model API refused an access token of this Run, so the
+   * next request refreshes it. Any process in the container can cause a 401,
+   * so a forced refresh happens at most once per `forcedRefreshInterval`.
+   */
   async rejectModelAccess(runId: string, accessVersion: string) {
-    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
-    if (lease?.runId === runId)
-      await this.ctx.storage.put(rejectedModelAccess, accessVersion);
+    await this.ctx.storage.transaction(async (storage) => {
+      const lease = await storage.get<RefreshLease>("refreshLease");
+      const now = Date.now();
+      if (
+        lease?.runId !== runId ||
+        now - lease.lastRefreshAt < forcedRefreshInterval
+      )
+        return;
+      await storage.put("refreshLease", { ...lease, lastRefreshAt: now });
+      await storage.put(rejectedModelAccess, accessVersion);
+    });
   }
 
   async stagePublication(

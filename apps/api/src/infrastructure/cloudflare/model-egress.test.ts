@@ -63,6 +63,17 @@ test("passes a WebSocket upgrade through with the token", async () => {
   expect(sent[0]!.headers.get("Authorization")).toBe("Bearer real-access");
 });
 
+test("adds the token to the usage query that Codex makes", async () => {
+  const { sent, upstream } = capture();
+  await forwardModelRequest(
+    new Request("https://chatgpt.com/backend-api/wham/usage"),
+    async () => access,
+    async () => {},
+    upstream,
+  );
+  expect(sent[0]!.headers.get("Authorization")).toBe("Bearer real-access");
+});
+
 test("records a rejected token so the next request refreshes it", async () => {
   const { upstream } = capture(401);
   const rejected = vi.fn(async () => {});
@@ -84,6 +95,13 @@ test("never attaches the token to another host, scheme, port or a finished Run",
     "https://api.openai.com/v1/responses",
     "http://chatgpt.com/backend-api/codex/responses",
     "https://chatgpt.com:8443/backend-api/codex/responses",
+    "https://chatgpt.com/backend-api/conversations",
+    "https://chatgpt.com/backend-api/wham/tasks",
+    "https://chatgpt.com/backend-api/codex",
+    "https://chatgpt.com/backend-api/codex/../conversations",
+    "https://chatgpt.com/backend-api/codex/%2e%2e/conversations",
+    "https://chatgpt.com/backend-api/codex/..%2Fconversations",
+    "https://chatgpt.com/backend-api/codex/%5C..%5Cconversations",
   ]) {
     const response = await forwardModelRequest(
       new Request(url),

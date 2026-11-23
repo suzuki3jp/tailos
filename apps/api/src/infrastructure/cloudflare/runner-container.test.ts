@@ -78,6 +78,75 @@ test("a diagnostics lease accepts late telemetry but cannot publish or obtain mo
   expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(false);
 });
 
+test("a rejected model token forces a refresh at most once every five seconds", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  try {
+    const runId = crypto.randomUUID();
+    const values = new Map<string, unknown>([
+      [
+        "refreshLease",
+        {
+          digest: "digest",
+          runId,
+          connectionId: "connection",
+          connectionVersion: "connection-1",
+          expiresAt: Date.now() + 600_000,
+          lastRefreshAt: 0,
+        },
+      ],
+    ]);
+    const storage = {
+      async get(key: string) {
+        return values.get(key);
+      },
+      async put(key: string, value: unknown) {
+        values.set(key, value);
+      },
+      async delete(key: string) {
+        return values.delete(key);
+      },
+      async transaction<T>(body: (storage: unknown) => Promise<T>) {
+        return body(storage);
+      },
+    };
+    const issueAccess = vi.fn(async (_rejected?: unknown) => ({
+      accessToken: "access",
+      accountId: "account",
+      accessVersion: "version-2",
+      connectionVersion: "connection-1",
+    }));
+    const runner = new RunnerContainer(
+      { storage } as unknown as ConstructorParameters<
+        typeof RunnerContainer
+      >[0],
+      { CREDENTIALS: { getByName: () => ({ issueAccess }) } } as never,
+    );
+
+    await runner.rejectModelAccess(runId, "version-1");
+    await runner.modelAccess(runId);
+    expect(issueAccess).toHaveBeenLastCalledWith({
+      accessVersion: "version-1",
+      connectionVersion: "connection-1",
+    });
+
+    vi.advanceTimersByTime(4_999);
+    await runner.rejectModelAccess(runId, "version-2");
+    await runner.modelAccess(runId);
+    expect(issueAccess).toHaveBeenLastCalledWith(undefined);
+
+    vi.advanceTimersByTime(1);
+    await runner.rejectModelAccess(runId, "version-2");
+    await runner.rejectModelAccess(crypto.randomUUID(), "version-3");
+    await runner.modelAccess(runId);
+    expect(issueAccess).toHaveBeenLastCalledWith({
+      accessVersion: "version-2",
+      connectionVersion: "connection-1",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
     constructor(

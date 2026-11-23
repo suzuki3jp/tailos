@@ -4,6 +4,22 @@ import type { Bindings } from "@/bindings.ts";
 /** The model API hosts whose HTTPS traffic from a Codex Run is intercepted. */
 export const codexEgressHosts = ["chatgpt.com"] as const;
 
+/**
+ * The paths that Codex uses for a Run: the model API under `codex/` and the
+ * usage query. The token is not added to the rest of the account's API.
+ */
+const codexPathPrefixes = ["/backend-api/codex/"] as const;
+const codexPaths = ["/backend-api/wham/usage"] as const;
+
+/** Whether a path is one Codex uses, without encoded separators or dots. */
+export function isCodexPath(pathname: string) {
+  if (/%2e|%2f|%5c|\\/i.test(pathname)) return false;
+  return (
+    (codexPaths as readonly string[]).includes(pathname) ||
+    codexPathPrefixes.some((prefix) => pathname.startsWith(prefix))
+  );
+}
+
 export type ModelEgressProps = { runId: string };
 
 /** The Run's current Codex access, issued outside the container. */
@@ -25,6 +41,8 @@ const denied = (status: number, message: string) =>
  * The container holds only a placeholder token. Interception matches the TLS
  * server name, while the request URL comes from the Host header that the
  * container controls, so the URL is checked again before the token is added.
+ * Only the paths Codex uses receive the token, since any process in the
+ * container can reach the host.
  * WebSocket upgrades pass through unchanged apart from the credentials.
  */
 export async function forwardModelRequest(
@@ -37,7 +55,8 @@ export async function forwardModelRequest(
   if (
     url.protocol !== "https:" ||
     url.port !== "" ||
-    !(codexEgressHosts as readonly string[]).includes(url.hostname)
+    !(codexEgressHosts as readonly string[]).includes(url.hostname) ||
+    !isCodexPath(url.pathname)
   )
     return denied(403, "Tailos forwards only model API requests here.");
   const current = await access().catch(() => null);

@@ -94,7 +94,7 @@ test("records a rejected token so the next request refreshes it", async () => {
 });
 
 test("never attaches the token to another host, scheme, port or a finished Run", async () => {
-  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const { upstream } = capture();
   const token = vi.fn(async () => access);
   for (const url of [
@@ -129,4 +129,32 @@ test("never attaches the token to another host, scheme, port or a finished Run",
     expect(response.status).toBe(401);
   }
   expect(upstream).not.toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+test("logs only the Run, host and path of a refused request", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const { upstream } = capture();
+    const response = await forwardModelRequest(
+      new Request("https://chatgpt.com/backend-api/conversations?token=x", {
+        headers: { Authorization: "Bearer placeholder", Cookie: "session=1" },
+      }),
+      async () => access,
+      async () => {},
+      upstream,
+      "run-1",
+    );
+    expect(response.status).toBe(403);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Model egress denied a request",
+      {
+        runId: "run-1",
+        host: "chatgpt.com",
+        path: "/backend-api/conversations",
+      },
+    );
+  } finally {
+    warn.mockRestore();
+  }
 });

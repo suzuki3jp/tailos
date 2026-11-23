@@ -86,7 +86,8 @@
 | [PDR-20261122-project-settings-without-network](records/PDR-20261122-project-settings-without-network.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、Project には通信許可を置かない |
 | [PDR-20261122-routine-model-options-from-source](records/PDR-20261122-routine-model-options-from-source.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を Tailos 定義の候補から選択する |
 | [PDR-20261123-execution-model](records/PDR-20261123-execution-model.md) | accepted | execution.model | Trigger・Routine・Session・Turn・Connector に分け、入出力を実行から切り離す |
-| [PDR-20261123-model-credentials-outside](records/PDR-20261123-model-credentials-outside.md) | accepted | agent.model-credentials-outside | Codex のモデル API の認証情報はコンテナに置かず、Workers 側で差し込む |
+| [PDR-20261123-model-credentials-outside](records/PDR-20261123-model-credentials-outside.md) | superseded | agent.model-credentials-outside | Codex のモデル API の認証情報はコンテナに置かず、Workers 側で差し込む |
 | [PDR-20261123-publication-tool](records/PDR-20261123-publication-tool.md) | accepted | publication.tool | 作業の公開は Agent が Tailos の公開ツールを呼び、API が検査してから署名付きコミットと PR を作る |
 | [PDR-20261123-repository-settings-session-boundary](records/PDR-20261123-repository-settings-session-boundary.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Session のコンテナとファイルシステムに置く |
 | [PDR-20261123-session-continuity](records/PDR-20261123-session-continuity.md) | accepted | session.continuity | Session の作業はコンテナのスナップショットと R2 の保存で引き継ぎ、待機せずに眠らせる |
+| [PDR-20261124-model-credentials-workspace-check](records/PDR-20261124-model-credentials-workspace-check.md) | accepted | agent.model-credentials-outside | Codex のモデル API の認証情報は Workers 側で差し込み、ワークスペースの確認にも付ける |

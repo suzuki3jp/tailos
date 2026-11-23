@@ -38,7 +38,7 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 2. 認証情報をコンテナに置かない（#131）
 
-判断: [Codex のモデル API の認証情報をコンテナに置かない](../pdr/records/PDR-20261123-model-credentials-outside.md)。
+判断: [Codex のモデル API の認証情報をコンテナに置かない](../pdr/records/PDR-20261124-model-credentials-workspace-check.md)。
 
 - Codex のモデル API（`chatgpt.com`）への通信を、GitHub と同じく `interceptOutboundHttps()` で Workers 側（`ModelEgress`）に受け、Run の接続の現在のアクセストークンを差し込む。コンテナにはアカウントとプランだけを持つ置き換え用のトークンを渡す。
 - トークンの更新は API 側だけで行う。モデル API が 401 を返したら拒否されたアクセストークンを記録し、次の通信の前に更新する。Runner がトークンを更新する経路は廃止する。

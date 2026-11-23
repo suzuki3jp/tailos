@@ -3,13 +3,13 @@
 PDR は Product Decision Record。プロダクト上の選択と理由を、人間と Agent の両方が参照できる形で残す。
 大きな設計に限らず、既定値・上限・待機時間・エラー時の体験など、将来コードだけでは理由が分からなくなる判断も対象にする。
 
-人間は [生成された一覧](index.md) から各 Markdown を読める。Agent は一覧の全件読み込みをせず、検索 CLI で候補と必要な章を段階的に取得する。
+人間は [records ディレクトリ](records/) から各 Markdown を読める。Agent は一覧の全件読み込みをせず、検索 CLI で候補と必要な章を段階的に取得する。
 
 ## 保存と検索
 
 - `records/*.md` が正本。ID は固定し、ファイル名やタイトルを変えても引き継ぐ。
 - `.cache/pdr/index.sqlite` はローカルの FTS5 trigram 索引。Git に含めず、欠損・破損時は自動再生成する。
-- `index.md` は人間向けに生成するテキスト一覧。直接編集しない。レコード変更後に `pnpm pdr catalog --write` で更新する。
+- `pnpm pdr catalog` は現在のレコードから Markdown の一覧を標準出力に表示する。
 - Node.js 22.22 以上の Node 22 を使用する。SQLite は Node 組み込み機能で、外部サービス・API キーは不要。YAML は `js-yaml` の JSON_SCHEMA で読み、日付も文字列として検証する。
 
 ```sh
@@ -19,7 +19,7 @@ pnpm pdr show PDR-20261113-003 --section decision,scope,rationale
 pnpm pdr resolve agent.reply.overflow
 pnpm pdr history agent.reply.overflow
 pnpm pdr context --diff main...HEAD --query "返答の長さ"
-pnpm pdr catalog --write
+pnpm pdr catalog
 pnpm pdr check
 ```
 

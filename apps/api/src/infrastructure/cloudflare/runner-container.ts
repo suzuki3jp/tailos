@@ -316,10 +316,20 @@ export class RunnerContainer extends DurableObject<Bindings> {
       const continuing =
         await this.ctx.storage.get<ContinuityRun>(continuityRunStorage);
       if (continuing?.runId === runId)
-        await this.saveContinuity(container, continuing).catch(() => {
+        try {
+          await this.saveContinuity(container, continuing);
+        } catch {
           // oxlint-disable-next-line no-console -- Record save failures without work data.
           console.warn("Saving the Session's work failed", { runId });
-        });
+          await this.ctx.storage.put(continuityStorage, {
+            lost: true,
+          } satisfies ContinuityRecord);
+        } finally {
+          // Saved once: a cleanup that is retried, for instance while the
+          // GitHub token is revoked, must not save again after the container
+          // is gone and record the saved work as lost.
+          await this.ctx.storage.delete(continuityRunStorage);
+        }
       if (container?.running)
         await observeRun(this.env.DB, runId, "cleanup", () =>
           container.destroy(),

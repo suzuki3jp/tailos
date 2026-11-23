@@ -63,16 +63,22 @@ test("passes a WebSocket upgrade through with the token", async () => {
   expect(sent[0]!.headers.get("Authorization")).toBe("Bearer real-access");
 });
 
-test("adds the token to the usage query that Codex makes", async () => {
-  const { sent, upstream } = capture();
-  await forwardModelRequest(
-    new Request("https://chatgpt.com/backend-api/wham/usage"),
-    async () => access,
-    async () => {},
-    upstream,
-  );
-  expect(sent[0]!.headers.get("Authorization")).toBe("Bearer real-access");
-});
+test.for([
+  "https://chatgpt.com/backend-api/wham/accounts/check",
+  "https://chatgpt.com/backend-api/wham/usage",
+])(
+  "adds the token to the account queries that Codex makes (%s)",
+  async (url) => {
+    const { sent, upstream } = capture();
+    await forwardModelRequest(
+      new Request(url),
+      async () => access,
+      async () => {},
+      upstream,
+    );
+    expect(sent[0]!.headers.get("Authorization")).toBe("Bearer real-access");
+  },
+);
 
 test("records a rejected token so the next request refreshes it", async () => {
   const { upstream } = capture(401);
@@ -88,6 +94,7 @@ test("records a rejected token so the next request refreshes it", async () => {
 });
 
 test("never attaches the token to another host, scheme, port or a finished Run", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
   const { upstream } = capture();
   const token = vi.fn(async () => access);
   for (const url of [

@@ -31,8 +31,11 @@ RUN npm install --prefix /opt/tailos-checks --ignore-scripts \
     @pnpm/exe@12.15.0 oxfmt@0.75.0 oxlint@1.89.0
 ENV PATH="/opt/tailos-checks/node_modules/.bin:${PATH}"
 WORKDIR /app
-RUN install -d -o node -g node -m 0700 /app/git-state /app/tls
+RUN install -d -o node -g node -m 0700 /app/git-state /app/tls /work
 ENV TAILOS_GIT_STATE_DIR=/app/git-state
+# A Session's work tree stays here between its Turns, so that a container
+# restored from a snapshot or kept waiting continues from it in place.
+ENV TAILOS_WORK_DIR=/work
 # The Agent SDK ships Claude Code as a platform binary, so it stays out of the
 # bundle. Keep these versions equal to apps/runner/package.json.
 ENV TAILOS_CLAUDE_AGENT_SDK_VERSION=0.3.319

@@ -26,7 +26,7 @@ export function isCodexPath(pathname: string) {
 }
 
 /** The Run whose access is added, and the Session whose Runner holds it. */
-export type ModelEgressProps = { runId: string; sessionId: string };
+export type ModelEgressProps = { sessionId: string; runId?: string };
 
 /** The Run's current Codex access, issued outside the container. */
 export type ModelAccess = {

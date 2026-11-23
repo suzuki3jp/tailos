@@ -143,7 +143,20 @@ const runnerKeyStorage = "runnerKey";
  * its base commit, or lost because the last Turn's work could not be saved.
  * It belongs to the Session, so it outlives each Run.
  */
-type ContinuityRecord = { key: string; baseSha: string } | { lost: true };
+type ContinuityRecord =
+  | { key: string; baseSha: string; snapshot?: ContainerSnapshotRecord }
+  | { lost: true };
+/**
+ * A snapshot of the container that holds the saved work in place, and the
+ * image it was taken from: it only restarts that image.
+ */
+type ContainerSnapshotRecord = { id: string; image: string };
+/**
+ * How long a container waits for the Session's next Turn before it is
+ * destroyed. At 0 it never waits: the next Turn restores its snapshot.
+ */
+export const sessionIdleMs = 0;
+const idleUntilStorage = "idleUntil";
 const continuityStorage = "continuity";
 /** The Run whose work is saved when it ends, and the base it works on. */
 type ContinuityRun = { runId: string; baseSha: string };
@@ -165,7 +178,6 @@ const runStorage = [
   "refreshLease",
   "publicationDigest",
   rejectedModelAccess,
-  runnerKeyStorage,
   agentEgressClosed,
   continuityRunStorage,
 ] as const;
@@ -189,6 +201,7 @@ async function publicationDigest(content: string) {
  */
 export class RunnerContainer extends DurableObject<Bindings> {
   private pollUnavailable = false;
+  protected idleMs = sessionIdleMs;
   async cleanupDiagnostics() {
     await expireDiagnostics(this.env.DB, this.env.RUN_ARTIFACTS);
     const bucket = this.env.RUN_ARTIFACTS;
@@ -241,7 +254,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
   async alarm(): Promise<void> {
     const runId = await this.ctx.storage.get<string>("runId");
-    if (!runId) return;
+    if (!runId) {
+      await this.endIdle();
+      return;
+    }
 
     const driver: RunnerDriver = {
       start: (job) =>
@@ -320,7 +336,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
           // oxlint-disable-next-line no-console -- Record save failures without work data.
           console.warn("Saving the Session's work failed", { runId });
         });
-      if (container?.running)
+      // Its work is saved: the container may wait for the Session's next
+      // Turn, or go.
+      if (this.idleMs > 0 && continuing?.runId === runId && container?.running)
+        await this.ctx.storage.put(idleUntilStorage, Date.now() + this.idleMs);
+      else if (container?.running)
         await observeRun(this.env.DB, runId, "cleanup", () =>
           container.destroy(),
         );
@@ -330,7 +350,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
       const next = await dispatchPlanningInputs(this.env.DB);
       const schedule = runStarter(this.env);
       if (schedule) await Promise.all(next.map((id) => schedule(id)));
+      const idleUntil = await this.ctx.storage.get<number>(idleUntilStorage);
+      if (idleUntil && !(await this.ctx.storage.get<string>("runId")))
+        await this.ctx.storage.setAlarm(idleUntil);
     }
+  }
+
+  /** Destroys a container that waited for the next Turn long enough. */
+  private async endIdle() {
+    const idleUntil = await this.ctx.storage.get<number>(idleUntilStorage);
+    if (!idleUntil) return;
+    if (idleUntil > Date.now()) {
+      await this.ctx.storage.setAlarm(idleUntil);
+      return;
+    }
+    await this.ctx.container?.destroy().catch(() => {});
+    await this.ctx.storage.delete(idleUntilStorage);
   }
 
   /** Clears what the finished Run left and starts the next queued Run. */
@@ -423,39 +458,76 @@ export class RunnerContainer extends DurableObject<Bindings> {
       (result) => (result === "lost" ? "failed" : "succeeded"),
     );
     if (outcome === "skipped") return;
+    // The saved work is the source of truth; the snapshot only restores it
+    // faster, so a failed snapshot leaves the Turn as it is.
+    const snapshot =
+      outcome === "saved" && container?.running
+        ? await this.snapshot(container, run.runId)
+        : undefined;
     const previous =
       await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
     await this.ctx.storage.put(
       continuityStorage,
       outcome === "saved" && key
-        ? ({ key, baseSha: run.baseSha } satisfies ContinuityRecord)
+        ? ({
+            key,
+            baseSha: run.baseSha,
+            ...(snapshot && { snapshot }),
+          } satisfies ContinuityRecord)
         : ({ lost: true } satisfies ContinuityRecord),
     );
     if (previous && "key" in previous && previous.key !== key)
       await bucket?.delete?.(previous.key).catch(() => {});
   }
 
+  /** Snapshots the container with the Turn's work, for the next Turn. */
+  private async snapshot(
+    container: Container,
+    runId: string,
+  ): Promise<ContainerSnapshotRecord | undefined> {
+    const image = container.images.runner;
+    if (!image) return undefined;
+    return observeRun(this.env.DB, runId, "container", async () => {
+      const taken = await container.snapshotContainer({ name: runId });
+      return { id: taken.id, image };
+    }).catch(() => undefined);
+  }
+
+  /**
+   * Starts the Runner: from the Session's snapshot when it was taken from
+   * the current image, otherwise from the image itself. A container kept
+   * waiting for this Session is used as it is.
+   */
   private async startRunner(
     deadlineAt: number,
     instance: "lite" | "standard-3",
     egress?: {
-      runId: string;
       sessionId: string;
       github: boolean;
       codex: boolean;
     },
+    snapshot?: ContainerSnapshotRecord,
   ) {
     const container = this.ctx.container;
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
+    if (
+      this.idleMs > 0 &&
+      container.running &&
+      (await this.ctx.storage.get<number>(idleUntilStorage))
+    ) {
+      await this.ctx.storage.delete(idleUntilStorage);
+      await container.setInactivityTimeout(this.inactivity(deadlineAt));
+      return this.ready(container, deadlineAt);
+    }
 
     // Intercepts last until the container stops. HTTPS ones must exist before
     // it starts, so that its CA certificate is in place for the entrypoint.
     if (egress) {
       const exports = this.ctx.exports as unknown as RunnerExports;
-      const props = {
-        props: { runId: egress.runId, sessionId: egress.sessionId },
-      };
+      // A kept container serves the Session's later Runs too, so the egress
+      // Workers ask for the Run that is current then.
+      const props = { props: { sessionId: egress.sessionId } };
       if (egress.github)
         for (const host of githubEgressHosts)
           await container.interceptOutboundHttps(
@@ -470,11 +542,39 @@ export class RunnerContainer extends DurableObject<Bindings> {
           );
     }
     // Agent commands may always reach the internet: credentials stay outside.
+    // A snapshot of an older image would silently run the older Runner.
+    if (snapshot?.image === image) {
+      container.start({
+        containerSnapshot: { id: snapshot.id },
+        instance,
+        enableInternet: true,
+      });
+      await container.setInactivityTimeout(this.inactivity(deadlineAt));
+      const restored = await this.ready(container, deadlineAt).catch(
+        () => undefined,
+      );
+      const running = await container.inspect().catch(() => null);
+      if (restored && (!running?.image || running.image === image))
+        return restored;
+      await container.destroy().catch(() => {});
+    }
     container.start({ image, instance, enableInternet: true });
-    // The Turn's work is saved after the Agent's time is over.
-    await container.setInactivityTimeout(
-      Math.max(30_000, deadlineAt - Date.now() + 30_000 + continuitySaveMs),
+    await container.setInactivityTimeout(this.inactivity(deadlineAt));
+    return this.ready(container, deadlineAt);
+  }
+
+  /**
+   * How long the container may go without requests: the Turn, saving its
+   * work, and waiting for the next Turn.
+   */
+  private inactivity(deadlineAt: number) {
+    return Math.max(
+      30_000,
+      deadlineAt - Date.now() + 30_000 + continuitySaveMs + this.idleMs,
     );
+  }
+
+  private async ready(container: Container, deadlineAt: number) {
     const startupDeadline = Math.min(deadlineAt, Date.now() + 15_000);
     while (Date.now() < startupDeadline) {
       try {
@@ -579,8 +679,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   /** The Run's GitHub token, for the egress Worker that adds it to requests. */
-  async githubToken(runId: string): Promise<string | null> {
-    if ((await this.ctx.storage.get<string>("runId")) !== runId) return null;
+  async githubToken(runId?: string): Promise<string | null> {
+    const current = await this.ctx.storage.get<string>("runId");
+    if (!current || (runId !== undefined && current !== runId)) return null;
+    runId = current;
     if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
@@ -597,10 +699,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   /** The Run's Codex access, for the egress Worker that adds it to requests. */
-  async modelAccess(runId: string): Promise<ModelAccess | null> {
+  async modelAccess(runId?: string): Promise<ModelAccess | null> {
     if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
-    if (!lease || lease.runId !== runId || lease.expiresAt <= Date.now())
+    if (
+      !lease ||
+      (runId !== undefined && lease.runId !== runId) ||
+      lease.expiresAt <= Date.now()
+    )
       return null;
     const rejected = await this.ctx.storage.get<string>(rejectedModelAccess);
     const access = await this.env.CREDENTIALS?.getByName(
@@ -628,12 +734,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
    * next request refreshes it. Any process in the container can cause a 401,
    * so a forced refresh happens at most once per `forcedRefreshInterval`.
    */
-  async rejectModelAccess(runId: string, accessVersion: string) {
+  async rejectModelAccess(runId: string | undefined, accessVersion: string) {
     await this.ctx.storage.transaction(async (storage) => {
       const lease = await storage.get<RefreshLease>("refreshLease");
       const now = Date.now();
       if (
-        lease?.runId !== runId ||
+        !lease ||
+        (runId !== undefined && lease.runId !== runId) ||
         now - lease.lastRefreshAt < forcedRefreshInterval
       )
         return;
@@ -810,6 +917,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     restore?: "saved" | "lost";
     baseSha?: string;
     archive?: { body?: unknown };
+    snapshot?: ContainerSnapshotRecord;
   } | null> {
     const record =
       await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
@@ -820,7 +928,12 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const archive = await bucket.get(record.key).catch(() => undefined);
     if (archive === undefined) return null;
     return archive?.body
-      ? { restore: "saved", baseSha: record.baseSha, archive }
+      ? {
+          restore: "saved",
+          baseSha: record.baseSha,
+          archive,
+          ...(record.snapshot && { snapshot: record.snapshot }),
+        }
       : { restore: "lost" };
   }
 
@@ -953,11 +1066,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
         job.engine === "fake"
           ? undefined
           : {
-              runId: request.runId,
               sessionId,
               github: !!job.checkout,
               codex: job.engine === "codex",
             },
+        previous?.snapshot,
       ),
     );
     let key = await this.ctx.storage.get<string>(runnerKeyStorage);

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +25,7 @@ import {
   decodeSavedWork,
   encodeSavedWork,
   type SavedConversation,
+  type SavedWork,
 } from "@/continuity.ts";
 import { trustEnvironment } from "@/egress.ts";
 import {
@@ -38,9 +40,14 @@ type Checkout = NonNullable<
 >;
 type CheckedWork = Omit<CheckedPublication, "kind" | "events">;
 
-/** What the previous Turn left, and where this Turn's saved work goes. */
+/**
+ * What the previous Turn left, and where this Turn's saved work goes. With a
+ * `workDir`, the work tree stays there after the Turn, so that a container
+ * restored from a snapshot, or kept waiting, finds it in place.
+ */
 export type WorkspaceContinuity = {
   restore?: Buffer | "lost";
+  workDir?: string;
   saved(
     result:
       | { archive: Buffer }
@@ -50,6 +57,8 @@ export type WorkspaceContinuity = {
 };
 
 const continuityRef = "refs/tailos/continuity";
+const digest = (data: Buffer) =>
+  createHash("sha256").update(data).digest("hex");
 // The saved work commit is never published, only carried to the next Turn.
 const continuityIdentity = {
   GIT_AUTHOR_NAME: "Tailos",
@@ -73,20 +82,23 @@ export async function runInGitWorkspace(
   publication?: RunnerPublication;
   plan?: AgentResult["plan"];
 }> {
-  const metadata = await mkdtemp(
-    join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-git-"),
-  );
-  const cwd = await mkdtemp(join(tmpdir(), "tailos-repo-")).catch(
-    async (error) => {
-      await withDiagnosticSpan(
-        diagnostics,
-        "cleanup",
-        () => rm(metadata, { recursive: true, force: true }),
-        JSON.stringify({ target: "git_metadata" }),
+  const workDir = continuity?.workDir;
+  const metadata = workDir
+    ? join(workDir, "git")
+    : await mkdtemp(
+        join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-git-"),
       );
-      throw error;
-    },
-  );
+  const cwd = workDir
+    ? join(workDir, "repo")
+    : await mkdtemp(join(tmpdir(), "tailos-repo-")).catch(async (error) => {
+        await withDiagnosticSpan(
+          diagnostics,
+          "cleanup",
+          () => rm(metadata, { recursive: true, force: true }),
+          JSON.stringify({ target: "git_metadata" }),
+        );
+        throw error;
+      });
   // No credentials here: GitHub requests get the Run's token outside the
   // container, and only the CA for that interception is added.
   const env = {
@@ -144,9 +156,39 @@ export async function runInGitWorkspace(
   let agentStarted = false;
   let savedConversation: SavedConversation | undefined;
 
+  /** The tree of the whole work tree on HEAD, without touching the index. */
+  const workTree = async (head: string, options: { signal?: AbortSignal }) => {
+    const index = { GIT_INDEX_FILE: join(metadata, "tailos-continuity-index") };
+    await git(["read-tree", head], { ...options, env: index });
+    await git(["add", "--all"], { ...options, env: index });
+    return (await git(["write-tree"], { ...options, env: index }))
+      .toString()
+      .trim();
+  };
+
+  /**
+   * Whether the work tree in place is exactly the saved work: same base,
+   * HEAD and files, and git configuration that the Session still trusts.
+   */
+  const matchesInPlace = async (saved: SavedWork) => {
+    try {
+      if (saved.baseSha !== checkout.baseSha || !saved.config) return false;
+      if (digest(await readFile(configPath)) !== saved.config) return false;
+      const head = (await git(["rev-parse", "HEAD"])).toString().trim();
+      if (head !== saved.head) return false;
+      const tree = (
+        await git(["rev-parse", "--verify", `${saved.work}^{tree}`])
+      )
+        .toString()
+        .trim();
+      return (await workTree(head, {})) === tree;
+    } catch {
+      return false;
+    }
+  };
+
   /** Puts the previous Turn's commits and work tree on top of its base. */
-  const restore = async (archive: Buffer) => {
-    const saved = await decodeSavedWork(archive);
+  const restore = async (saved: SavedWork) => {
     if (saved.baseSha !== checkout.baseSha)
       throw new Error("Saved work has another base");
     const bundle = join(metadata, "tailos-continuity.bundle");
@@ -181,20 +223,13 @@ export async function runInGitWorkspace(
       return;
     }
     const saveSignal = AbortSignal.timeout(continuitySaveMs);
-    const index = { GIT_INDEX_FILE: join(metadata, "tailos-continuity-index") };
     try {
       if (!(await readFile(configPath)).equals(trustedConfig))
         throw new Error("Git metadata configuration changed");
       const head = (await git(["rev-parse", "HEAD"], { signal: saveSignal }))
         .toString()
         .trim();
-      await git(["read-tree", head], { env: index, signal: saveSignal });
-      await git(["add", "--all"], { env: index, signal: saveSignal });
-      const tree = (
-        await git(["write-tree"], { env: index, signal: saveSignal })
-      )
-        .toString()
-        .trim();
+      const tree = await workTree(head, { signal: saveSignal });
       const work = (
         await git(
           ["commit-tree", tree, "-p", head, "-m", "Tailos saved work"],
@@ -217,6 +252,7 @@ export async function runInGitWorkspace(
           baseSha: checkout.baseSha,
           head,
           work,
+          config: digest(trustedConfig),
           bundle: await readFile(bundle),
           ...(savedConversation && { conversation: savedConversation }),
         }),
@@ -238,30 +274,51 @@ export async function runInGitWorkspace(
     }
   };
 
+  // The previous Turn's saved work, read once for both ways of restoring it.
+  let saved: SavedWork | undefined;
+  let unreadable: unknown;
+  if (Buffer.isBuffer(continuity?.restore))
+    saved = await decodeSavedWork(continuity.restore).catch((error) => {
+      unreadable = error;
+      return undefined;
+    });
+
   let activeSpan: string | undefined;
   try {
-    activeSpan = diagnostics?.start(
-      "checkout",
-      JSON.stringify({
-        repository: checkout.repository,
-        baseSha: checkout.baseSha,
-        branch: checkout.branch,
-      }),
-    );
-    await git(["init", "--quiet"]);
-    await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, { flag: "wx" });
-    await git([
-      "fetch",
-      "--quiet",
-      "--depth",
-      "1",
-      "--no-tags",
-      remote,
-      checkout.baseSha,
-    ]);
-    await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
-    if (activeSpan) diagnostics?.end(activeSpan);
-    activeSpan = undefined;
+    // A container kept or restored from a snapshot may already hold the work.
+    const inPlace = !!saved && !!workDir && (await matchesInPlace(saved));
+    if (!inPlace) {
+      if (workDir) {
+        await rm(cwd, { recursive: true, force: true });
+        await rm(metadata, { recursive: true, force: true });
+        await mkdir(cwd, { recursive: true });
+        await mkdir(metadata, { recursive: true });
+      }
+      activeSpan = diagnostics?.start(
+        "checkout",
+        JSON.stringify({
+          repository: checkout.repository,
+          baseSha: checkout.baseSha,
+          branch: checkout.branch,
+        }),
+      );
+      await git(["init", "--quiet"]);
+      await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, {
+        flag: "wx",
+      });
+      await git([
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        "--no-tags",
+        remote,
+        checkout.baseSha,
+      ]);
+      await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+      if (activeSpan) diagnostics?.end(activeSpan);
+      activeSpan = undefined;
+    }
     let conversation: Conversation | undefined;
     if (continuity) {
       let resume: SavedConversation | undefined;
@@ -269,12 +326,14 @@ export async function runInGitWorkspace(
       if (Buffer.isBuffer(continuity.restore)) {
         activeSpan = diagnostics?.start("continuity");
         try {
-          resume = await restore(continuity.restore);
+          if (!saved) throw unreadable;
+          if (!inPlace) await restore(saved);
+          resume = saved.conversation;
           if (activeSpan)
             diagnostics?.end(
               activeSpan,
               {},
-              JSON.stringify({ restored: true }),
+              JSON.stringify({ restored: true, inPlace }),
             );
         } catch (error) {
           lost = true;
@@ -416,20 +475,23 @@ export async function runInGitWorkspace(
     throw error;
   } finally {
     await save();
-    const cleanup = [
-      withDiagnosticSpan(
-        diagnostics,
-        "cleanup",
-        () => rm(cwd, { recursive: true, force: true }),
-        JSON.stringify({ target: "workspace" }),
-      ),
-      withDiagnosticSpan(
-        diagnostics,
-        "cleanup",
-        () => rm(metadata, { recursive: true, force: true }),
-        JSON.stringify({ target: "git_metadata" }),
-      ),
-    ];
+    // The work stays for a snapshot or the Session's next Turn.
+    const cleanup = workDir
+      ? []
+      : [
+          withDiagnosticSpan(
+            diagnostics,
+            "cleanup",
+            () => rm(cwd, { recursive: true, force: true }),
+            JSON.stringify({ target: "workspace" }),
+          ),
+          withDiagnosticSpan(
+            diagnostics,
+            "cleanup",
+            () => rm(metadata, { recursive: true, force: true }),
+            JSON.stringify({ target: "git_metadata" }),
+          ),
+        ];
     // Finish both cleanup spans before the server flushes final diagnostics.
     await Promise.all(cleanup).catch(async (error: unknown) => {
       await Promise.allSettled(cleanup);

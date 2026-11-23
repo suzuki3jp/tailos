@@ -5,7 +5,7 @@ import type { Bindings } from "@/bindings.ts";
 export const githubEgressHosts = ["github.com", "api.github.com"] as const;
 
 /** The Run whose token is added, and the Session whose Runner holds it. */
-export type GitHubEgressProps = { runId: string; sessionId: string };
+export type GitHubEgressProps = { sessionId: string; runId?: string };
 
 const denied = (status: number, message: string) =>
   new Response(message, {

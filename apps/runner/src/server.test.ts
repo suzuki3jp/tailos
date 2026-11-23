@@ -148,11 +148,14 @@ test("does not let an unresponsive diagnostic endpoint hold the business result 
   expect((await terminalStatus(origin, job.runId)).status).toBe("succeeded");
 });
 
-test("executes the selected agent once and rejects a different job", async (t) => {
+test("executes the selected agent once and rejects a different job while it runs", async (t) => {
   let calls = 0;
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
   const origin = await listen(t, {
     async run(job) {
       calls++;
+      if (calls === 1) await released;
       return { reply: `Received ${job.prompt}` };
     },
   });
@@ -166,10 +169,14 @@ test("executes the selected agent once and rejects a different job", async (t) =
   expect((await sendJob(origin, { ...job, prompt: "" })).status).toBe(400);
   expect((await sendJob(origin, job)).status).toBe(202);
   expect((await sendJob(origin, job)).status).toBe(202);
-  expect((await sendJob(origin, { ...job, runId: randomUUID() })).status).toBe(
-    409,
-  );
+  const next = { ...job, runId: randomUUID() };
+  expect((await sendJob(origin, next)).status).toBe(409);
   expect(calls).toBe(1);
+  release();
+  await vi.waitFor(async () => {
+    const status = await fetch(`${origin}/job/${job.runId}`, control);
+    expect(v.parse(RunnerStatus, await status.json()).status).toBe("succeeded");
+  });
   const result = v.parse(
     RunnerStatus,
     await (await fetch(`${origin}/job/${job.runId}`, control)).json(),
@@ -180,6 +187,11 @@ test("executes the selected agent once and rejects a different job", async (t) =
     "job_started",
     "job_succeeded",
   ]);
+  // A container kept for the Session takes its next Turn, from the same
+  // controller only.
+  expect((await sendJob(origin, next, "d".repeat(64))).status).toBe(401);
+  expect((await sendJob(origin, next)).status).toBe(202);
+  await vi.waitFor(() => expect(calls).toBe(2));
 });
 
 test("cancels an active adapter at the job deadline", async (t) => {
@@ -473,7 +485,14 @@ test("only the controller that sent the job can read or resend it", async (t) =>
 });
 
 test("takes the previous work only from the controller before the job and reports what was saved", async (t) => {
-  const codex: AgentAdapter = { run: async () => ({ reply: "done" }) };
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  const codex: AgentAdapter = {
+    run: async () => {
+      await released;
+      return { reply: "done" };
+    },
+  };
   const server = createRunnerServer({
     fake: fakeAgent,
     codex,
@@ -516,6 +535,7 @@ test("takes the previous work only from the controller before the job and report
   expect((await sendJob(origin, job, other)).status).toBe(401);
   expect((await sendJob(origin, job)).status).toBe(202);
   expect((await upload(key)).status).toBe(409);
+  release();
 
   await vi.waitFor(async () => {
     const status = await fetch(`${origin}/job/${job.runId}`, control);

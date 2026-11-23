@@ -152,8 +152,10 @@ test("runs the Turns of a Session one at a time and clears each Run's state", as
   expect(values.get("runId")).toBe(second);
   expect(values.has("queuedRuns")).toBe(false);
   expect(setAlarm).toHaveBeenCalledOnce();
-  for (const key of ["refreshLease", "agentEgressClosed", "runnerKey"])
+  for (const key of ["refreshLease", "agentEgressClosed"])
     expect(values.has(key), key).toBe(false);
+  // The controller's key stays with the Session's container.
+  expect(values.get("runnerKey")).toBe(true);
   // Late telemetry of the finished Run is still accepted until it expires.
   expect(values.has(`diagnosticLease/${first.runId}`)).toBe(true);
   expect(values.has("diagnosticLease/expired")).toBe(false);
@@ -1048,7 +1050,8 @@ test.for([
         "chatgpt.com",
         "start",
       ]);
-      expect(egress).toHaveBeenCalledWith({ props: { runId, sessionId } });
+      // The egress Workers ask the Session for its current Run.
+      expect(egress).toHaveBeenCalledWith({ props: { sessionId } });
       // The Codex token stays outside too: Codex gets a placeholder that
       // carries only the account.
       expect(jobs).toHaveLength(1);
@@ -1067,7 +1070,9 @@ test.for([
       expect([...controlKeys]).toEqual([
         expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
       ]);
-      expect(memory.has("runnerKey")).toBe(false);
+      // The controller keeps its key for the Session's container: a new
+      // Runner takes the first key it is sent.
+      expect(memory.has("runnerKey")).toBe(true);
       // Planning results arrived: the Agent's GitHub access ended before them.
       expect(closedAtDestroy).toBe(true);
       expect(memory.has("agentEgressClosed")).toBe(false);
@@ -1105,6 +1110,8 @@ test("hands the Run's GitHub token only to its own unexpired grant", async () =>
     >[1],
   );
   expect(await runner.githubToken(runId)).toBe("run-token");
+  // The egress Workers of a kept container ask for the current Run's token.
+  expect(await runner.githubToken()).toBe("run-token");
   expect(await runner.githubToken(crypto.randomUUID())).toBeNull();
   // Once the Agent's work is over, publication must not race its processes.
   memory.set("agentEgressClosed", true);
@@ -1137,132 +1144,167 @@ function memoryBucket(objects: Map<string, string>) {
   };
 }
 
-test("continues a Session's Turn from its saved work and keeps the new work", async (t) => {
-  const DB = await createTestDb(t);
-  const { runId, sessionId } = await admitTrigger(DB, {
-    source: "test",
-    idempotencyKey: "continuity",
-    ownerId: "owner",
-    concurrencyKey: "target",
-    prompt: "Keep going",
-    executionContext: JSON.stringify({
-      version: 1,
-      engine: "codex",
-      connectionId: `codex/${crypto.randomUUID()}`,
-      repository: {
-        repository: "owner/repo",
-        repositoryId: 1,
-        installationId: 2,
-        defaultBranch: "main",
-      },
-      trigger: { kind: "web.message" },
-    }),
-    timeoutMs: 60_000,
-  });
-  const savedBase = "b".repeat(40);
-  const previousKey = `sessions/v1/${sessionId}/continuity/previous`;
-  const objects = new Map([[previousKey, "previous work"]]);
-  const bucket = memoryBucket(objects);
-  const memory = new Map<string, unknown>([
-    ["sessionId", sessionId],
-    ["continuity", { key: previousKey, baseSha: savedBase }],
-  ]);
-  const requests: string[] = [];
-  let collected = 0;
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    const path = new URL(url).pathname;
-    if (path === "/health")
-      return Response.json({ status: "ok", service: "runner" });
-    requests.push(`${init?.method ?? "GET"} ${path}`);
-    if (path === "/continuity") {
-      expect(await new Response(init?.body).text()).toBe("previous work");
-      return new Response(null, { status: 204 });
-    }
-    if (path === "/job") {
-      const job = JSON.parse(String(init?.body));
-      expect(job.continuity).toStrictEqual({ restore: "saved" });
-      // The saved work continues on its own base, not the latest branch.
-      expect(job.checkout.baseSha).toBe(savedBase);
-      return new Response(null, { status: 202 });
-    }
-    if (path === `/job/${runId}`)
-      return Response.json({
-        status: "failed",
-        errorCode: "agent_failed",
-        events: [],
+test.for([
+  { name: "its snapshot", snapshotImage: "image", fromSnapshot: true },
+  {
+    name: "the image after an update",
+    snapshotImage: "old-image",
+    fromSnapshot: false,
+  },
+])(
+  "continues a Session's Turn from its saved work and $name, and keeps the new work",
+  async ({ snapshotImage, fromSnapshot }, t) => {
+    const DB = await createTestDb(t);
+    const { runId, sessionId } = await admitTrigger(DB, {
+      source: "test",
+      idempotencyKey: "continuity",
+      ownerId: "owner",
+      concurrencyKey: "target",
+      prompt: "Keep going",
+      executionContext: JSON.stringify({
+        version: 1,
+        engine: "codex",
+        connectionId: `codex/${crypto.randomUUID()}`,
+        repository: {
+          repository: "owner/repo",
+          repositoryId: 1,
+          installationId: 2,
+          defaultBranch: "main",
+        },
+        trigger: { kind: "web.message" },
+      }),
+      timeoutMs: 60_000,
+    });
+    const savedBase = "b".repeat(40);
+    const previousKey = `sessions/v1/${sessionId}/continuity/previous`;
+    const objects = new Map([[previousKey, "previous work"]]);
+    const bucket = memoryBucket(objects);
+    const memory = new Map<string, unknown>([
+      ["sessionId", sessionId],
+      [
+        "continuity",
+        {
+          key: previousKey,
+          baseSha: savedBase,
+          snapshot: { id: "snapshot-0", image: snapshotImage },
+        },
+      ],
+    ]);
+    const requests: string[] = [];
+    let collected = 0;
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (path === "/health")
+        return Response.json({ status: "ok", service: "runner" });
+      requests.push(`${init?.method ?? "GET"} ${path}`);
+      if (path === "/continuity") {
+        expect(await new Response(init?.body).text()).toBe("previous work");
+        return new Response(null, { status: 204 });
+      }
+      if (path === "/job") {
+        const job = JSON.parse(String(init?.body));
+        expect(job.continuity).toStrictEqual({ restore: "saved" });
+        // The saved work continues on its own base, not the latest branch.
+        expect(job.checkout.baseSha).toBe(savedBase);
+        return new Response(null, { status: 202 });
+      }
+      if (path === `/job/${runId}`)
+        return Response.json({
+          status: "failed",
+          errorCode: "agent_failed",
+          events: [],
+        });
+      if (path === `/job/${runId}/continuity`) {
+        // The Runner may still be packing the work when the Turn has ended.
+        if (collected++ === 0) return Response.json({}, { status: 202 });
+        return new Response("next work", {
+          headers: { "Content-Length": "9" },
+        });
+      }
+      throw new Error(`Unexpected request ${path}`);
+    });
+    const checkout = vi
+      .spyOn(GitHubApp.prototype, "checkout")
+      .mockResolvedValue({
+        token: "write-token",
+        expiresAt: Date.now() + 60_000,
+        baseSha: "a".repeat(40),
+        branch: `tailos/run/${runId}`,
       });
-    if (path === `/job/${runId}/continuity`) {
-      // The Runner may still be packing the work when the Turn has ended.
-      if (collected++ === 0) return Response.json({}, { status: 202 });
-      return new Response("next work", {
-        headers: { "Content-Length": "9" },
-      });
-    }
-    throw new Error(`Unexpected request ${path}`);
-  });
-  const checkout = vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
-    token: "write-token",
-    expiresAt: Date.now() + 60_000,
-    baseSha: "a".repeat(40),
-    branch: `tailos/run/${runId}`,
-  });
-  vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
-  t.onTestFinished(() => {
-    vi.restoreAllMocks();
-  });
-  const destroy = vi.fn(async () => {});
-  const runner = new RunnerContainer(
-    {
-      storage: memoryStorage(memory),
-      container: {
-        images: { runner: "image" },
-        start: () => {},
-        interceptOutboundHttps: async () => {},
-        running: true,
-        async setInactivityTimeout() {},
-        getTcpPort: () => ({ fetch }),
-        destroy,
-      },
-      exports: { GitHubEgress: () => ({}), ModelEgress: () => ({}) },
-    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
-    {
-      DB,
-      RUN_ARTIFACTS: bucket,
-      TAILOS_GH_APP_ID: "100",
-      TAILOS_GH_APP_PRIVATE_KEY: "unused",
-      TAILOS_PUBLIC_ORIGIN: "https://api.tailos.app",
-      CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
-      CREDENTIALS: {
-        getByName: () => ({
-          issueAccess: async () => ({
-            accessToken: "access",
-            accountId: "account",
-            connectionVersion: crypto.randomUUID(),
-            accessVersion: crypto.randomUUID(),
+    vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
+    t.onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const destroy = vi.fn(async () => {});
+    const start = vi.fn((_options: unknown) => {});
+    const snapshotContainer = vi.fn(async () => ({
+      id: "snapshot-1",
+      size: 1,
+    }));
+    const runner = new RunnerContainer(
+      {
+        storage: memoryStorage(memory),
+        container: {
+          images: { runner: "image" },
+          start,
+          interceptOutboundHttps: async () => {},
+          running: true,
+          async setInactivityTimeout() {},
+          getTcpPort: () => ({ fetch }),
+          inspect: async () => ({ image: "image", labels: {} }),
+          snapshotContainer,
+          destroy,
+        },
+        exports: { GitHubEgress: () => ({}), ModelEgress: () => ({}) },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+      {
+        DB,
+        RUN_ARTIFACTS: bucket,
+        TAILOS_GH_APP_ID: "100",
+        TAILOS_GH_APP_PRIVATE_KEY: "unused",
+        TAILOS_PUBLIC_ORIGIN: "https://api.tailos.app",
+        CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        CREDENTIALS: {
+          getByName: () => ({
+            issueAccess: async () => ({
+              accessToken: "access",
+              accountId: "account",
+              connectionVersion: crypto.randomUUID(),
+              accessVersion: crypto.randomUUID(),
+            }),
           }),
-        }),
-      },
-    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
-  );
+        },
+      } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+    );
 
-  await runner.schedule(runId, sessionId);
-  await runner.alarm();
-  expect(checkout).toHaveBeenCalledOnce();
-  // The previous work reaches the Runner before the job that continues it.
-  expect(requests).toStrictEqual(["PUT /continuity", "POST /job"]);
-  await runner.alarm();
+    await runner.schedule(runId, sessionId);
+    await runner.alarm();
+    expect(checkout).toHaveBeenCalledOnce();
+    // A snapshot of another image would silently run the older Runner.
+    expect(start).toHaveBeenCalledExactlyOnceWith(
+      fromSnapshot
+        ? expect.objectContaining({ containerSnapshot: { id: "snapshot-0" } })
+        : expect.objectContaining({ image: "image" }),
+    );
+    // The previous work reaches the Runner before the job that continues it.
+    expect(requests).toStrictEqual(["PUT /continuity", "POST /job"]);
+    await runner.alarm();
 
-  expect(destroy).toHaveBeenCalledOnce();
-  const savedKey = `sessions/v1/${sessionId}/continuity/${runId}`;
-  expect(objects.get(savedKey)).toBe("next work");
-  expect(memory.get("continuity")).toStrictEqual({
-    key: savedKey,
-    baseSha: savedBase,
-  });
-  // Only the latest work of the Session is kept.
-  expect(objects.has(previousKey)).toBe(false);
-  expect(memory.has("continuityRun")).toBe(false);
-});
+    expect(destroy).toHaveBeenCalledOnce();
+    const savedKey = `sessions/v1/${sessionId}/continuity/${runId}`;
+    expect(objects.get(savedKey)).toBe("next work");
+    // The new snapshot holds the saved work, for the image it was taken from.
+    expect(snapshotContainer).toHaveBeenCalledOnce();
+    expect(memory.get("continuity")).toStrictEqual({
+      key: savedKey,
+      baseSha: savedBase,
+      snapshot: { id: "snapshot-1", image: "image" },
+    });
+    // Only the latest work of the Session is kept.
+    expect(objects.has(previousKey)).toBe(false);
+    expect(memory.has("continuityRun")).toBe(false);
+  },
+);
 
 test.for([
   {
@@ -1345,4 +1387,62 @@ test.for([
   expect(objects.has(previousKey)).toBe(kept);
   // Failed attempts are retried a few times, never without end.
   expect(fetch.mock.calls.length).toBeLessThanOrEqual(3);
+});
+
+test("keeps a saved Session's container waiting for its next Turn, then ends it", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "idle",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    ["continuityRun", { runId, baseSha: "b".repeat(40) }],
+  ]);
+  const setAlarm = vi.fn(async (_at: number) => {});
+  const destroy = vi.fn(async () => {});
+  class WaitingRunner extends RunnerContainer {
+    protected override idleMs = 60_000;
+  }
+  const runner = new WaitingRunner(
+    {
+      storage: memoryStorage(memory, setAlarm),
+      container: {
+        running: true,
+        images: { runner: "image" },
+        getTcpPort: () => ({
+          fetch: async () =>
+            new Response("work", { headers: { "Content-Length": "4" } }),
+        }),
+        snapshotContainer: async () => ({ id: "snapshot", size: 1 }),
+        destroy,
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: memoryBucket(new Map()),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await runner.alarm();
+  expect(destroy).not.toHaveBeenCalled();
+  const idleUntil = memory.get("idleUntil") as number;
+  expect(idleUntil).toBeGreaterThan(Date.now());
+  expect(setAlarm).toHaveBeenLastCalledWith(idleUntil);
+
+  // Without a next Turn in time, the container goes.
+  memory.set("idleUntil", Date.now() - 1);
+  await runner.alarm();
+  expect(destroy).toHaveBeenCalledOnce();
+  expect(memory.has("idleUntil")).toBe(false);
 });

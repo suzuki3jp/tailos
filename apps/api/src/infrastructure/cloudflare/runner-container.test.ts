@@ -1446,3 +1446,63 @@ test("keeps a saved Session's container waiting for its next Turn, then ends it"
   expect(destroy).toHaveBeenCalledOnce();
   expect(memory.has("idleUntil")).toBe(false);
 });
+
+test("keeps the saved work when the Run's cleanup is retried", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "retried-cleanup",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    ["continuityRun", { runId, baseSha: "b".repeat(40) }],
+    [
+      "repositoryGrant",
+      { value: {}, expiresAt: Date.now() + 60_000, attempts: 0 },
+    ],
+  ]);
+  const container = {
+    running: true,
+    images: { runner: "image" },
+    snapshotContainer: async () => ({ id: "snapshot", size: 1 }),
+    getTcpPort: () => ({
+      fetch: async () =>
+        new Response("work", { headers: { "Content-Length": "4" } }),
+    }),
+    destroy: async () => {
+      container.running = false;
+    },
+  };
+  // Without the GitHub App the revocation fails and the cleanup is retried.
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(memory),
+      container,
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: memoryBucket(new Map()),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await runner.alarm();
+  const saved = {
+    key: `sessions/v1/${sessionId}/continuity/${runId}`,
+    baseSha: "b".repeat(40),
+    snapshot: { id: "snapshot", image: "image" },
+  };
+  expect(memory.get("continuity")).toStrictEqual(saved);
+  expect(memory.get("runId")).toBe(runId);
+  await runner.alarm();
+  expect(memory.get("continuity")).toStrictEqual(saved);
+});

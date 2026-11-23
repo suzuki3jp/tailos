@@ -21,19 +21,12 @@ import { codexAgent } from "@/codex-agent.ts";
 import { createRunnerServer } from "@/server.ts";
 import { withDiagnosticSpan } from "@/diagnostic-operations.ts";
 
-async function listen(
-  t: TestContext,
-  agent?: AgentAdapter,
-  catalog?: Parameters<typeof createRunnerServer>[1],
-) {
-  const server = createRunnerServer(
-    {
-      fake: agent ?? fakeAgent,
-      codex: codexAgent,
-      claude: claudeAgent,
-    },
-    catalog,
-  );
+async function listen(t: TestContext, agent?: AgentAdapter) {
+  const server = createRunnerServer({
+    fake: agent ?? fakeAgent,
+    codex: codexAgent,
+    claude: claudeAgent,
+  });
   t.onTestFinished(
     () => new Promise<void>((resolve) => server.close(() => resolve())),
   );
@@ -64,92 +57,6 @@ test("serves the internal health endpoint", async (t) => {
     404,
   );
   expect((await fetch(`${origin}/`)).status).toBe(404);
-});
-
-test("model catalog validates credentials and never starts an agent job", async (t) => {
-  const access = {
-    accessToken: "test-access",
-    accountId: "test-account",
-    connectionVersion: randomUUID(),
-    accessVersion: randomUUID(),
-  };
-  const catalog = vi.fn(async () => [
-    { model: "model", efforts: ["high"], token: "private" },
-  ]);
-  const agent = { run: vi.fn() };
-  const origin = await listen(t, agent, catalog);
-  const request = (body: unknown) =>
-    fetch(`${origin}/codex/models`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-  expect((await request({ access: { accessToken: "invalid" } })).status).toBe(
-    400,
-  );
-  expect(catalog).not.toHaveBeenCalled();
-  const result = await request({ access });
-  expect(result.status).toBe(200);
-  expect(await result.json()).toEqual([{ model: "model", efforts: ["high"] }]);
-  expect(catalog).toHaveBeenCalledWith(access, expect.any(AbortSignal));
-  expect(agent.run).not.toHaveBeenCalled();
-});
-
-test("a catalog failure does not expose provider error contents", async (t) => {
-  const origin = await listen(t, undefined, async () => {
-    throw new Error("secret-token");
-  });
-  const response = await fetch(`${origin}/codex/models`, {
-    method: "POST",
-    body: JSON.stringify({
-      access: {
-        accessToken: "test-access",
-        accountId: "test-account",
-        connectionVersion: randomUUID(),
-        accessVersion: randomUUID(),
-      },
-    }),
-  });
-  expect(response.status).toBe(500);
-  expect(await response.json()).toEqual({ error: "runner_error" });
-});
-
-test("an active catalog prevents jobs and overlapping catalog requests", async (t) => {
-  let ready = () => {};
-  const started = new Promise<void>((resolve) => {
-    ready = resolve;
-  });
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const origin = await listen(t, undefined, async () => {
-    ready();
-    await gate;
-    return [{ model: "model", efforts: ["high"] }];
-  });
-  const catalog = () =>
-    fetch(`${origin}/codex/models`, {
-      method: "POST",
-      body: JSON.stringify({
-        access: {
-          accessToken: "test-access",
-          accountId: "test-account",
-          connectionVersion: randomUUID(),
-          accessVersion: randomUUID(),
-        },
-      }),
-    });
-  const first = catalog();
-  try {
-    await started;
-    expect((await catalog()).status).toBe(409);
-    expect(
-      (await sendJob(origin, diagnosticJob(Date.now() + 60_000))).status,
-    ).toBe(409);
-  } finally {
-    release();
-    await first;
-  }
 });
 
 function diagnosticJob(deadlineAt: number): RunnerJob {

@@ -9,30 +9,55 @@ import {
   InputGroupTextarea,
 } from "@/shared/ui/input-group";
 import { ModelEffortSelect } from "./model-effort-select";
+import {
+  defaultModelEffort,
+  parseModelEffort,
+  type ModelEffort,
+} from "../model/model-effort";
+
+export type LoopMessage = ModelEffort & { message: string };
 
 export function LoopComposer({
   mode,
   projectSelect,
+  onSubmit,
+  pending = false,
+  disabled = false,
+  status,
 }: {
   mode: "home" | "session";
   projectSelect?: ReactNode;
+  /** Sends the message; without it the composer cannot send. */
+  onSubmit?: (input: LoopMessage) => void;
+  pending?: boolean;
+  /** Blocks sending, e.g. while no project is selected. */
+  disabled?: boolean;
+  /** Feedback about the last send, shown below the input. */
+  status?: ReactNode;
 }) {
-  const previewSubmission = mode === "home";
-  const [previewNotice, setPreviewNotice] = useState(false);
-  const noticeId = useId();
+  const [message, setMessage] = useState("");
+  const [modelEffort, setModelEffort] = useState(defaultModelEffort);
+  const statusId = useId();
+  const home = mode === "home";
+  const canSend = !!onSubmit && !disabled && !pending;
   return (
     <form
+      aria-busy={pending || undefined}
       onSubmit={(event) => {
         event.preventDefault();
-        if (previewSubmission) setPreviewNotice(true);
+        const text = message.trim();
+        if (!canSend || !text) return;
+        onSubmit({ message: text, ...parseModelEffort(modelEffort) });
       }}
     >
       <InputGroup className="min-h-35 justify-between rounded-lg bg-background">
         <InputGroupTextarea
-          aria-label={previewSubmission ? "Describe your loop" : "Message"}
-          aria-describedby={previewNotice ? noticeId : undefined}
+          aria-label={home ? "Describe your loop" : "Message"}
+          aria-describedby={status ? statusId : undefined}
           placeholder="Start loooooping..."
-          onChange={() => setPreviewNotice(false)}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          readOnly={pending}
           required
           rows={3}
           className="min-h-0 px-3 pt-3 pb-2 text-body md:text-body"
@@ -41,13 +66,17 @@ export function LoopComposer({
           align="block-end"
           className="flex-wrap justify-end px-3 pt-0 pb-3"
         >
-          {previewSubmission && <div className="mr-auto">{projectSelect}</div>}
+          {home && <div className="mr-auto">{projectSelect}</div>}
           <div className="flex min-w-0 items-center gap-2.5">
-            <ModelEffortSelect />
+            <ModelEffortSelect
+              value={modelEffort}
+              onValueChange={setModelEffort}
+              disabled={pending}
+            />
             <InputGroupButton
               type="submit"
-              disabled={!previewSubmission}
-              aria-label={previewSubmission ? "Preview loop" : "Send message"}
+              disabled={!canSend}
+              aria-label={home ? "Start loop" : "Send message"}
               className="h-5.5 w-9 rounded-md px-2 py-0 text-muted-foreground"
             >
               <IconSend aria-hidden="true" className="size-5 shrink-0" />
@@ -55,15 +84,14 @@ export function LoopComposer({
           </div>
         </InputGroupAddon>
       </InputGroup>
-      {previewNotice && (
-        <p
+      {status && (
+        <div
           role="status"
-          id={noticeId}
+          id={statusId}
           className="mt-3 text-sm text-muted-foreground"
         >
-          Loop creation is not connected yet. Your message hasn’t been sent and
-          no loop has started.
-        </p>
+          {status}
+        </div>
       )}
     </form>
   );

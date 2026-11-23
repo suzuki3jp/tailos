@@ -35,7 +35,7 @@ const usage = {
       "A conversation with ordered messages; it can contain multiple runs.",
     run: "One execution starting from startMessageId in a session. Its result is a stored JSON string describing publication, when available.",
     target:
-      "A stored JSON string. GitHub issue targets contain version=1, kind=github.issue, repositoryId and issueNumber. Standalone sessions can have target=null.",
+      "A stored JSON string. GitHub issue targets contain version=1, kind=github.issue, repositoryId and issueNumber. Sessions started from a home message contain version=1, kind=github.repository and repositoryId. Standalone sessions can have target=null.",
   },
   permissions:
     "Reads data owned by the authenticated operator and ownerless reception diagnostics that the operator can inspect in the Web UI. No start, retry, cancel, delete, configuration or credential tools exist.",

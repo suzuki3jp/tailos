@@ -5,11 +5,12 @@ import type {
 
 import type { ClaudeConnectionControl } from "@/application/auth/claude.ts";
 import type { ConnectionControl } from "@/application/auth/device.ts";
+import type { BrowserApiOrigins } from "@/application/auth/login.ts";
 import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
 import type { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 import type { SessionStream } from "@/infrastructure/cloudflare/session-stream.ts";
 
-export type Bindings = {
+export type Bindings = BrowserApiOrigins & {
   DB: D1Database;
   RUN_ARTIFACTS?: RunArtifactsBucket;
   RUNNER?: DurableObjectNamespace<RunnerContainer>;
@@ -29,9 +30,8 @@ export type Bindings = {
   CREDENTIALS?: {
     getByName(name: string): ConnectionControl & ClaudeConnectionControl;
   };
-  TAILOS_PUBLIC_ORIGIN?: string;
-  TAILOS_WEB_ORIGIN?: string;
   BETTER_AUTH_SECRET?: string;
+  TAILOS_PREVIEW?: "true";
   TAILOS_GITHUB_OAUTH_CLIENT_ID?: string;
   TAILOS_GITHUB_OAUTH_CLIENT_SECRET?: string;
   TAILOS_OPERATOR_GITHUB_ID?: string;

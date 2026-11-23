@@ -4,14 +4,12 @@ import worker from "@/worker/index.ts";
 const render = vi.hoisted(() =>
   vi.fn<(request: Request) => Promise<Response>>(),
 );
-const config = vi.hoisted(() => ({ isPreview: false }));
 
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
 vi.mock("@/shared/config", () => ({
-  apiOrigin: "https://api.tailos.example",
-  get isPreview() {
-    return config.isPreview;
-  },
+  apiOrigin: "https://tailos.app",
+  isPreview: false,
+  usesWebApiProxy: true,
 }));
 
 const env = { ASSETS: { fetch: vi.fn(), connect: vi.fn() } };
@@ -20,8 +18,6 @@ const context = {} as ExecutionContext;
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-  config.isPreview = false;
   render.mockReset();
 });
 
@@ -59,12 +55,12 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
   expect(directives.get("connect-src")).toEqual([
     "'self'",
-    "https://api.tailos.example",
-    "wss://api.tailos.example",
+    "https://tailos.app",
+    "wss://tailos.app",
   ]);
   expect(directives.get("form-action")).toEqual([
     "'self'",
-    "https://api.tailos.example",
+    "https://tailos.app",
     "https://github.com",
   ]);
   expect(render.mock.calls[0][0].headers.get("Content-Security-Policy")).toBe(
@@ -94,44 +90,80 @@ test("preserves the health route response", async () => {
   expect(response).toBe(health);
 });
 
-test("proxies the OAuth callback on the stable Web host to its deployed API", async () => {
-  config.isPreview = true;
-  const response = new Response(null, {
+test("passes the original API request and OAuth redirect through the service binding", async () => {
+  const redirect = new Response(null, {
     status: 303,
-    headers: { Location: "https://api.tailos.example/login" },
+    headers: { Location: "https://github.com/login/oauth/authorize" },
   });
-  const upstreamFetch = vi.fn<typeof fetch>(async () => response);
-  vi.stubGlobal("fetch", upstreamFetch);
-  const bindings = {
-    ...env,
-    TAILOS_PREVIEW_API_ORIGIN: "https://deployment-pr-123.preview-api.example",
-    TAILOS_PREVIEW_PROXY_SECRET: "test-proxy-secret",
-  };
-  const path = "/v1/auth/callback/github?state=state&code=code";
-  const request = new Request(`https://api.tailos.example${path}`, {
-    headers: {
-      Cookie: "oauth_state=state",
-      "X-Tailos-Preview-Proxy": "ignored",
+  redirect.headers.append("Set-Cookie", "one=1; Path=/");
+  redirect.headers.append("Set-Cookie", "two=2; Path=/");
+  const fetch = vi.fn().mockResolvedValue(redirect);
+  const request = new Request(
+    "https://tailos.app/api/v1/auth/login?flow=github",
+    {
+      method: "POST",
+      headers: {
+        Origin: "https://tailos.app",
+        Cookie: "__Host-tailos.session_token=new",
+      },
+      body: "form=value",
     },
-  });
-  expect(await worker.fetch(request, bindings, context)).toBe(response);
-  const [target, init] = upstreamFetch.mock.calls[0];
-  assert(target instanceof Request);
-  expect(target.url).toBe(bindings.TAILOS_PREVIEW_API_ORIGIN + path);
-  expect(init?.redirect).toBe("manual");
-  expect(new Headers(init?.headers).get("Cookie")).toBe("oauth_state=state");
-  expect(new Headers(init?.headers).get("X-Tailos-Preview-Proxy")).toBe(
-    "test-proxy-secret",
   );
+
+  const result = await worker.fetch(
+    request,
+    { ...env, BROWSER_API: { fetch, connect: vi.fn() } },
+    context,
+  );
+  expect(result).toBe(redirect);
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(request, {
+    redirect: "manual",
+  });
   expect(render).not.toHaveBeenCalled();
+});
+
+test("does not forward the API prefix on an unexpected host or a lookalike path", async () => {
+  const fetch = vi.fn();
+  const bindings = { ...env, BROWSER_API: { fetch, connect: vi.fn() } };
+  render.mockResolvedValueOnce(new Response(null, { status: 404 }));
+
   expect(
     (
       await worker.fetch(
-        new Request(`https://other.example${path}`),
+        new Request("https://another.example/api/v1/account"),
         bindings,
         context,
       )
     ).status,
   ).toBe(404);
-  expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  expect(
+    (
+      await worker.fetch(
+        new Request("https://tailos.app/api/v10/account"),
+        bindings,
+        context,
+      )
+    ).status,
+  ).toBe(404);
+  expect(render).toHaveBeenCalledOnce();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test("expires the old shared cookie on production pages", async () => {
+  render.mockResolvedValueOnce(
+    new Response("<h1>Tailos</h1>", {
+      headers: { "Content-Type": "text/html" },
+    }),
+  );
+  const response = await worker.fetch(
+    new Request("https://tailos.app/login", {
+      headers: { Cookie: "other=1; __Secure-tailos.session_token=old" },
+    }),
+    env,
+    context,
+  );
+
+  expect(response.headers.getSetCookie()).toEqual([
+    "__Secure-tailos.session_token=; Max-Age=0; Path=/; Domain=tailos.app; HttpOnly; Secure; SameSite=Lax",
+  ]);
 });

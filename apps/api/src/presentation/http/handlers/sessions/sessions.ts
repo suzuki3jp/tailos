@@ -1,8 +1,13 @@
 import { maxPromptLength } from "@tailos/core/runner";
+import { supportsCodexSelection } from "@tailos/core/models";
 import {
   createSession,
   type SessionStore,
 } from "@/application/sessions/create-session.ts";
+import {
+  startSessionFromMessage,
+  type StartSessionDeps,
+} from "@/application/sessions/start-session.ts";
 import type {
   createOperatorAuth,
   OperatorEnv,
@@ -38,12 +43,28 @@ const sessionInput = v.strictObject({
   ),
 });
 
+const startInput = v.strictObject({
+  requestId: v.pipe(v.string(), v.uuid()),
+  message: v.pipe(
+    v.string(),
+    v.trim(),
+    v.minLength(1),
+    v.maxLength(maxPromptLength),
+  ),
+  model: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(100))),
+  effort: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
+});
+
 export function createSessionRoutes<Detail>(
   store: (env: Bindings) => SessionStore<Detail> &
     SessionListStore & {
       projectName(id: string, ownerId: string): Promise<string | null>;
     },
   operatorAuth: ReturnType<typeof createOperatorAuth>,
+  start?: {
+    deps(env: Bindings): StartSessionDeps;
+    scheduleRun(env: Bindings): ((id: string) => Promise<void>) | undefined;
+  },
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -87,6 +108,52 @@ export function createSessionRoutes<Detail>(
     });
 
   const projectSessionRoutes = new Hono<OperatorEnv>()
+    .post(
+      "/",
+      operatorAuth,
+      bodyLimit({ maxSize: 32 * 1024 }),
+      validator("json", (value: v.InferInput<typeof startInput>, c) => {
+        const parsed = v.safeParse(startInput, value);
+        if (!parsed.success)
+          return c.json({ error: "invalid_input" as const }, 400);
+        const unsupported = supportsCodexSelection(
+          parsed.output.model,
+          parsed.output.effort,
+        );
+        return unsupported
+          ? c.json({ error: unsupported }, 400)
+          : parsed.output;
+      }),
+      async (c) => {
+        const projectId = c.req.param("projectId");
+        if (!projectId || !start)
+          return c.json({ error: "not_found" as const }, 404);
+        const result = await startSessionFromMessage(
+          {
+            ...c.req.valid("json"),
+            ownerId: c.var.operatorUserId,
+            projectId,
+            diagnostics: c.get("diagnosticRequest"),
+          },
+          start.deps(c.env),
+        ).catch(() => null);
+        if (!result)
+          return c.json({ error: "session_unavailable" as const }, 503);
+        if (result.status === "project_not_found")
+          return c.json({ error: "not_found" as const }, 404);
+        if (result.status === "codex_not_connected")
+          return c.json({ error: "codex_not_connected" as const }, 409);
+        await start
+          .scheduleRun(c.env)?.(result.runId)
+          .catch(() => {
+            // The committed D1 row remains due for the scheduled recovery sweep.
+          });
+        return c.json(
+          { sessionId: result.sessionId, runId: result.runId, projectId },
+          201,
+        );
+      },
+    )
     .get(
       "/",
       operatorAuth,

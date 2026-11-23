@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findApiDeploymentOrigin } from "./config.mjs";
+import { findApiDeploymentOrigin, origins, previewName } from "./config.mjs";
+
+test("uses the dedicated Tailos hostnames for the PR", () => {
+  assert.deepEqual(origins(previewName(123)), {
+    web: "https://pr-123.preview.tailos.app",
+    api: "https://pr-123.preview-api.tailos.app",
+  });
+});
 
 test("selects the API deployment URL with or without the Preview name", () => {
   const domain = "tailos-preview-api.example.test";

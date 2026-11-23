@@ -104,11 +104,11 @@ SELECT count(*) AS unassigned FROM projects WHERE owner_id IS NULL;
 
 ## 運用者の GitHub ログイン
 
-ホームの SSR に対応した版では、API を先に、次に Web をデプロイし、`/login` で再ログインする。ログイン Cookie は新しい `tailos.session_token`（HTTPS では `__Secure-` 接頭辞付き）へ切り替わり、本番では `Domain=tailos.app` で Web と API に共有される。旧 API 専用 Cookie は新しい認証では使わない。HttpOnly・Secure・SameSite=Lax と既存の Origin 検査は維持する。`tailos.app` 配下のサブドメインには信頼できないサービスを置かない。詳細は [Cookie の共有方針](pdr/records/PDR-20261117-login-cookie-scope.md) を参照する。ローカルは Web と API が同じ `localhost` を使い、Domain を付けずにポート間で共有する。
+本番の Web Worker は `/api/v1` を API Worker の `BrowserApiProxy` に Service Binding で転送する。デプロイは API、Web の順で行う。初回切り替えでは API 更新から Web 更新まで旧 Web の API 呼び出しが失敗するため、OAuth App のコールバック変更も同じデプロイに合わせて行う。ロールバック時は Web、API の順で戻し、コールバック設定も元に戻す。
 
-既存環境を `/api` から `/v1` へ更新する際も、GitHub OAuth App の Authorization callback URL を新しい `/v1/auth/callback/github` に変更する。
+切り替え後は `/login` で再ログインする。本番は `Domain` のない `__Host-tailos.session_token` を発行する。旧共有 Cookie の署名は無効になり、ブラウザーに残っていれば `tailos.app` の HTML 応答で削除する。ローカルは `localhost` のホスト限定 Cookie をポート間で共有する。詳細は [Cookie の適用範囲](pdr/records/PDR-20261122-login-cookie-scope.md) を参照する。
 
-GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。本番デプロイはカスタムドメインを使うため、Homepage URL は `https://tailos.app`、Authorization callback URL は `https://api.tailos.app/v1/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
+GitHub の **Settings → Developer settings → OAuth Apps** でログイン専用アプリを登録する。Homepage URL は `https://tailos.app`、Authorization callback URL は `https://tailos.app/api/v1/auth/callback/github` とする。運用者の数値 ID は、たとえば `gh api user --jq .id` で取得できる。ログイン専用 OAuth App の Client ID と Client Secret を上の表に従って設定する。
 
 ## GitHub App
 

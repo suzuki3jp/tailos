@@ -1,5 +1,11 @@
-import type { LoginAuth } from "@/application/auth/login.ts";
-import { loginSessionCookieName } from "@tailos/core/auth";
+import { browserApiOrigin, type LoginAuth } from "@/application/auth/login.ts";
+import {
+  directBrowserApiPath,
+  loginSessionCookieName,
+  previewLoginCookiePrefix,
+  webBrowserApiPath,
+  webLoginCookiePrefix,
+} from "@tailos/core/auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth/minimal";
 import { github } from "better-auth/social-providers";
@@ -12,13 +18,14 @@ import {
   users,
 } from "@/infrastructure/d1/schema.ts";
 import type { Bindings } from "@/bindings.ts";
+import { createHmac } from "node:crypto";
 
 const providerId = "github";
-const authPath = "/v1/auth";
 const loginPath = "/login";
 
 export function createLoginAuth(env: Bindings) {
-  const origin = env.TAILOS_PUBLIC_ORIGIN;
+  const viaWeb = env.TAILOS_BROWSER_API_VIA_WEB === "true";
+  const origin = browserApiOrigin(env);
   const webOrigin = env.TAILOS_WEB_ORIGIN;
   const secret = env.BETTER_AUTH_SECRET;
   const clientId = env.TAILOS_GITHUB_OAUTH_CLIENT_ID;
@@ -35,19 +42,17 @@ export function createLoginAuth(env: Bindings) {
     return null;
 
   const provider = github({ clientId, clientSecret });
-  const apiUrl = new URL(origin);
-  const webUrl = new URL(webOrigin);
-  const sessionDomain =
-    apiUrl.protocol === "https:" &&
-    webUrl.protocol === "https:" &&
-    apiUrl.hostname.endsWith(`.${webUrl.hostname}`)
-      ? webUrl.hostname
-      : undefined;
+  if (viaWeb && new URL(origin).protocol !== "https:") return null;
   return betterAuth({
     baseURL: origin,
-    basePath: authPath,
+    basePath: `${viaWeb ? webBrowserApiPath : directBrowserApiPath}/auth`,
     trustedOrigins: [webOrigin],
-    secret,
+    // The old cross-subdomain token stays unusable even if presented under the new name.
+    secret: viaWeb
+      ? createHmac("sha256", secret)
+          .update("tailos.browser-session.host-only.v1")
+          .digest("base64url")
+      : secret,
     database: drizzleAdapter(drizzle(env.DB), {
       provider: "sqlite",
       schema: {
@@ -59,13 +64,17 @@ export function createLoginAuth(env: Bindings) {
     }),
     advanced: {
       database: { generateId: "uuid" },
-      cookies: {
-        // A new name avoids ambiguity with the old API-only session cookie.
-        session_token: {
-          name: loginSessionCookieName,
-          attributes: { domain: sessionDomain },
-        },
-      },
+      ...(viaWeb
+        ? {
+            // Better Auth would otherwise add its own __Secure- prefix.
+            useSecureCookies: false,
+            defaultCookieAttributes: { secure: true },
+            cookiePrefix:
+              env.TAILOS_PREVIEW === "true"
+                ? previewLoginCookiePrefix
+                : webLoginCookiePrefix,
+          }
+        : { cookies: { session_token: { name: loginSessionCookieName } } }),
     },
     telemetry: { enabled: false },
     session: { disableSessionRefresh: true },

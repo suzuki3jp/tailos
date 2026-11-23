@@ -17,15 +17,6 @@ async function createBroker(t: TestContext, openAIStatus = 530) {
         import { CodexDeviceAuth, ReauthenticationRequired } from "@/infrastructure/auth/codex-device.ts";
         import { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
         import { TransientDevicePollError } from "@/application/auth/device.ts";
-        import { DurableObject } from "cloudflare:workers";
-
-        export class TestRunner extends DurableObject {
-          async codexModels(access) {
-            if (access.accessToken !== "secret-access" || access.accountId !== "test-account" ||
-                "refreshToken" in access) throw new Error("Unexpected credentials");
-            return [{ model: "test-model", efforts: ["high"] }];
-          }
-        }
 
         export class TestBroker extends CredentialBroker {
           decision = "pending";
@@ -132,7 +123,6 @@ async function createBroker(t: TestContext, openAIStatus = 530) {
       },
       durableObjects: {
         TEST_BROKER: { className: "TestBroker", useSQLite: true },
-        RUNNER: { className: "TestRunner", useSQLite: true },
       },
     }),
   );
@@ -174,18 +164,6 @@ test("the Durable Object polls, completes, rejects reconnects and clears its ala
   expect(await rpc("begin")).toBe(true);
   expect(await rpc("tick", "pending")).toStrictEqual({ state: "expired" });
   expect(await rpc("stored")).toStrictEqual({ alarm: null });
-});
-
-test("model catalog lookup uses the owner's connection through Runner RPC", async (t) => {
-  const rpc = await createBroker(t);
-  expect(await rpc("codexModels")).toBeNull();
-  await rpc("begin");
-  await rpc("tick", "approved");
-  expect(await rpc("codexModels")).toEqual([
-    { model: "test-model", efforts: ["high"] },
-  ]);
-  await rpc("disconnect");
-  expect(await rpc("codexModels")).toBeNull();
 });
 
 test.for([530, 302])(

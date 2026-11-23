@@ -25,6 +25,6 @@ execFileSync(
 );
 execFileSync("pnpm", ["--filter", "@tailos/web", "run", "build"], {
   stdio: "inherit",
-  env: { ...process.env, VITE_API_ORIGIN: web, VITE_TAILOS_PREVIEW: "1" },
+  env: { ...process.env, VITE_TAILOS_PREVIEW_ORIGIN: web },
 });
 cpSync("apps/web/dist", resolve(output, "web"), { recursive: true });

@@ -5,33 +5,36 @@ import preview from "./preview.ts";
 
 test("uses the Web origin for GitHub OAuth and accepts only the authorized proxy and PR session", async (t) => {
   const DB = await createTestDb(t);
-  const web = "https://pr-123.preview.example";
+  const web = "https://pr-123.preview.tailos.app";
   const env = {
     ...testLoginBindings(DB),
     TAILOS_PUBLIC_ORIGIN: web,
     TAILOS_WEB_ORIGIN: web,
+    TAILOS_BROWSER_API_VIA_WEB: "true",
+    TAILOS_PREVIEW: "true" as const,
     TAILOS_PREVIEW_PROXY_SECRET: "test-only-proxy-secret",
   };
-  const upstream = "https://deployment-pr-123.preview-api.example";
+  const upstream = "https://a1b2c3d4-pr-123.preview-api.tailos.app";
   const proxy = { "X-Tailos-Preview-Proxy": env.TAILOS_PREVIEW_PROXY_SECRET };
   // The routes in this test do not use the Worker execution context.
   const ctx = {} as ExecutionContext;
   const request = (path: string, init?: RequestInit) =>
     preview.fetch(new Request(upstream + path, init), env, ctx);
-  expect((await request("/v1/account")).status).toBe(404);
+  expect((await request("/api/v1/account")).status).toBe(404);
+  expect((await request("/v1/account", { headers: proxy })).status).toBe(404);
   expect((await request("/webhooks/github", { headers: proxy })).status).toBe(
     404,
   );
   expect(
     (
-      await request("/v1/auth/login", {
+      await request("/api/v1/auth/login", {
         method: "POST",
-        headers: { ...proxy, Origin: "https://pr-124.preview.example" },
+        headers: { ...proxy, Origin: "https://pr-124.preview.tailos.app" },
       })
     ).status,
   ).toBe(403);
 
-  const login = await request("/v1/auth/login", {
+  const login = await request("/api/v1/auth/login", {
     method: "POST",
     headers: { ...proxy, Origin: web },
   });
@@ -43,7 +46,7 @@ test("uses the Web origin for GitHub OAuth and accepts only the authorized proxy
     "https://github.com/login/oauth/authorize",
   );
   expect(authorize.searchParams.get("redirect_uri")).toBe(
-    `${web}/v1/auth/callback/github`,
+    `${web}/api/v1/auth/callback/github`,
   );
   expect(login.headers.get("Set-Cookie")).toMatch(/HttpOnly/i);
   expect(login.headers.get("Set-Cookie")).not.toMatch(/Domain=/i);
@@ -80,18 +83,18 @@ test("uses the Web origin for GitHub OAuth and accepts only the authorized proxy
       .map((line) => line.split(";", 1)[0])
       .join("; ");
   const callback = await request(
-    "/v1/auth/callback/github?" +
+    "/api/v1/auth/callback/github?" +
       new URLSearchParams({ state, code: "test-code" }),
     { headers: { ...proxy, Cookie: cookies(login) } },
   );
   expect(callback.headers.get("Location")).toBe(web + "/login");
   expect(callback.headers.getSetCookie()).toEqual(
     expect.arrayContaining([
-      expect.stringMatching(/^__Secure-tailos\.session_token=.+HttpOnly/),
+      expect.stringMatching(/^__Host-tailos-preview\.session_token=.+HttpOnly/),
     ]),
   );
   expect(callback.headers.get("Set-Cookie")).not.toMatch(/Domain=/i);
-  const account = new Request(upstream + "/v1/account", {
+  const account = new Request(upstream + "/api/v1/account", {
     headers: { ...proxy, Cookie: cookies(callback) },
   });
   expect((await preview.fetch(account, env, ctx)).status).toBe(200);

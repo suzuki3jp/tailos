@@ -5,10 +5,10 @@ import { delimiter, join } from "node:path";
 import { CodexAccess, type RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
+import { supportsCodexSelection } from "@tailos/core/models";
 import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
 import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
-import { listCodexModels } from "@/codex-models.ts";
 import {
   diagnosticErrorBody,
   withDiagnosticSpan,
@@ -172,38 +172,6 @@ async function initialize(rpc: CodexRpc) {
   });
   rpc.notify("initialized");
 }
-
-export function createCodexModelCatalog(launch = launchCodex) {
-  return async (access: CodexAccess, signal: AbortSignal) => {
-    const directory = await mkdtemp(join(tmpdir(), "tailos-models-"));
-    let rpc: CodexRpc | undefined;
-    const abort = () => rpc?.close();
-    try {
-      signal.throwIfAborted();
-      rpc = new CodexRpc(launch(directory, directory));
-      signal.addEventListener("abort", abort, { once: true });
-      await initialize(rpc);
-      await rpc.call("account/login/start", {
-        type: "chatgptAuthTokens",
-        accessToken: access.accessToken,
-        chatgptAccountId: access.accountId,
-        chatgptPlanType: access.planType,
-      });
-      const models = await listCodexModels(rpc);
-      signal.throwIfAborted();
-      return models.map((m) => ({
-        model: m.model,
-        efforts: m.supportedReasoningEfforts.map((e) => e.reasoningEffort),
-      }));
-    } finally {
-      signal.removeEventListener("abort", abort);
-      rpc?.close();
-      await rm(directory, { recursive: true, force: true });
-    }
-  };
-}
-
-export const codexModelCatalog = createCodexModelCatalog();
 
 async function runTurn(
   child: CodexProcess,
@@ -470,20 +438,8 @@ async function runTurn(
       type: "chatgptAuthTokens",
       ...loginParams(),
     });
-    if (job.model || job.effort) {
-      const models = await listCodexModels(rpc);
-      const selected = models.find((m) =>
-        job.model ? m.model === job.model : m.isDefault,
-      );
-      if (
-        !selected ||
-        (job.effort &&
-          !selected.supportedReasoningEfforts.some(
-            (e) => e.reasoningEffort === job.effort,
-          ))
-      )
-        throw new Error("Requested model or effort is unavailable");
-    }
+    if (supportsCodexSelection(job.model, job.effort))
+      throw new Error("Requested model or effort is unavailable");
     const thread = v.parse(
       threadSchema,
       await rpc.call("thread/start", {

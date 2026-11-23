@@ -56,7 +56,6 @@ const script = `
       ) throw new Error("Unexpected ChatGPT login payload");
       reply({});
     }
-    if (request.method === "model/list") reply({data: [{model: "test-model", isDefault: true, supportedReasoningEfforts: [{reasoningEffort: "high"}]}], nextCursor: null});
     if (request.method === "thread/start") {
       if (request.params.ephemeral !== true) throw new Error("Expected an ephemeral thread");
       const tools = request.params.dynamicTools;
@@ -68,7 +67,7 @@ const script = `
       if (JSON.stringify(request.params.sandboxPolicy) !== JSON.stringify(probePolicy))
         throw new Error("Turn permissions must match the probed sandbox");
       const { input, outputSchema } = request.params;
-      if (request.params.model !== undefined && (request.params.model !== "test-model" || request.params.effort !== "high")) throw new Error("Model and effort must reach the turn");
+      if (request.params.model !== undefined && (request.params.model !== "gpt-5.5" || request.params.effort !== "high")) throw new Error("Model and effort must reach the turn");
       if (mode === "workspaceWrite") {
         if (!input[0].text.includes("repository instructions and CI configuration") ||
             !input[0].text.includes("commands you ran and their results") ||
@@ -967,13 +966,13 @@ test("an aborted revision stops the agent and cleans up its workspace", async (t
 });
 
 test("explicit model and effort reach Codex and unsupported selections fail before starting a turn", async () => {
-  for (const model of ["test-model", "unsupported-model"]) {
+  for (const model of ["gpt-5.5", "unsupported-model"]) {
     const job = { ...testJob(), model, effort: "high" };
     const agent = createCodexAgent(launchStub("readOnly"), async () =>
       Response.json({ ...job.access, accessToken: "new-access" }),
     );
     const controller = new AbortController();
-    if (model === "test-model")
+    if (model === "gpt-5.5")
       expect(
         (await agent.run(job, controller.signal, process.cwd())).reply,
       ).toContain("Reply containing");

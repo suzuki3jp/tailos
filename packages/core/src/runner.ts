@@ -52,7 +52,7 @@ export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
 export const workBranch = v.pipe(
   v.string(),
-  v.regex(/^tailos\/issue-[1-9][0-9]*\/[a-f0-9-]{36}$/),
+  v.regex(/^tailos\/(?:issue-[1-9][0-9]*|run)\/[a-f0-9-]{36}$/),
 );
 export const changeHeadline = v.pipe(
   v.string(),
@@ -105,12 +105,36 @@ export const RepositoryTarget = v.strictObject({
   repository: repositoryName,
   repositoryId: positiveId,
   installationId: positiveId,
-  issueNumber: positiveId,
-  issueContentHash: v.optional(sha256),
   defaultBranch: branch,
-  triggerLabel: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
   agentNetworkAccess: v.optional(v.boolean()),
 });
+
+const issueTrigger = {
+  issueNumber: positiveId,
+  issueContentHash: v.optional(sha256),
+};
+/** What started a Run. Each kind carries only the values it needs. */
+export const RunTrigger = v.variant("kind", [
+  v.strictObject({
+    kind: v.literal("github.issue-label"),
+    ...issueTrigger,
+    label: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
+  }),
+  v.strictObject({
+    kind: v.literal("github.issue-comment"),
+    ...issueTrigger,
+  }),
+  v.strictObject({ kind: v.literal("web.message") }),
+]);
+export type RunTrigger = v.InferOutput<typeof RunTrigger>;
+export type IssueRunTrigger = Extract<RunTrigger, { issueNumber: number }>;
+
+/** The GitHub issue a trigger refers to, if any. */
+export function triggerIssue(
+  trigger: RunTrigger | undefined,
+): IssueRunTrigger | undefined {
+  return trigger && "issueNumber" in trigger ? trigger : undefined;
+}
 
 export const ExecutionMode = v.picklist(["plan", "implement"]);
 export const PlanResult = v.strictObject({
@@ -124,41 +148,85 @@ export const codexOptions = {
   effort: v.optional(v.pipe(v.string(), v.minLength(1))),
 };
 
-export const ExecutionContext = v.variant("engine", [
-  v.strictObject({
-    version: v.literal(1),
-    engine: v.literal("fake"),
-    mode: v.optional(ExecutionMode),
-  }),
-  v.strictObject({
-    version: v.literal(1),
-    engine: v.literal("codex"),
-    ...codexOptions,
-    routine: v.optional(
-      v.strictObject({
-        id: v.pipe(v.string(), v.uuid()),
-        revision: positiveId,
-        projectRevision: positiveId,
-      }),
-    ),
-    mode: v.optional(ExecutionMode),
-    connectionId: v.pipe(
-      v.string(),
-      v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
-    ),
-    repository: v.optional(RepositoryTarget),
-  }),
-  v.strictObject({
-    version: v.literal(1),
-    engine: v.literal("claude"),
-    mode: v.optional(ExecutionMode),
-    connectionId: v.pipe(
-      v.string(),
-      v.regex(/^claude\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
-    ),
-    repository: v.optional(RepositoryTarget),
-  }),
-]);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Stored Runs and planning inputs predate `trigger` and kept the issue values
+// inside `repository`. Read them in the current shape without rewriting rows.
+function upgradeStoredContext(input: unknown) {
+  if (
+    !isRecord(input) ||
+    input.trigger !== undefined ||
+    !isRecord(input.repository) ||
+    input.repository.issueNumber === undefined
+  )
+    return input;
+  const { issueNumber, issueContentHash, triggerLabel, ...repository } =
+    input.repository;
+  const issue = {
+    issueNumber,
+    ...(issueContentHash !== undefined && { issueContentHash }),
+  };
+  return {
+    ...input,
+    repository,
+    trigger:
+      input.mode === "plan"
+        ? { kind: "github.issue-comment", ...issue }
+        : { kind: "github.issue-label", ...issue, label: triggerLabel },
+  };
+}
+
+const repositoryRun = {
+  repository: v.optional(RepositoryTarget),
+  trigger: v.optional(RunTrigger),
+};
+
+export const ExecutionContext = v.pipe(
+  v.unknown(),
+  v.transform(upgradeStoredContext),
+  v.variant("engine", [
+    v.strictObject({
+      version: v.literal(1),
+      engine: v.literal("fake"),
+      mode: v.optional(ExecutionMode),
+    }),
+    v.strictObject({
+      version: v.literal(1),
+      engine: v.literal("codex"),
+      ...codexOptions,
+      routine: v.optional(
+        v.strictObject({
+          id: v.pipe(v.string(), v.uuid()),
+          revision: positiveId,
+          projectRevision: positiveId,
+        }),
+      ),
+      mode: v.optional(ExecutionMode),
+      connectionId: v.pipe(
+        v.string(),
+        v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+      ),
+      ...repositoryRun,
+    }),
+    v.strictObject({
+      version: v.literal(1),
+      engine: v.literal("claude"),
+      mode: v.optional(ExecutionMode),
+      connectionId: v.pipe(
+        v.string(),
+        v.regex(/^claude\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+      ),
+      ...repositoryRun,
+    }),
+  ]),
+  // A repository Run must say what started it; that decides issue handling.
+  v.check(
+    (context) =>
+      !("repository" in context && context.repository) ||
+      ("trigger" in context && context.trigger !== undefined),
+  ),
+);
 
 export const maxRunnerJobBytes = 32 * 1024;
 
@@ -182,14 +250,6 @@ export const CodexAccess = v.strictObject({
   connectionVersion: v.pipe(v.string(), v.uuid()),
   accessVersion: v.pipe(v.string(), v.uuid()),
 });
-
-export const CodexModelsRequest = v.strictObject({ access: CodexAccess });
-export const CodexModels = v.array(
-  v.object({
-    model: v.pipe(v.string(), v.minLength(1)),
-    efforts: v.array(v.pipe(v.string(), v.minLength(1))),
-  }),
-);
 
 const repositoryJob = {
   githubContext: v.optional(

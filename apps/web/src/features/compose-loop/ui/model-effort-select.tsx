@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { codexModels } from "@tailos/core/models";
 import {
   Select,
   SelectContent,
@@ -9,9 +8,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/ui/select";
-import { codexModelsQueryOptions } from "../api/models";
+import { defaultModelEffort, modelEffortValue } from "../model/model-effort";
 
-const defaultOption = { value: "default", label: "Default model / effort" };
+const defaultOption = {
+  value: defaultModelEffort,
+  label: "Default model / effort",
+};
 const effortLabels: Record<string, string> = {
   none: "None",
   minimal: "Minimal",
@@ -19,25 +21,37 @@ const effortLabels: Record<string, string> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra high",
+  max: "Max",
+  ultra: "Ultra",
 };
+const groups = codexModels.map(({ model, efforts }) => ({
+  model,
+  options: [undefined, ...efforts].map((effort) => ({
+    value: modelEffortValue(model, effort),
+    label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
+  })),
+}));
+const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
 
-export function ModelEffortSelect() {
-  const [open, setOpen] = useState(false);
-  const query = useQuery(codexModelsQueryOptions(open));
-  const groups = (query.data ?? []).map(({ model, efforts }) => ({
-    model,
-    options: [undefined, ...new Set(efforts)].map((effort) => ({
-      value: JSON.stringify([model, effort]),
-      label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
-    })),
-  }));
-  const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
+export function ModelEffortSelect({
+  value,
+  onValueChange,
+  disabled,
+}: {
+  value?: string;
+  onValueChange?: (value: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <Select
       items={items}
-      open={open}
-      onOpenChange={setOpen}
-      defaultValue={defaultOption.value}
+      {...(value === undefined
+        ? { defaultValue: defaultOption.value }
+        : { value })}
+      onValueChange={(next) => {
+        if (typeof next === "string") onValueChange?.(next);
+      }}
+      disabled={disabled}
     >
       <SelectTrigger
         aria-label="Model and effort"
@@ -56,16 +70,6 @@ export function ModelEffortSelect() {
         <SelectItem value={defaultOption.value}>
           {defaultOption.label}
         </SelectItem>
-        {query.isPending && (
-          <SelectItem disabled value="loading">
-            Loading models…
-          </SelectItem>
-        )}
-        {query.isError && (
-          <SelectItem disabled value="unavailable">
-            Model catalog unavailable
-          </SelectItem>
-        )}
         {groups.map(({ model, options }) => (
           <SelectGroup key={model}>
             <SelectLabel>{model}</SelectLabel>

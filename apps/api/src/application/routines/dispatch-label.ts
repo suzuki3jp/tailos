@@ -97,11 +97,14 @@ export async function dispatchIssueLabel(
             repository: project.repository,
             repositoryId: project.repositoryId,
             installationId: project.installationId,
+            defaultBranch: event.repository.default_branch,
+            agentNetworkAccess: project.agentNetworkAccess,
+          },
+          trigger: {
+            kind: "github.issue-label",
             issueNumber: event.issue.number,
             issueContentHash: await githubIssueDigest(event.issue),
-            defaultBranch: event.repository.default_branch,
-            triggerLabel: routine.trigger.label,
-            agentNetworkAccess: project.agentNetworkAccess,
+            label: routine.trigger.label,
           },
         };
         try {

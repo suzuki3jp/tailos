@@ -98,6 +98,13 @@ jobs:
           node-version: 22
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
+      - name: Download the Preview package from this PR CI run
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.revision.outputs.run_id }}
+          name: preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/preview
       - name: Recheck the PR head and state
         id: revision
         env:
@@ -112,23 +119,14 @@ jobs:
             "$RUNNER_TEMP/pr.json" > /dev/null; then
             echo 'deploy=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Download the Preview package from this PR CI run
-        if: steps.revision.outputs.deploy == 'true'
-        uses: actions/download-artifact@v8
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ needs.revision.outputs.run_id }}
-          name: preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/preview
       - name: Publish and verify both Workers Previews
+        id: publish
         if: steps.revision.outputs.deploy == 'true'
         env:
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.event.pull_request.head.sha }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_CLOUDFLARE_API_TOKEN }}
-          TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
-          TAILOS_PREVIEW_API_DOMAIN: ${{ vars.TAILOS_PREVIEW_API_DOMAIN }}
           TAILOS_PREVIEW_D1_DATABASE_ID: ${{ vars.TAILOS_PREVIEW_D1_DATABASE_ID }}
           TAILOS_GITHUB_OAUTH_CLIENT_ID: ${{ vars.TAILOS_PREVIEW_GITHUB_OAUTH_CLIENT_ID }}
           TAILOS_OPERATOR_GITHUB_ID: ${{ vars.TAILOS_PREVIEW_OPERATOR_GITHUB_ID }}
@@ -141,12 +139,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.event.pull_request.head.sha }}
-          DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
+          PREVIEW_URL: ${{ steps.publish.outputs.url }}
         run: |
           set -euo pipefail
           marker='<!-- tailos-workers-preview -->'
           body="$RUNNER_TEMP/preview-comment.md"
-          printf '%s\n[Preview](https://pr-%s.%s) · `%s`\n' "$marker" "$PR" "$DOMAIN" "$SHA" > "$body"
+          printf '%s\n[Preview](%s) · `%s`\n' "$marker" "$PREVIEW_URL" "$SHA" > "$body"
           id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" |
             jq -sr --arg marker "$marker" \
               '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))] | first.id // empty')

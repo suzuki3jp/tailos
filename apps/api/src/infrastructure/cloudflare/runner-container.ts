@@ -25,8 +25,6 @@ import {
 } from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
-  CodexModels,
-  CodexModelsRequest,
   FileChanges,
   maxRunnerJobBytes,
   RunnerStatus,
@@ -34,7 +32,8 @@ import {
   type ExecutionContext,
   type RunnerJob,
   type RepositoryTarget,
-  type CodexAccess,
+  type RunTrigger,
+  triggerIssue,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
@@ -124,28 +123,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await this.ctx.container?.destroy().catch(() => {
         // oxlint-disable-next-line no-console -- Record cleanup failures without container data.
         console.warn("Runner health check container cleanup failed");
-      });
-    }
-  }
-
-  async codexModels(access: CodexAccess) {
-    try {
-      const port = await this.startRunner(Date.now() + 15_000, true);
-      const response = await port.fetch("http://runner/codex/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(v.parse(CodexModelsRequest, { access })),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        return null;
-      }
-      return v.parse(CodexModels, await response.json());
-    } finally {
-      await this.ctx.container?.destroy().catch(() => {
-        // oxlint-disable-next-line no-console -- Never include credentials in cleanup diagnostics.
-        console.warn("Model catalog container cleanup failed");
       });
     }
   }
@@ -542,14 +519,18 @@ export class RunnerContainer extends DurableObject<Bindings> {
       request.context.engine === "codex"
         ? request.context.repository
         : undefined;
-    if (target && job.engine === "codex") {
-      job.githubContext = {
-        kind: "issue",
-        number: target.issueNumber,
-        ...(target.issueContentHash && {
-          contentHash: target.issueContentHash,
-        }),
-      };
+    const trigger =
+      request.context.engine === "codex" ? request.context.trigger : undefined;
+    if (target && trigger && job.engine === "codex") {
+      const issue = triggerIssue(trigger);
+      if (issue)
+        job.githubContext = {
+          kind: "issue",
+          number: issue.issueNumber,
+          ...(issue.issueContentHash && {
+            contentHash: issue.issueContentHash,
+          }),
+        };
       const github = this.github;
       const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
       if (!github || !key)
@@ -558,7 +539,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       const checkout = await github
-        .checkout(target, request.runId, request.context.mode)
+        .checkout(target, trigger, request.runId, request.context.mode)
         .catch(() => null);
       if (!checkout)
         return {
@@ -566,7 +547,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       try {
-        if (request.context.mode === "plan" && checkout.issueSnapshot) {
+        if (
+          request.context.mode === "plan" &&
+          checkout.issueSnapshot &&
+          job.githubContext
+        ) {
           const snapshot = await savePlanningSnapshot(
             this.env.DB,
             request.runId,
@@ -657,7 +642,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
     deadlineAt: number,
     stepState: string | null,
   ) {
-    const target = context.engine === "codex" ? context.repository : undefined;
+    const repository =
+      context.engine === "codex" ? context.repository : undefined;
+    const trigger = context.engine === "codex" ? context.trigger : undefined;
+    const target = repository && trigger ? { repository, trigger } : undefined;
     if (context.mode === "plan") {
       const status = await this.readRunnerStatus(runId);
       if (status.status !== "succeeded") return status;
@@ -687,7 +675,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
         "commit",
         () =>
           github.commitCheckedWork(
-            target,
+            target.repository,
+            target.trigger,
             runId,
             { ...pending, changes },
             recoveryDeadline,
@@ -738,7 +727,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (!pushed) {
         const github = this.github;
         if (!github) throw new Error("GitHub verification unavailable");
-        if (!(await github.hasCommit(target, runId, pending))) {
+        if (
+          !(await github.hasCommit(
+            target.repository,
+            target.trigger,
+            runId,
+            pending,
+          ))
+        ) {
           return status.status === "failed"
             ? status
             : ({
@@ -813,7 +809,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
   private async publish(
     runId: string,
-    target: RepositoryTarget,
+    target: { repository: RepositoryTarget; trigger: RunTrigger },
     deadlineAt: number,
     work: PendingPublication,
     sha = work.kind === "checked" ? undefined : work.sha,
@@ -832,7 +828,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
       this.env.DB,
       runId,
       "pull_request",
-      () => github.publish(target, runId, publication, deadlineAt),
+      () =>
+        github.publish(
+          target.repository,
+          target.trigger,
+          runId,
+          publication,
+          deadlineAt,
+        ),
       (result) => (result ? "succeeded" : "unknown"),
     );
     if (!url)

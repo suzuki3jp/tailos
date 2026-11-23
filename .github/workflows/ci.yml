@@ -80,8 +80,6 @@ jobs:
       - name: Build PR Web and API
         env:
           PR: ${{ github.event.pull_request.number }}
-          TAILOS_PREVIEW_WEB_DOMAIN: ${{ vars.TAILOS_PREVIEW_WEB_DOMAIN }}
-          TAILOS_PREVIEW_API_DOMAIN: ${{ vars.TAILOS_PREVIEW_API_DOMAIN }}
           WRANGLER_SEND_METRICS: "false"
         run: node tools/preview/build.mjs "$PR" "$RUNNER_TEMP/preview"
       - uses: actions/upload-artifact@v7

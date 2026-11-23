@@ -52,11 +52,38 @@ import { d1McpKeys } from "@/infrastructure/d1/mcp-keys.ts";
 import { d1Projects } from "@/infrastructure/d1/projects.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { createProjectRoutes } from "@/presentation/http/handlers/projects/projects.ts";
+import { directBrowserApiPath, webBrowserApiPath } from "@tailos/core/auth";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
+function githubApp(env: Bindings) {
+  if (!env.TAILOS_GH_APP_ID || !env.TAILOS_GH_APP_PRIVATE_KEY)
+    throw new Error("GitHub App is not configured");
+  return new GitHubApp({
+    appId: env.TAILOS_GH_APP_ID,
+    privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
+  });
+}
+
+const codexConnected = (env: Bindings) => async (ownerId: string) =>
+  !!env.CREDENTIALS &&
+  !!env.CREDENTIAL_ENCRYPTION_KEY &&
+  (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
+    .state === "connected";
+
 const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
-  createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth);
+  createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth, {
+    deps: (env) => ({
+      project: async (ownerId, projectId) =>
+        (await d1Projects(env.DB).settings(ownerId)).find(
+          (record) => record.project.id === projectId,
+        ) ?? null,
+      codexConnected: codexConnected(env),
+      defaultBranch: (project) => githubApp(env).defaultBranch(project),
+      admit: (input) => admitTrigger(env.DB, input),
+    }),
+    scheduleRun: (env) => runStarter(env.RUNNER),
+  });
 
 const triggerRoutes = createTriggerRoutes(
   (env) => runStarter(env.RUNNER),
@@ -127,14 +154,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects",
     createProjectRoutes(
       (env) => d1Projects(env.DB),
-      (env) => {
-        if (!env.TAILOS_GH_APP_ID || !env.TAILOS_GH_APP_PRIVATE_KEY)
-          throw new Error("GitHub App is not configured");
-        return new GitHubApp({
-          appId: env.TAILOS_GH_APP_ID,
-          privateKey: env.TAILOS_GH_APP_PRIVATE_KEY,
-        }).projectRepositories();
-      },
+      (env) => githubApp(env).projectRepositories(),
       operatorAuth,
     ),
   )
@@ -142,12 +162,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects/:projectId/routines",
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
-      (env) => async (ownerId) =>
-        env.CREDENTIALS && env.CREDENTIAL_ENCRYPTION_KEY
-          ? (env.CREDENTIALS.getByName(
-              codexConnectionId(ownerId),
-            ).codexModels?.() ?? null)
-          : null,
+      codexConnected,
       operatorAuth,
     ),
   )
@@ -187,8 +202,17 @@ export type BrowserApi = ApplyGlobalResponse<
   }
 >;
 
-app.route("/v1", browserApi);
-app.route("/v1/auth", loginRoutes);
+export const browserProxy = new Hono<{ Bindings: Bindings }>()
+  .use("*", requestDiagnostics)
+  .route(webBrowserApiPath, browserApi)
+  .route(`${webBrowserApiPath}/auth`, loginRoutes);
+
+app.use(`${directBrowserApiPath}/*`, async (c, next) => {
+  if (c.env?.TAILOS_BROWSER_API_VIA_WEB === "true") return c.notFound();
+  await next();
+});
+app.route(directBrowserApiPath, browserApi);
+app.route(`${directBrowserApiPath}/auth`, loginRoutes);
 app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
 app.route("/_runner/runs", refreshRoutes);

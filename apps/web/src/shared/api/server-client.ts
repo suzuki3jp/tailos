@@ -1,9 +1,23 @@
-import { loginSessionCookieName } from "@tailos/core/auth";
-import { apiOrigin, isPreview } from "../config";
+import {
+  loginSessionCookieName,
+  previewLoginSessionCookieName,
+  webLoginSessionCookieName,
+} from "@tailos/core/auth";
+import { apiOrigin, isPreview, usesWebApiProxy } from "../config";
+import {
+  fetchBrowserApi,
+  type BrowserApiBindings,
+} from "../config/index.server";
 import { createApiClient } from "./client";
 
+function sessionCookieName() {
+  if (isPreview) return previewLoginSessionCookieName;
+  if (usesWebApiProxy) return webLoginSessionCookieName;
+  return `${apiOrigin.startsWith("https:") ? "__Secure-" : ""}${loginSessionCookieName}`;
+}
+
 export function createServerApi(cookieHeader: string, signal?: AbortSignal) {
-  const name = `${apiOrigin.startsWith("https:") ? "__Secure-" : ""}${loginSessionCookieName}`;
+  const name = sessionCookieName();
   const sessionCookie = cookieHeader
     .split(";")
     .map((cookie) => cookie.trim())
@@ -11,26 +25,7 @@ export function createServerApi(cookieHeader: string, signal?: AbortSignal) {
   return createApiClient(async (input, init) => {
     const headers = new Headers(init?.headers);
     if (sessionCookie) headers.set("Cookie", sessionCookie);
-    let target = input;
-    if (isPreview) {
-      const { env } = await import("cloudflare:workers");
-      const {
-        TAILOS_PREVIEW_API_ORIGIN: origin,
-        TAILOS_PREVIEW_PROXY_SECRET: secret,
-      } = env as {
-        TAILOS_PREVIEW_API_ORIGIN?: string;
-        TAILOS_PREVIEW_PROXY_SECRET?: string;
-      };
-      if (!origin || !secret)
-        throw new Error("Missing Preview API proxy configuration");
-      const url = new URL(String(input));
-      const upstream = new URL(origin);
-      upstream.pathname = url.pathname;
-      upstream.search = url.search;
-      target = upstream.href;
-      headers.set("X-Tailos-Preview-Proxy", secret);
-    }
-    return fetch(target, {
+    const options = {
       ...init,
       signal:
         signal && init?.signal
@@ -39,6 +34,10 @@ export function createServerApi(cookieHeader: string, signal?: AbortSignal) {
       headers,
       cache: "no-store",
       redirect: "manual",
-    });
+    } satisfies RequestInit;
+    if (!usesWebApiProxy) return fetch(input, options);
+
+    const { env } = await import("cloudflare:workers");
+    return fetchBrowserApi(env as BrowserApiBindings, input, options);
   });
 }

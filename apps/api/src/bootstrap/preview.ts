@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Bindings } from "@/bindings.ts";
-import app from "./http.ts";
+import app, { browserProxy } from "./http.ts";
 
 type PreviewBindings = Bindings & { TAILOS_PREVIEW_PROXY_SECRET: string };
 
@@ -10,8 +10,9 @@ export default {
     const secret = env.TAILOS_PREVIEW_PROXY_SECRET;
     const provided = request.headers.get("X-Tailos-Preview-Proxy");
     if (
-      (url.pathname !== "/health" && !url.pathname.startsWith("/v1/")) ||
-      !env.TAILOS_PUBLIC_ORIGIN ||
+      env.TAILOS_PREVIEW !== "true" ||
+      env.TAILOS_BROWSER_API_VIA_WEB !== "true" ||
+      !env.TAILOS_WEB_ORIGIN ||
       !secret ||
       !provided
     ) {
@@ -27,11 +28,12 @@ export default {
     }
 
     // Hono and Better Auth validate the public URL, including the OAuth callback.
-    const publicUrl = new URL(env.TAILOS_PUBLIC_ORIGIN);
+    const publicUrl = new URL(env.TAILOS_WEB_ORIGIN);
     publicUrl.pathname = url.pathname;
     publicUrl.search = url.search;
     const forwarded = new Request(publicUrl, request);
     forwarded.headers.delete("X-Tailos-Preview-Proxy");
-    return app.fetch(forwarded, env, ctx);
+    const router = url.pathname === "/health" ? app : browserProxy;
+    return router.fetch(forwarded, env, ctx);
   },
 } satisfies ExportedHandler<PreviewBindings>;

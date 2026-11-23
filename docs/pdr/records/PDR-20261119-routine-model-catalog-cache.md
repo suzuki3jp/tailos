@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261119-routine-model-catalog-cache
 key: triggers.routine-model-catalog-cache
-status: accepted
+status: superseded
 date: "2026-11-19"
 areas: [triggers, agent, auth]
 keywords: [Routine, モデル候補, キャッシュ, コンテナ, 同時取得]

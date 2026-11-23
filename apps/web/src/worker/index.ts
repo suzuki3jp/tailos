@@ -1,27 +1,24 @@
+import { loginSessionCookieName, webBrowserApiPath } from "@tailos/core/auth";
 import handler from "vinext/server/fetch-handler";
-import { apiOrigin, isPreview } from "@/shared/config";
+import { apiOrigin, isPreview, usesWebApiProxy } from "@/shared/config";
+import {
+  fetchBrowserApi,
+  type BrowserApiBindings,
+} from "@/shared/config/index.server";
+
+const legacyCookieName = `__Secure-${loginSessionCookieName}`;
 
 export default {
   async fetch(request: Request, env, ctx) {
-    if (isPreview) {
-      const url = new URL(request.url);
-      if (url.origin !== apiOrigin) return new Response(null, { status: 404 });
-      if (url.pathname.startsWith("/v1/")) {
-        const secret = env.TAILOS_PREVIEW_PROXY_SECRET;
-        const origin = env.TAILOS_PREVIEW_API_ORIGIN;
-        if (!secret || !origin) return new Response(null, { status: 503 });
-        const upstream = new URL(origin);
-        upstream.pathname = url.pathname;
-        upstream.search = url.search;
-        const headers = new Headers(request.headers);
-        headers.delete("Host");
-        headers.set("X-Tailos-Preview-Proxy", secret);
-        return fetch(new Request(upstream, request), {
-          headers,
-          redirect: "manual",
-        });
-      }
-    }
+    const { origin, pathname, hostname } = new URL(request.url);
+    const isApiRequest =
+      usesWebApiProxy &&
+      (pathname === webBrowserApiPath ||
+        pathname.startsWith(`${webBrowserApiPath}/`));
+    if ((isPreview || isApiRequest) && origin !== apiOrigin)
+      return new Response(null, { status: 404 });
+    if (isApiRequest) return fetchBrowserApi(env, request);
+
     const nonce = btoa(
       String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
     );
@@ -58,10 +55,20 @@ export default {
     securedResponse.headers.set("Referrer-Policy", "strict-origin");
     securedResponse.headers.set("X-Frame-Options", "DENY");
     securedResponse.headers.set("X-Content-Type-Options", "nosniff");
+    if (
+      !isPreview &&
+      usesWebApiProxy &&
+      origin === apiOrigin &&
+      request.headers
+        .get("Cookie")
+        ?.split(";")
+        .some((cookie) => cookie.trimStart().startsWith(`${legacyCookieName}=`))
+    ) {
+      securedResponse.headers.append(
+        "Set-Cookie",
+        `${legacyCookieName}=; Max-Age=0; Path=/; Domain=${hostname}; HttpOnly; Secure; SameSite=Lax`,
+      );
+    }
     return securedResponse;
   },
-} satisfies ExportedHandler<{
-  ASSETS: Fetcher;
-  TAILOS_PREVIEW_API_ORIGIN?: string;
-  TAILOS_PREVIEW_PROXY_SECRET?: string;
-}>;
+} satisfies ExportedHandler<{ ASSETS: Fetcher } & BrowserApiBindings>;

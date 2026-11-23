@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { readLoginConfig } from "../../apps/api/scripts/login-config.mjs";
+import { webBrowserApiPath } from "../../packages/core/src/auth.ts";
 import { cloudflare } from "./cloudflare.mjs";
 import {
   findApiDeploymentOrigin,
@@ -149,7 +150,12 @@ try {
     {
       main: join(artifacts, "api/preview.js"),
       previews: {
-        vars: { ...login.vars, TAILOS_WEB_ORIGIN: web },
+        vars: {
+          ...login.vars,
+          TAILOS_WEB_ORIGIN: web,
+          TAILOS_BROWSER_API_VIA_WEB: "true",
+          TAILOS_PREVIEW: "true",
+        },
         d1_databases: [database],
         r2_buckets: [bucket],
         observability: { enabled: true, redact_query_string: true },
@@ -169,7 +175,7 @@ try {
       assets: {
         directory: join(artifacts, "web/client"),
         binding: "ASSETS",
-        run_worker_first: ["/v1/*"],
+        run_worker_first: [webBrowserApiPath, `${webBrowserApiPath}/*`],
       },
       previews: {
         vars: { TAILOS_PREVIEW_API_ORIGIN: apiDeploymentOrigin },
@@ -180,20 +186,27 @@ try {
   );
   await verify(web, "/health", serviceIs("tailos-web"));
   // A 401 here proves the public Web reaches the API with the proxy secret.
-  await verify(web, "/v1/account", (response) => response.status === 401);
-  const loginStart = await fetch(new URL("/v1/auth/login", web), {
-    method: "POST",
-    headers: { Origin: web },
-    redirect: "manual",
-    signal: AbortSignal.timeout(15_000),
-  });
+  await verify(
+    web,
+    `${webBrowserApiPath}/account`,
+    (response) => response.status === 401,
+  );
+  const loginStart = await fetch(
+    new URL(`${webBrowserApiPath}/auth/login`, web),
+    {
+      method: "POST",
+      headers: { Origin: web },
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
   const location = URL.parse(loginStart.headers.get("Location") ?? "");
   if (
     loginStart.status !== 303 ||
     location?.origin !== "https://github.com" ||
     location.pathname !== "/login/oauth/authorize" ||
     location.searchParams.get("redirect_uri") !==
-      `${web}/v1/auth/callback/github`
+      `${web}${webBrowserApiPath}/auth/callback/github`
   )
     throw new Error(
       "Preview login did not start with the expected GitHub callback",
@@ -202,3 +215,5 @@ try {
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }
+if (process.env.GITHUB_OUTPUT)
+  appendFileSync(process.env.GITHUB_OUTPUT, `url=${web}\n`);

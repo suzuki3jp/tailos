@@ -64,9 +64,16 @@ export async function admitTrigger(
     db
       .prepare(
         `INSERT INTO session_messages (id, session_id, seq, author_kind, body, created_at)
-       SELECT ?, ?, 1, 'automation', ?, ? WHERE ${created}`,
+       SELECT ?, ?, 1, ?, ?, ? WHERE ${created}`,
       )
-      .bind(messageId, sessionId, input.prompt, now, sessionId),
+      .bind(
+        messageId,
+        sessionId,
+        input.authorKind ?? "automation",
+        input.prompt,
+        now,
+        sessionId,
+      ),
     db
       .prepare(
         `INSERT INTO runs (id, session_id, start_message_id, status, concurrency_key,

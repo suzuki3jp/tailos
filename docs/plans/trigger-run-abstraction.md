@@ -134,7 +134,7 @@ plan の不要な label 参照を外し、`Project.triggerLabel` の削除を目
 
 ## 検証
 
-実装時は CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を実行する。PDR の変更では `pnpm pdr catalog --write` と `pnpm pdr check` を実行し、レビューで `pnpm pdr context --diff BASE...HEAD` を使う。
+実装時は CI と同じ `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck`、`pnpm --filter @tailos/web run build` を実行する。PDR の変更では `pnpm pdr check` を実行し、レビューで `pnpm pdr context --diff BASE...HEAD` を使う。
 
 機能の境界を確認する回帰ケースは次のとおり。
 

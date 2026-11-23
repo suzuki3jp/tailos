@@ -24,7 +24,7 @@
 | [PDR-20261114-006](records/PDR-20261114-006.md) | accepted | agent.claude.authentication-failure | Claude の認証が拒否されても接続は自動で無効にしない |
 | [PDR-20261114-007](records/PDR-20261114-007.md) | accepted | agent.claude.runtime | Claude Code は Agent SDK から実行する |
 | [PDR-20261114-008](records/PDR-20261114-008.md) | accepted | agent.claude.authentication | Claude 接続は長期 OAuth トークンの貼り付けだけを対象にする |
-| [PDR-20261114-009](records/PDR-20261114-009.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
+| [PDR-20261114-009](records/PDR-20261114-009.md) | superseded | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Run のコンテナに置く |
 | [PDR-20261114-010](records/PDR-20261114-010.md) | superseded | agent.selection | 実行する Agent は Project の config で選び、未指定は Codex にする |
 | [PDR-20261114-011](records/PDR-20261114-011.md) | accepted | agent.claude.token-expiry-notice | Claude トークンの期限切れは 30 日前から接続画面で知らせる |
 | [PDR-20261114-project-agent-field-timing](records/PDR-20261114-project-agent-field-timing.md) | accepted | project.configuration.agent-field-timing | 今回の Project 設定管理には agent 項目を追加しない |
@@ -85,3 +85,7 @@
 | [PDR-20261122-login-cookie-scope](records/PDR-20261122-login-cookie-scope.md) | accepted | auth.login.cookie-scope | 本番のログイン Cookie を Web ホストに限定する |
 | [PDR-20261122-project-settings-without-network](records/PDR-20261122-project-settings-without-network.md) | accepted | project.configuration.editable-fields | label と許可ユーザーを Routine に置き、Project には通信許可を置かない |
 | [PDR-20261122-routine-model-options-from-source](records/PDR-20261122-routine-model-options-from-source.md) | accepted | triggers.routine-model-options | Routine のモデルと effort を Tailos 定義の候補から選択する |
+| [PDR-20261123-execution-model](records/PDR-20261123-execution-model.md) | accepted | execution.model | Trigger・Routine・Session・Turn・Connector に分け、入出力を実行から切り離す |
+| [PDR-20261123-publication-tool](records/PDR-20261123-publication-tool.md) | accepted | publication.tool | 作業の公開は Agent が Tailos の公開ツールを呼び、API が検査してから署名付きコミットと PR を作る |
+| [PDR-20261123-repository-settings-session-boundary](records/PDR-20261123-repository-settings-session-boundary.md) | accepted | agent.claude.repository-settings | 対象リポジトリの Claude Code 設定は読み込み、隔離の境界は Session のコンテナとファイルシステムに置く |
+| [PDR-20261123-session-continuity](records/PDR-20261123-session-continuity.md) | accepted | session.continuity | Session の作業はコンテナのスナップショットと R2 の保存で引き継ぎ、待機せずに眠らせる |

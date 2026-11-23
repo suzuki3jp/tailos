@@ -19,6 +19,8 @@ export function planningReplyStore(db: D1Database): NotificationStore {
         RETURNING *, body AS reply_body,
           coalesce((SELECT run_id FROM planning_inbox WHERE id = input_id), 'guidance') AS run_id,
           (SELECT session_id FROM planning_issues WHERE scope = (SELECT scope FROM planning_inbox WHERE id = input_id)) AS session_id,
+          (SELECT s.project_id FROM planning_inbox i JOIN planning_issues p ON p.scope = i.scope
+            JOIN sessions s ON s.id = p.session_id WHERE i.id = input_id) AS project_id,
           (SELECT json_extract(execution_context, '$.repository') FROM planning_inbox WHERE id = input_id) AS target,
           (SELECT json_extract(execution_context, '$.trigger') FROM planning_inbox WHERE id = input_id) AS trigger,
           'succeeded' AS desired_state, 1 AS version`)

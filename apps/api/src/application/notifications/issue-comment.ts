@@ -14,6 +14,7 @@ export type IssueNotification = {
   input_id?: number;
   reply_body?: string;
   session_id: string;
+  project_id: string | null;
   target: string;
   /** Absent for contexts stored before triggers, which kept the issue in target. */
   trigger?: string | null;
@@ -43,21 +44,30 @@ export function commentBody(
   origin: string,
   n: Pick<
     IssueNotification,
-    "run_id" | "session_id" | "desired_state" | "input_id" | "reply_body"
+    | "run_id"
+    | "session_id"
+    | "project_id"
+    | "desired_state"
+    | "input_id"
+    | "reply_body"
   >,
 ) {
+  const sessionPath = `/sessions/${encodeURIComponent(n.session_id)}`;
+  const projectPath =
+    n.project_id === null ? "" : `/${encodeURIComponent(n.project_id)}`;
+  const sessionUrl = new URL(projectPath + sessionPath, origin);
   if (n.reply_body !== undefined) {
     // Escape all mentions, including team mentions and copied command examples.
     const text = n.reply_body
       .replaceAll("@", "@\u200b")
       .replaceAll("<!-- tailos:", "&lt;!-- tailos:");
-    return `${text}\n\n[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n${notificationMarker(n)}`;
+    return `${text}\n\n[セッションを開く ↗](${sessionUrl})\n\n${notificationMarker(n)}`;
   }
   const state = n.desired_state;
   const alt = notificationLabels[state];
   const asset =
     state === "processing" ? "tailos-rolling-v1.gif" : `tailos-${state}-v1.png`;
-  return `![Tailos が${alt}](${new URL(`/assets/${asset}`, origin)})\n\n[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n<!-- tailos:run:${n.run_id}:v1 -->`;
+  return `![Tailos が${alt}](${new URL(`/assets/${asset}`, origin)})\n\n[セッションを開く ↗](${sessionUrl})\n\n<!-- tailos:run:${n.run_id}:v1 -->`;
 }
 export type NotificationStore = {
   claim(): Promise<IssueNotification[]>;

@@ -198,6 +198,9 @@ test("deduplicates concurrent first comments and deliveries, then drains inputs 
   expect(commentBody("https://tailos.app", secondReply!)).toContain(
     `tailos:plan:${second}:input:`,
   );
+  expect(commentBody("https://tailos.app", secondReply!)).toContain(
+    `https://tailos.app/${input.projectId}/sessions/${secondReply!.session_id})`,
+  );
   await store.complete(secondReply!, 501);
   const [thirdReply] = await store.claim();
   expect(thirdReply?.reply_body).toContain("agent_failed");

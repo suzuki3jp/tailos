@@ -95,41 +95,44 @@ test("records a rejected token so the next request refreshes it", async () => {
 
 test("never attaches the token to another host, scheme, port or a finished Run", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const { upstream } = capture();
-  const token = vi.fn(async () => access);
-  for (const url of [
-    "https://example.com/",
-    "https://api.openai.com/v1/responses",
-    "http://chatgpt.com/backend-api/codex/responses",
-    "https://chatgpt.com:8443/backend-api/codex/responses",
-    "https://chatgpt.com/backend-api/conversations",
-    "https://chatgpt.com/backend-api/wham/tasks",
-    "https://chatgpt.com/backend-api/codex",
-    "https://chatgpt.com/backend-api/codex/../conversations",
-    "https://chatgpt.com/backend-api/codex/%2e%2e/conversations",
-    "https://chatgpt.com/backend-api/codex/..%2Fconversations",
-    "https://chatgpt.com/backend-api/codex/%5C..%5Cconversations",
-  ]) {
-    const response = await forwardModelRequest(
-      new Request(url),
-      token,
-      async () => {},
-      upstream,
-    );
-    expect(response.status, url).toBe(403);
+  try {
+    const { upstream } = capture();
+    const token = vi.fn(async () => access);
+    for (const url of [
+      "https://example.com/",
+      "https://api.openai.com/v1/responses",
+      "http://chatgpt.com/backend-api/codex/responses",
+      "https://chatgpt.com:8443/backend-api/codex/responses",
+      "https://chatgpt.com/backend-api/conversations",
+      "https://chatgpt.com/backend-api/wham/tasks",
+      "https://chatgpt.com/backend-api/codex",
+      "https://chatgpt.com/backend-api/codex/../conversations",
+      "https://chatgpt.com/backend-api/codex/%2e%2e/conversations",
+      "https://chatgpt.com/backend-api/codex/..%2Fconversations",
+      "https://chatgpt.com/backend-api/codex/%5C..%5Cconversations",
+    ]) {
+      const response = await forwardModelRequest(
+        new Request(url),
+        token,
+        async () => {},
+        upstream,
+      );
+      expect(response.status, url).toBe(403);
+    }
+    expect(token).not.toHaveBeenCalled();
+    for (const finished of [async () => null, async () => Promise.reject()]) {
+      const response = await forwardModelRequest(
+        new Request("https://chatgpt.com/backend-api/codex/responses"),
+        finished,
+        async () => {},
+        upstream,
+      );
+      expect(response.status).toBe(401);
+    }
+    expect(upstream).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
   }
-  expect(token).not.toHaveBeenCalled();
-  for (const finished of [async () => null, async () => Promise.reject()]) {
-    const response = await forwardModelRequest(
-      new Request("https://chatgpt.com/backend-api/codex/responses"),
-      finished,
-      async () => {},
-      upstream,
-    );
-    expect(response.status).toBe(401);
-  }
-  expect(upstream).not.toHaveBeenCalled();
-  warn.mockRestore();
 });
 
 test("logs only the Run, host and path of a refused request", async () => {

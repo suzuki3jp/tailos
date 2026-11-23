@@ -65,7 +65,7 @@ export async function forwardModelRequest(
     !isCodexPath(url.pathname)
   ) {
     // A Codex update may need a path that is not allowed yet: name it in the
-    // logs. Only the path is recorded, never headers or the query.
+    // logs. Only the Run, host and path are recorded, never headers or the query.
     // oxlint-disable-next-line no-console -- Record denied paths without credentials.
     console.warn("Model egress denied a request", {
       runId,

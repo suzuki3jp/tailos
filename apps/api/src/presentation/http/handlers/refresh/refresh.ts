@@ -13,7 +13,7 @@ export function createRefreshRoutes(
     env: Bindings,
     runId: string,
     now: number,
-  ) => Promise<unknown>,
+  ) => Promise<{ sessionId: string } | null>,
 ) {
   const refreshRoutes = new Hono<{ Bindings: Bindings }>();
   refreshRoutes.post(
@@ -38,7 +38,7 @@ export function createRefreshRoutes(
         const run = await findActiveRun(c.env, runId.output, Date.now());
         if (!run) return c.json({ error: "invalid_lease" }, 401);
         const staged = await c.env.RUNNER.getByName(
-          runId.output,
+          run.sessionId,
         ).stagePublication(runId.output, bearer, work.output);
         return staged
           ? c.body(null, 204)

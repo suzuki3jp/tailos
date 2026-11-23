@@ -20,7 +20,8 @@ export function isCodexPath(pathname: string) {
   );
 }
 
-export type ModelEgressProps = { runId: string };
+/** The Run whose access is added, and the Session whose Runner holds it. */
+export type ModelEgressProps = { runId: string; sessionId: string };
 
 /** The Run's current Codex access, issued outside the container. */
 export type ModelAccess = {
@@ -87,8 +88,8 @@ export async function forwardModelRequest(
 /** Receives a Codex Run container's intercepted model API traffic. */
 export class ModelEgress extends WorkerEntrypoint<Bindings, ModelEgressProps> {
   override fetch(request: Request) {
-    const { runId } = this.ctx.props;
-    const runner = () => this.env.RUNNER?.getByName(runId);
+    const { runId, sessionId } = this.ctx.props;
+    const runner = () => this.env.RUNNER?.getByName(sessionId);
     return forwardModelRequest(
       request,
       async () => runner()?.modelAccess(runId),

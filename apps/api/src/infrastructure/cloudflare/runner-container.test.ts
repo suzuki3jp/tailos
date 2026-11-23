@@ -8,9 +8,39 @@ import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+import { runSession } from "@/infrastructure/cloudflare/run-start.ts";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
 import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
 import { seal } from "@/infrastructure/auth/sealed-store.ts";
+
+/** Durable Object storage kept in a map, for the calls the Runner makes. */
+function memoryStorage(
+  values: Map<string, unknown>,
+  setAlarm: (at: number) => Promise<void> = async () => {},
+) {
+  const records = {
+    async get(key: string) {
+      return values.get(key);
+    },
+    async put(key: string, value: unknown) {
+      values.set(key, value);
+    },
+    async delete(keys: string | string[]) {
+      for (const key of [keys].flat()) values.delete(key);
+      return true;
+    },
+    async list({ prefix = "" }: { prefix?: string } = {}) {
+      return new Map([...values].filter(([key]) => key.startsWith(prefix)));
+    },
+  };
+  return {
+    ...records,
+    async transaction<T>(body: (storage: typeof records) => Promise<T>) {
+      return body(records);
+    },
+    setAlarm,
+  };
+}
 
 test("a diagnostics lease accepts late telemetry but cannot publish or obtain model access", async (t) => {
   const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
@@ -44,7 +74,7 @@ test("a diagnostics lease accepts late telemetry but cannot publish or obtain mo
     {
       storage: {
         async get(key: string) {
-          return key === "diagnosticLease" ? lease : undefined;
+          return key === `diagnosticLease/${runId}` ? lease : undefined;
         },
       },
     } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
@@ -76,6 +106,57 @@ test("a diagnostics lease accepts late telemetry but cannot publish or obtain mo
   ).toBe(false);
   lease.expiresAt = Date.now() - 1;
   expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(false);
+});
+
+test("runs the Turns of a Session one at a time and clears each Run's state", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const first = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "first",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  const second = crypto.randomUUID();
+  const values = new Map<string, unknown>();
+  const setAlarm = vi.fn(async (_at: number) => {});
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(values, setAlarm),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { DB },
+  );
+  await runner.schedule(first.runId, first.sessionId);
+  await runner.schedule(second, first.sessionId);
+  await runner.schedule(second, first.sessionId);
+  // The second Turn waits: the container and storage belong to one Run.
+  expect(values.get("runId")).toBe(first.runId);
+  expect(values.get("queuedRuns")).toStrictEqual([second]);
+
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), first.runId)
+    .run();
+  for (const key of ["refreshLease", "agentEgressClosed", "runnerKey"])
+    values.set(key, true);
+  values.set(`diagnosticLease/${first.runId}`, {
+    expiresAt: Date.now() + 60_000,
+  });
+  values.set("diagnosticLease/expired", { expiresAt: Date.now() - 1 });
+  setAlarm.mockClear();
+  await runner.alarm();
+
+  expect(values.get("runId")).toBe(second);
+  expect(values.has("queuedRuns")).toBe(false);
+  expect(setAlarm).toHaveBeenCalledOnce();
+  for (const key of ["refreshLease", "agentEgressClosed", "runnerKey"])
+    expect(values.has(key), key).toBe(false);
+  // Late telemetry of the finished Run is still accepted until it expires.
+  expect(values.has(`diagnosticLease/${first.runId}`)).toBe(true);
+  expect(values.has("diagnosticLease/expired")).toBe(false);
 });
 
 test("a rejected model token forces a refresh at most once every five seconds", async () => {
@@ -300,16 +381,7 @@ async function preparedRun(
   const destroy = vi.fn(async () => {});
   const stored = new Map<string, unknown>([["runId", runId]]);
   const ctx = {
-    storage: {
-      async get(key: string) {
-        return stored.get(key);
-      },
-      async put(key: string, value: unknown) {
-        stored.set(key, value);
-      },
-      async delete(_key: string) {},
-      setAlarm,
-    },
+    storage: memoryStorage(stored, setAlarm),
     container: {
       running: state !== "lost",
       destroy,
@@ -347,16 +419,23 @@ test.for(["failed", "lost"] as const)(
   "ends a prepared publication promptly when the Runner is %s and its commit was not pushed",
   async (state, t) => {
     const { DB, runId, runner, setAlarm, stored } = await preparedRun(t, state);
+    let closedAtVerification: unknown;
     const verify = vi
       .spyOn(GitHubApp.prototype, "hasCommit")
-      .mockResolvedValue(false);
+      .mockImplementation(async () => {
+        closedAtVerification = stored.get("agentEgressClosed");
+        return false;
+      });
     const publish = vi.spyOn(GitHubApp.prototype, "publish");
     await runner.alarm();
     expect(verify).toHaveBeenCalledTimes(1);
     expect(publish).not.toHaveBeenCalled();
     expect(setAlarm).not.toHaveBeenCalled();
     // A pending publication means the Agent is done with GitHub.
-    expect(stored.get("githubEgressClosed")).toBe(true);
+    expect(closedAtVerification).toBe(true);
+    // The next Turn of the Session starts without this Run's state.
+    expect(stored.has("agentEgressClosed")).toBe(false);
+    expect(stored.has("runId")).toBe(false);
     expect(
       await DB.prepare("SELECT status, error_code FROM runs WHERE id = ?")
         .bind(runId)
@@ -530,26 +609,7 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
       },
     ],
   ]);
-  const records = {
-    async get(key: string) {
-      return values.get(key);
-    },
-    async put(key: string, value: unknown) {
-      values.set(key, value);
-    },
-    async delete(key: string) {
-      return values.delete(key);
-    },
-  };
-  const storage = {
-    ...records,
-    async transaction<T>(
-      fn: (store: typeof records) => Promise<T>,
-    ): Promise<T> {
-      return fn(records);
-    },
-    async setAlarm() {},
-  };
+  const storage = memoryStorage(values);
   const runner = new RunnerContainer(
     { storage } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
     {
@@ -567,11 +627,11 @@ test("publishes the checked snapshot after the Runner is gone and cleans up its 
     }),
   ).toBe(false);
   // Rejected attempts leave the Agent's GitHub access as it was.
-  expect(values.has("githubEgressClosed")).toBe(false);
+  expect(values.has("agentEgressClosed")).toBe(false);
   expect(await runner.stagePublication(runId, bearer, work)).toBe(true);
   // Checked work is final: the egress Worker stops adding the Run's token
   // before the controller commits and opens the pull request.
-  expect(values.get("githubEgressClosed")).toBe(true);
+  expect(values.get("agentEgressClosed")).toBe(true);
   expect(await runner.githubToken(runId)).toBeNull();
   expect(
     await runner.stagePublication(runId, bearer, {
@@ -705,16 +765,9 @@ test("planning refuses publication recovery and stops its container after saving
   });
   const runner = new RunnerContainer(
     {
-      storage: {
-        async get(key: string) {
-          return key === "runId" ? runId : undefined;
-        },
-        async put() {},
-        async delete() {},
-        async setAlarm() {
-          throw new Error("Planning must end");
-        },
-      },
+      storage: memoryStorage(new Map([["runId", runId]]), async () => {
+        throw new Error("Planning must end");
+      }),
       container: {
         running: true,
         destroy,
@@ -799,7 +852,11 @@ test.for([
       timeoutMs: 60_000,
     });
     const [runId] = await dispatchPlanningInputs(DB);
-    const memory = new Map<string, unknown>([["runId", runId]]);
+    const sessionId = await runSession(DB, runId!);
+    const memory = new Map<string, unknown>([
+      ["runId", runId],
+      ["sessionId", sessionId],
+    ]);
     const order: string[] = [];
     const controlKeys = new Set<string | null>();
     const jobs: string[] = [];
@@ -851,7 +908,10 @@ test.for([
       order.push(host);
     });
     const egress = vi.fn((options: unknown) => options);
-    const destroy = vi.fn(async () => {});
+    let closedAtDestroy: unknown;
+    const destroy = vi.fn(async () => {
+      closedAtDestroy = memory.get("agentEgressClosed");
+    });
     vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
       token: "read-token",
       expiresAt: Date.now() + 60_000,
@@ -868,18 +928,7 @@ test.for([
     });
     const runner = new RunnerContainer(
       {
-        storage: {
-          async setAlarm() {},
-          async get(key: string) {
-            return memory.get(key);
-          },
-          async put(key: string, value: unknown) {
-            memory.set(key, value);
-          },
-          async delete(key: string) {
-            memory.delete(key);
-          },
-        },
+        storage: memoryStorage(memory),
         container: {
           images: { runner: "image" },
           start,
@@ -934,7 +983,7 @@ test.for([
         "chatgpt.com",
         "start",
       ]);
-      expect(egress).toHaveBeenCalledWith({ props: { runId } });
+      expect(egress).toHaveBeenCalledWith({ props: { runId, sessionId } });
       // The Codex token stays outside too: Codex gets a placeholder that
       // carries only the account.
       expect(jobs).toHaveLength(1);
@@ -955,7 +1004,8 @@ test.for([
       ]);
       expect(memory.has("runnerKey")).toBe(false);
       // Planning results arrived: the Agent's GitHub access ended before them.
-      expect(memory.get("githubEgressClosed")).toBe(true);
+      expect(closedAtDestroy).toBe(true);
+      expect(memory.has("agentEgressClosed")).toBe(false);
     }
     expect(
       await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
@@ -992,9 +1042,9 @@ test("hands the Run's GitHub token only to its own unexpired grant", async () =>
   expect(await runner.githubToken(runId)).toBe("run-token");
   expect(await runner.githubToken(crypto.randomUUID())).toBeNull();
   // Once the Agent's work is over, publication must not race its processes.
-  memory.set("githubEgressClosed", true);
+  memory.set("agentEgressClosed", true);
   expect(await runner.githubToken(runId)).toBeNull();
-  memory.delete("githubEgressClosed");
+  memory.delete("agentEgressClosed");
   memory.set("repositoryGrant", {
     ...(memory.get("repositoryGrant") as object),
     expiresAt: Date.now() - 1,

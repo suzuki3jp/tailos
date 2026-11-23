@@ -27,7 +27,7 @@ flowchart LR
     Browser[ブラウザ] -->|画面・/api/v1| Web[apps/web · Workers]
     Web -->|Service Binding| API
     API --> D1[(D1 · Routine・Session・会話・Run・起動イベント)]
-    API --> DO[Run ごとの Durable Object]
+    API --> DO[Session ごとの Durable Object]
     DO -->|内部 HTTP| Runner[apps/runner · Cloudflare Containers]
     DO --> D1
     DO --> R2[(R2 · ログと成果物)]
@@ -42,7 +42,7 @@ flowchart LR
 
 ## Session と実行のデータモデル
 
-**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。PR 作成で Run は完了し、Session には会話と各 Run の結果が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。
+**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。PR 作成で Run は完了し、Session には会話と各 Run の結果が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。 Session の Run は Session ごとの Durable Object が 1 つずつ処理し、前の Run の状態を消してから次の Run を始める。
 
 ```mermaid
 erDiagram

@@ -5,7 +5,11 @@ import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
 
 export function createDiagnosticIngestRoutes(
-  canIngest: (env: Bindings, runId: string, now: number) => Promise<boolean>,
+  runSession: (
+    env: Bindings,
+    runId: string,
+    now: number,
+  ) => Promise<string | null>,
 ) {
   const diagnosticIngestRoutes = new Hono<{ Bindings: Bindings }>();
   diagnosticIngestRoutes.post(
@@ -28,10 +32,10 @@ export function createDiagnosticIngestRoutes(
       );
       if (!batch.success) return c.json({ error: "invalid_diagnostics" }, 400);
       try {
-        if (!(await canIngest(c.env, runId.output, Date.now())))
-          return c.json({ error: "invalid_lease" }, 401);
+        const sessionId = await runSession(c.env, runId.output, Date.now());
+        if (!sessionId) return c.json({ error: "invalid_lease" }, 401);
         const accepted = await c.env.RUNNER.getByName(
-          runId.output,
+          sessionId,
         ).ingestDiagnostics(runId.output, bearer, batch.output);
         if (accepted === "limit")
           return c.json({ error: "diagnostics_limit" }, 413);

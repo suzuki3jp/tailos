@@ -36,19 +36,19 @@ export async function digestDiagnostic(text: string) {
   ).join("");
 }
 
-export async function canIngestDiagnostics(
+/** The Session of a Run that may still send diagnostics, or null. */
+export async function diagnosticRunSession(
   db: D1Database,
   runId: string,
   now: number,
 ) {
-  return Boolean(
-    await db
-      .prepare(
-        "SELECT 1 FROM runs WHERE id = ? AND deadline_at + ? > ? AND (finished_at IS NULL OR finished_at + ? > ?)",
-      )
-      .bind(runId, diagnosticGraceMs, now, diagnosticGraceMs, now)
-      .first(),
-  );
+  const run = await db
+    .prepare(
+      "SELECT session_id AS sessionId FROM runs WHERE id = ? AND deadline_at + ? > ? AND (finished_at IS NULL OR finished_at + ? > ?)",
+    )
+    .bind(runId, diagnosticGraceMs, now, diagnosticGraceMs, now)
+    .first<{ sessionId: string }>();
+  return run?.sessionId ?? null;
 }
 
 export async function registerDiagnosticProducer(

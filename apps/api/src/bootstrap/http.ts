@@ -38,7 +38,7 @@ import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/trigg
 import { requestDiagnostics } from "@/presentation/http/middlewares/request-diagnostics.ts";
 import {
   diagnosticReader,
-  canIngestDiagnostics,
+  diagnosticRunSession,
   recordTriggerDecision,
 } from "@/infrastructure/diagnostics/store.ts";
 import { createDiagnosticRoutes } from "@/presentation/http/handlers/diagnostics/diagnostics.ts";
@@ -82,17 +82,17 @@ const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
       defaultBranch: (project) => githubApp(env).defaultBranch(project),
       admit: (input) => admitTrigger(env.DB, input),
     }),
-    scheduleRun: (env) => runStarter(env.RUNNER),
+    scheduleRun: runStarter,
   });
 
 const triggerRoutes = createTriggerRoutes(
-  (env) => runStarter(env.RUNNER),
+  runStarter,
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
 );
 
 const githubWebhook = createGithubWebhook(
-  (env) => runStarter(env.RUNNER),
+  runStarter,
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
   validSignature,
@@ -107,7 +107,7 @@ const githubWebhook = createGithubWebhook(
 );
 
 const runRoutes = createRunRoutes(
-  (env) => runStarter(env.RUNNER),
+  runStarter,
   (env, id, ownerId) => findOwnedRun(env.DB, id, ownerId),
   (env, id, file, result) =>
     env.RUN_ARTIFACTS
@@ -219,7 +219,7 @@ app.route("/_runner/runs", refreshRoutes);
 app.route(
   "/_runner/runs",
   createDiagnosticIngestRoutes((env, id, now) =>
-    canIngestDiagnostics(env.DB, id, now),
+    diagnosticRunSession(env.DB, id, now),
   ),
 );
 app.get("/health", (c) => c.json({ status: "ok", service: "tailos-api" }));

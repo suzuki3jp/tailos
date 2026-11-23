@@ -29,7 +29,7 @@
 | --- | --- | --- | --- |
 | 1 | `claude/execution-model-pdr` | PDR と計画書（この文書） | `pnpm pdr check` が通る |
 | 2 | `claude/agent-credentials-outside` | #131: Codex・Claude の認証情報をコンテナに置かない | 下記 |
-| 3 | `claude/session-runner` | Session の Durable Object と順番待ち | 下記 |
+| 3 | `claude/session-runner` | Session の Durable Object と Turn の順番待ち | 下記 |
 | 4 | `claude/session-continuity` | 作業の引き継ぎ（スナップショット、R2、Codex の再開） | 下記 |
 | 5 | `claude/publication-tool` | 公開ツールと Session ごとの PR | 下記 |
 | 6 | `claude/routine-triggers` | label と計画を Routine に統一し、専用の経路を廃止 | 下記 |
@@ -51,12 +51,13 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 3. Session の Durable Object と順番待ち
 
-- Runner の Durable Object を Session 単位にする（`RUNNER.getByName(sessionId)`）。Run（Turn）の状態は引き続き D1 の `runs` に持ち、Durable Object は今の Turn の runId を記録する。
-- 順番待ちを Session 共通の仕組みにする（`session_inbox`）。Trigger は Session にメッセージを追加し、進行中の Turn がなければ Turn を作る。Turn が終わったら次のメッセージで Turn を作る。
-- 既存の label 起動・Web からの開始は、新しい Session を作って最初のメッセージを追加する形に移す。受付の冪等性・同時実行キーの規則は維持する。
-- 移行は、進行中の Run がない状態を運用で作って行う（PDR-20261118-routine-initial-migration と同じ方針）。
+- Runner の Durable Object を Session 単位にする（`RUNNER.getByName(sessionId)`）。Run（Turn）の状態は引き続き D1 の `runs` に持ち、Durable Object は今の Turn の runId を記録する。Run の予約・回復・公開の検査・診断の受け取り・通信の横取りは、Run の Session の Durable Object に届ける。
+- Durable Object は同じ Session の Run を 1 つずつ処理する。進行中の Run があれば次の Run を Durable Object の中で順番待ちにし、終わった Run の状態（リース、横取りの停止、制御用の鍵）を消してから次を始める。診断のリースは遅れて届く記録のために Run ごとに分け、期限が切れたら消す。
+- 既存の label 起動・Web からの開始は、今と同じく新しい Session を作って最初のメッセージを追加する。受付の冪等性・同時実行キーの規則は変えない。
+- Session 共通のメッセージの順番待ち（`session_inbox`）は、既存の Session にメッセージを足す経路を置き換える段階 6 で入れる。今その経路は計画会話だけで、`planning_inbox` が Session ごとに 1 つずつ Run を作っている。
+- 移行は、進行中の Run がない状態を運用で作って行う（PDR-20261118-routine-initial-migration と同じ方針）。Durable Object の名前が変わるため、移行前に始まった Run は新しい Durable Object から続けられない。
 
-完了条件: 同じ Session の Turn が同じ Durable Object で処理される。作業中に追加したメッセージが順に処理される。既存の label 起動と計画会話が回帰しない。
+完了条件: 同じ Session の Turn が同じ Durable Object で処理される。前の Turn が終わる前に予約された Turn は、前の Turn の状態が消えてから始まる。既存の label 起動と計画会話が回帰しない。
 
 ## 4. 作業の引き継ぎ
 
@@ -81,6 +82,7 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 ## 6. label と計画を Routine に統一
 
 - 計画会話を「`issue_comment` の Trigger、読み取り専用の権限、計画を返すプロンプト」の Routine に移す。返信は Agent が gh（Connector）で Issue にコメントする。
+- Session 共通のメッセージの順番待ち（`session_inbox`）を入れる。Trigger は Session にメッセージを追加し、進行中の Turn がなければ Turn を作る。Turn が終わったら次のメッセージで Turn を作る。
 - `planning_inbox`・`planning_snapshots`・`planning_replies` と Issue への受付通知の扱いを、Session の順番待ちと Connector に置き換える。
 - 置き換える判断: 計画会話の永続化（PDR-20261113-012 ほか）、Issue への通知（PDR-20261113-006）。後継 PDR を用意する。
 

@@ -40,9 +40,10 @@ export type Conversation = {
   /**
    * The Session's pull request was merged and its work moved onto the latest
    * default branch: what was not published yet was re-applied, or kept
-   * aside at `kept` because it conflicts.
+   * aside at `kept` because it conflicts. Work kept that way after an
+   * earlier merge, and not deleted since, is still at `keptEarlier`.
    */
-  realigned?: { publishedSha: string; kept?: string };
+  realigned?: { publishedSha: string; kept?: string; keptEarlier?: string };
   save(conversation: SavedConversation): void;
 };
 

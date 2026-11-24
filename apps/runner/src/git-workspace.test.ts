@@ -845,3 +845,84 @@ test("keeps conflicting unpublished work aside, across Turns until the Agent del
   if (!second || !("archive" in second)) throw new Error("not saved");
   expect((await decodeSavedWork(second.archive)).kept).toBeUndefined();
 });
+
+test("a second conflicting merge keeps the work kept after the first one", async (t) => {
+  const repo = await repository(t);
+  const { archive, published } = await publishedTurn(repo, async (cwd) => {
+    await writeFile(join(cwd, "README.md"), "first unpublished\n");
+  });
+  const latest = await squashMerge(repo, published, {
+    "README.md": "changed on main\n",
+  });
+  const inRepo = async (cwd: string, ...args: string[]) => {
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    return gitIn(
+      cwd,
+      {},
+      undefined,
+      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+      ...args,
+    );
+  };
+  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
+  let second = "";
+  // The first work is kept aside; the Agent publishes more without
+  // deleting it, and leaves another change that will conflict too.
+  await repo.run(
+    async (cwd, conversation, publish) => {
+      expect(conversation?.realigned?.kept).toBe("refs/tailos/unpublished");
+      await writeFile(join(cwd, "README.md"), "published again\n");
+      second = ((await publish!("docs: publish again")) as { sha: string }).sha;
+      await writeFile(join(cwd, "README.md"), "second unpublished\n");
+      return result;
+    },
+    {
+      continuity: { restore: archive, saved: (saved) => (out.saved = saved) },
+      checkout: {
+        baseSha: latest,
+        branch: `${repo.branch}-2`,
+        realign: { previousBase: repo.baseSha, publishedSha: published },
+      },
+    },
+  );
+  const saved = out.saved;
+  if (!saved || !("archive" in saved)) throw new Error("not saved");
+  const again = await squashMerge(repo, second, {
+    "README.md": "changed on main again\n",
+  });
+  await repo.run(
+    async (cwd, conversation) => {
+      expect(conversation?.realigned).toEqual({
+        publishedSha: second,
+        kept: "refs/tailos/unpublished",
+        keptEarlier: "refs/tailos/unpublished^2",
+      });
+      // Both are there, each as the Agent is told to look at it.
+      expect(
+        await inRepo(
+          cwd,
+          "diff",
+          "refs/tailos/unpublished^",
+          "refs/tailos/unpublished",
+        ),
+      ).toContain("-published again\n+second unpublished");
+      expect(
+        await inRepo(
+          cwd,
+          "diff",
+          "refs/tailos/unpublished^2^",
+          "refs/tailos/unpublished^2",
+        ),
+      ).toContain("-published\n+first unpublished");
+      return result;
+    },
+    {
+      continuity: { restore: saved.archive, saved: () => {} },
+      checkout: {
+        baseSha: again,
+        branch: `${repo.branch}-3`,
+        realign: { previousBase: latest, publishedSha: second },
+      },
+    },
+  );
+});

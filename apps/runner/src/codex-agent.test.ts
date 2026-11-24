@@ -1296,9 +1296,14 @@ test.for([
     kept: "refs/tailos/unpublished",
     text: "git diff refs/tailos/unpublished^ refs/tailos/unpublished",
   },
+  {
+    kept: "refs/tailos/unpublished",
+    keptEarlier: "refs/tailos/unpublished^2",
+    text: "git diff refs/tailos/unpublished^2^ refs/tailos/unpublished^2",
+  },
 ])(
-  "tells the Agent that its work moved onto the default branch after a merge (kept: $kept)",
-  async ({ kept, text }) => {
+  "tells the Agent that its work moved onto the default branch after a merge (kept: $kept, earlier: $keptEarlier)",
+  async ({ kept, keptEarlier, text }) => {
     const save = vi.fn();
     const agent = createCodexAgent(conversationStub([], true, true));
     await agent.run(
@@ -1312,7 +1317,11 @@ test.for([
           path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
           content: Buffer.from("earlier turn\n"),
         },
-        realigned: { publishedSha: "e".repeat(40), ...(kept && { kept }) },
+        realigned: {
+          publishedSha: "e".repeat(40),
+          ...(kept && { kept }),
+          ...(keptEarlier && { keptEarlier }),
+        },
         save,
       },
     );

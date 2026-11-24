@@ -37,6 +37,12 @@ export type Publish = (headline: unknown) => Promise<PublishOutcome>;
 export type Conversation = {
   resume?: SavedConversation;
   lost?: boolean;
+  /**
+   * The Session's pull request was merged and its work moved onto the latest
+   * default branch: what was not published yet was re-applied, or kept
+   * aside at `kept` because it conflicts.
+   */
+  realigned?: { publishedSha: string; kept?: string };
   save(conversation: SavedConversation): void;
 };
 

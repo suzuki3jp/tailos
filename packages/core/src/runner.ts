@@ -61,6 +61,14 @@ export const workBranch = v.pipe(
 /** The branch a Session publishes to; `n` counts its merged pull requests. */
 export const sessionBranch = (sessionId: string, n = 1) =>
   `tailos/session/${sessionId}${n > 1 ? `-${n}` : ""}`;
+/** The branch a Session publishes to after the pull request of `branch` merged. */
+export function nextSessionBranch(branch: string) {
+  const match = /^tailos\/session\/([a-f0-9-]{36})(?:-([1-9][0-9]*))?$/.exec(
+    branch,
+  );
+  if (!match) throw new Error("Not a Session branch");
+  return sessionBranch(match[1]!, Number(match[2] ?? 1) + 1);
+}
 export const changeHeadline = v.pipe(
   v.string(),
   v.maxLength(100),
@@ -270,6 +278,12 @@ const repositoryJob = {
       branch: workBranch,
       // The commit the Session last published to its branch, if any.
       publishedSha: v.optional(gitSha),
+      // The Session's pull request was merged: the saved work, on
+      // `previousBase`, moves onto `baseSha`, the latest default branch,
+      // with what was not in `publishedSha` re-applied.
+      realign: v.optional(
+        v.strictObject({ previousBase: gitSha, publishedSha: gitSha }),
+      ),
     }),
   ),
 };

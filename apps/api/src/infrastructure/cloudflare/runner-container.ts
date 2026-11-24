@@ -30,6 +30,7 @@ import {
   FileChanges,
   maxContinuityBytes,
   maxRunnerJobBytes,
+  nextSessionBranch,
   RunnerStatus,
   sessionBranch,
   type CheckedPublication,
@@ -162,8 +163,11 @@ type ContainerSnapshotRecord = { id: string; image: string };
 export const sessionIdleMs = 0;
 const idleUntilStorage = "idleUntil";
 const continuityStorage = "continuity";
-/** The Run whose work is saved when it ends, and the base it works on. */
-type ContinuityRun = { runId: string; baseSha: string };
+/**
+ * The Run whose work is saved when it ends, and the base it works on.
+ * `realigning` says it moves the Session's work onto a new start.
+ */
+type ContinuityRun = { runId: string; baseSha: string; realigning?: boolean };
 const continuityRunStorage = "continuityRun";
 const continuityKey = (sessionId: string, runId: string) =>
   `sessions/v1/${sessionId}/continuity/${runId}`;
@@ -172,13 +176,19 @@ const continuityKey = (sessionId: string, runId: string) =>
  * What the Session last published: the head of its branch, and the checked
  * work that made it, so that the same work sent again after a lost response
  * gets the same answer. `url` is set once the pull request is open.
+ *
+ * Once that pull request is merged, the Session moves to its next branch,
+ * with nothing published yet: `realignFrom` keeps the commit it published
+ * last, until a Turn has carried the Session's work onto the latest default
+ * branch.
  */
 type SessionPublicationRecord = {
   branch: string;
-  sha: string;
-  parentSha: string;
-  tree: string;
+  sha?: string;
+  parentSha?: string;
+  tree?: string;
   url?: string;
+  realignFrom?: string;
 };
 const sessionPublicationStorage = "sessionPublication";
 /** What this Run published last, which becomes its result. */
@@ -362,6 +372,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           await this.ctx.storage.put(continuityStorage, {
             lost: true,
           } satisfies ContinuityRecord);
+          if (continuing.realigning) await this.realigned();
         } finally {
           // Saved once: a cleanup that is retried, for instance while the
           // GitHub token is revoked, must not save again after the container
@@ -390,6 +401,19 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (idleUntil && !(await this.ctx.storage.get<string>("runId")))
         await this.ctx.storage.setAlarm(idleUntil);
     }
+  }
+
+  /**
+   * The Session's work has moved onto its new start, or is gone: later Turns
+   * no longer realign it.
+   */
+  private async realigned() {
+    const record = await this.ctx.storage.get<SessionPublicationRecord>(
+      sessionPublicationStorage,
+    );
+    if (!record?.realignFrom) return;
+    const { realignFrom: _done, ...rest } = record;
+    await this.ctx.storage.put(sessionPublicationStorage, rest);
   }
 
   /** Destroys a container that waited for the next Turn long enough. */
@@ -494,6 +518,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       (result) => (result === "lost" ? "failed" : "succeeded"),
     );
     if (outcome === "skipped") return;
+    if (run.realigning) await this.realigned();
     // The saved work is the source of truth; the snapshot only restores it
     // faster, so a failed snapshot leaves the Turn as it is.
     const snapshot =
@@ -930,18 +955,17 @@ export class RunnerContainer extends DurableObject<Bindings> {
     let record = await this.ctx.storage.get<SessionPublicationRecord>(
       sessionPublicationStorage,
     );
+    const published =
+      record?.branch === work.branch && record.sha ? record : undefined;
     const sameWork =
-      record?.branch === work.branch &&
-      record.parentSha === work.parentSha &&
-      record.tree === work.tree;
+      published?.parentSha === work.parentSha && published.tree === work.tree;
     // The Runner builds on what the Session last published.
-    const head =
-      record?.branch === work.branch ? record.sha : step.output.baseSha;
+    const head = published?.sha ?? step.output.baseSha;
     if (!sameWork && work.parentSha !== head) {
       // The Runner missed the answer to the publication that moved the
       // branch from its parent: it builds on the new head instead.
-      if (record?.branch === work.branch && record.parentSha === work.parentSha)
-        return { error: "parent_moved", sha: record.sha };
+      if (published?.sha && published.parentSha === work.parentSha)
+        return { error: "parent_moved", sha: published.sha };
       return { error: "invalid_publication" };
     }
 
@@ -976,7 +1000,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
         };
         await this.ctx.storage.put(sessionPublicationStorage, record);
       }
-      if (!record) return { error: "publication_unavailable" };
+      const sha = record?.sha;
+      if (!record || !sha) return { error: "publication_unavailable" };
       if (!record.url) {
         const current = record;
         const pull = await github.sessionPullRequest(
@@ -997,7 +1022,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
                     runId,
                     {
                       branch: current.branch,
-                      sha: current.sha,
+                      sha,
                       headline: work.headline,
                     },
                   ),
@@ -1009,10 +1034,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
       const url = record.url!;
       await this.ctx.storage.put(runPublicationStorage, {
         branch: record.branch,
-        sha: record.sha,
+        sha,
         url,
       } satisfies RunPublication);
-      return { sha: record.sha, url };
+      return { sha, url };
     } catch (error) {
       if (error instanceof WorkBranchMoved) return { error: "branch_moved" };
       // oxlint-disable-next-line no-console -- Record publication failures without work data.
@@ -1170,6 +1195,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     if (previous && job.engine === "codex")
       job.continuity = previous.restore ? { restore: previous.restore } : {};
     let publishedSha: string | undefined;
+    let realignFrom: string | undefined;
+    let realign: { previousBase: string; publishedSha: string } | undefined;
     if (target && trigger && job.engine === "codex") {
       const issue = triggerIssue(trigger);
       if (issue)
@@ -1191,9 +1218,24 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (!sessionId)
         return { status: "failed", errorCode: "runner_unavailable" } as const;
       // The Session publishes to one branch, and builds on what it published.
-      const published = await this.ctx.storage.get<SessionPublicationRecord>(
+      let published = await this.ctx.storage.get<SessionPublicationRecord>(
         sessionPublicationStorage,
       );
+      // Once its pull request is merged, the Session moves to its next
+      // branch on the latest default branch. A pull request that cannot be
+      // read now is looked at again on the next Turn.
+      if (published?.sha && request.context.mode !== "plan") {
+        const pull = await github
+          .sessionPullRequest(target, published.branch)
+          .catch(() => null);
+        if (pull?.state === "merged") {
+          published = {
+            branch: nextSessionBranch(published.branch),
+            realignFrom: published.sha,
+          };
+          await this.ctx.storage.put(sessionPublicationStorage, published);
+        }
+      }
       const checkout = await github
         .checkout(
           target,
@@ -1203,6 +1245,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         )
         .catch(() => null);
       publishedSha = published?.sha;
+      realignFrom = published?.realignFrom;
       if (!checkout)
         return {
           status: "failed",
@@ -1235,8 +1278,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
         } as const;
       }
       // The saved work sits on the base it started from, not on the latest
-      // default branch.
-      if (previous?.baseSha) checkout.baseSha = previous.baseSha;
+      // default branch, unless it moves there after a merge.
+      if (realignFrom && previous?.restore === "saved" && previous.baseSha)
+        realign = {
+          previousBase: previous.baseSha,
+          publishedSha: realignFrom,
+        };
+      else if (previous?.baseSha && !realignFrom)
+        checkout.baseSha = previous.baseSha;
       try {
         await this.ctx.storage.put("repositoryGrant", {
           value: await seal(
@@ -1272,6 +1321,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         baseSha: checkout.baseSha,
         branch: checkout.branch,
         ...(publishedSha && { publishedSha }),
+        ...(realign && { realign }),
       };
     }
     if (
@@ -1328,6 +1378,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await this.ctx.storage.put(continuityRunStorage, {
         runId: request.runId,
         baseSha: job.checkout!.baseSha,
+        ...(realignFrom && { realigning: true }),
       } satisfies ContinuityRun);
     }
     const response = await port.fetch("http://runner/job", {

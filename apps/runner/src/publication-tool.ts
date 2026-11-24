@@ -40,7 +40,7 @@ const reasons: Record<
   unsupported_changes:
     "Nothing was published: the changes cannot be signed by GitHub. New files must not be executable, file modes must not change, node_modules must not be included, and the files must stay under 4 MiB in total.",
   pull_request_merged:
-    "Nothing was published: this Session's pull request has been merged, and publishing again after a merge is not available yet. Tell the user.",
+    "Nothing was published: this Session's pull request was merged during this turn. The next turn starts from the latest default branch and publishes to a new pull request. Tell the user.",
   branch_moved:
     "Nothing was published: this Session's branch changed on GitHub outside this Session. Tell the user.",
   invalid_lease:

@@ -595,6 +595,11 @@ test("a Turn's result is the pull request it published, and the Session keeps it
   });
   vi.spyOn(GitHubApp.prototype, "commitSessionWork").mockResolvedValue(sha);
   vi.spyOn(GitHubApp.prototype, "openPullRequest").mockResolvedValue(url);
+  // A branch the Session moved to after a merge has nothing published yet.
+  stored.set("sessionPublication", {
+    branch: work.branch,
+    realignFrom: "e".repeat(40),
+  });
   expect(await runner.publishWork(runId, bearer, work)).toEqual({ sha, url });
 
   await runner.alarm();
@@ -610,7 +615,13 @@ test("a Turn's result is the pull request it published, and the Session keeps it
   });
   // The next Turn publishes on the same branch, but has no result of its own yet.
   expect(stored.has("runPublication")).toBe(false);
-  expect(stored.get("sessionPublication")).toMatchObject({ sha, url });
+  expect(stored.get("sessionPublication")).toStrictEqual({
+    branch: work.branch,
+    sha,
+    parentSha: work.parentSha,
+    tree: work.tree,
+    url,
+  });
 });
 
 async function preparedRun(
@@ -1360,15 +1371,27 @@ function memoryBucket(objects: Map<string, string>) {
 }
 
 test.for([
-  { name: "its snapshot", snapshotImage: "image", fromSnapshot: true },
+  {
+    name: "its snapshot",
+    snapshotImage: "image",
+    fromSnapshot: true,
+    merged: false,
+  },
   {
     name: "the image after an update",
     snapshotImage: "old-image",
     fromSnapshot: false,
+    merged: false,
+  },
+  {
+    name: "moves it onto the default branch after its PR was merged",
+    snapshotImage: "image",
+    fromSnapshot: true,
+    merged: true,
   },
 ])(
   "continues a Session's Turn from its saved work and $name, and keeps the new work",
-  async ({ snapshotImage, fromSnapshot }, t) => {
+  async ({ snapshotImage, fromSnapshot, merged }, t) => {
     const DB = await createTestDb(t);
     const { runId, sessionId } = await admitTrigger(DB, {
       source: "test",
@@ -1430,12 +1453,23 @@ test.for([
       if (path === "/job") {
         const job = JSON.parse(String(init?.body));
         expect(job.continuity).toStrictEqual({ restore: "saved" });
-        // The saved work continues on its own base, not the latest branch.
-        expect(job.checkout.baseSha).toBe(savedBase);
-        expect(job.checkout).toMatchObject({
-          branch: sessionBranch(sessionId),
-          publishedSha: "e".repeat(40),
-        });
+        if (merged) {
+          // The saved work moves from its own base onto the latest branch,
+          // and the Session publishes to its next branch.
+          expect(job.checkout).toStrictEqual({
+            repository: "owner/repo",
+            baseSha: "a".repeat(40),
+            branch: sessionBranch(sessionId, 2),
+            realign: { previousBase: savedBase, publishedSha: "e".repeat(40) },
+          });
+        } else {
+          // The saved work continues on its own base, not the latest branch.
+          expect(job.checkout.baseSha).toBe(savedBase);
+          expect(job.checkout).toMatchObject({
+            branch: sessionBranch(sessionId),
+            publishedSha: "e".repeat(40),
+          });
+        }
         return new Response(null, { status: 202 });
       }
       if (path === `/job/${runId}`)
@@ -1459,8 +1493,13 @@ test.for([
         token: "write-token",
         expiresAt: Date.now() + 60_000,
         baseSha: "a".repeat(40),
-        branch: sessionBranch(sessionId),
+        branch: merged ? sessionBranch(sessionId, 2) : sessionBranch(sessionId),
       });
+    vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockResolvedValue(
+      merged
+        ? { state: "merged" }
+        : { state: "open", url: "https://github.com/owner/repo/pull/1" },
+    );
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
     t.onTestFinished(() => {
       vi.restoreAllMocks();
@@ -1511,7 +1550,9 @@ test.for([
     await runner.alarm();
     expect(checkout).toHaveBeenCalledOnce();
     // The Session publishes to its own branch.
-    expect(checkout.mock.calls[0]![2]).toBe(sessionBranch(sessionId));
+    expect(checkout.mock.calls[0]![2]).toBe(
+      sessionBranch(sessionId, merged ? 2 : 1),
+    );
     // A snapshot of another image would silently run the older Runner.
     expect(start).toHaveBeenCalledExactlyOnceWith(
       fromSnapshot
@@ -1529,12 +1570,17 @@ test.for([
     expect(snapshotContainer).toHaveBeenCalledOnce();
     expect(memory.get("continuity")).toStrictEqual({
       key: savedKey,
-      baseSha: savedBase,
+      baseSha: merged ? "a".repeat(40) : savedBase,
       snapshot: { id: "snapshot-1", image: "image" },
     });
     // Only the latest work of the Session is kept.
     expect(objects.has(previousKey)).toBe(false);
     expect(memory.has("continuityRun")).toBe(false);
+    // Once the work moved, later Turns build on the new branch as it is.
+    if (merged)
+      expect(memory.get("sessionPublication")).toStrictEqual({
+        branch: sessionBranch(sessionId, 2),
+      });
   },
 );
 

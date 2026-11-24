@@ -327,13 +327,32 @@ export async function runInGitWorkspace(
         [],
         `Tailos published work ${publishedSha}`,
       );
+      // Work kept after an earlier merge, which the Agent has not deleted,
+      // stays reachable as the second parent.
+      const earlier = await git([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        unpublishedRef,
+      ]).then(
+        (sha) => sha.toString().trim(),
+        () => undefined,
+      );
       await git([
         "update-ref",
         unpublishedRef,
-        await commit(`${work}^{tree}`, [merged], "Tailos unpublished work"),
+        await commit(
+          `${work}^{tree}`,
+          [merged, ...(earlier ? [earlier] : [])],
+          "Tailos unpublished work",
+        ),
       ]);
       await start();
-      return { publishedSha, kept: unpublishedRef };
+      return {
+        publishedSha,
+        kept: unpublishedRef,
+        ...(earlier && { keptEarlier: `${unpublishedRef}^2` }),
+      };
     } finally {
       await rm(patch, { force: true });
     }

@@ -181,6 +181,8 @@ const continuityKey = (sessionId: string, runId: string) =>
  */
 type SessionPublicationRecord = {
   branch: string;
+  /** The pull request's base, when it is not the default branch. */
+  base?: string;
   sha?: string;
   parentSha?: string;
   tree?: string;
@@ -957,9 +959,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
       record?.branch === work.branch && record.sha ? record : undefined;
     const sameWork =
       published?.parentSha === work.parentSha && published.tree === work.tree;
-    // The Runner builds on what the Session last published.
+    // A pull request keeps the base it was opened with.
+    const base =
+      work.base ?? published?.base ?? target.repository.defaultBranch;
+    if (
+      base === work.branch ||
+      (published &&
+        base !== (published.base ?? target.repository.defaultBranch))
+    )
+      return { error: "invalid_base" };
+    // The Runner builds on what the Session last published, or, the first
+    // time, on where the Turn started or where the Agent moved it.
     const head = published?.sha ?? step.output.baseSha;
-    if (!sameWork && work.parentSha !== head) {
+    const moved =
+      !published &&
+      (work.parentSha !== head || base !== target.repository.defaultBranch);
+    if (!sameWork && work.parentSha !== head && !moved) {
       // The Runner missed the answer to the publication that moved the
       // branch from its parent: it builds on the new head instead.
       if (published?.sha && published.parentSha === work.parentSha)
@@ -968,10 +983,18 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
 
     try {
+      // The start must be on the branch the pull request merges into.
+      if (
+        moved &&
+        !sameWork &&
+        !(await github.startsOn(target.repository, base, work.parentSha))
+      )
+        return { error: "invalid_base" };
       if (!sameWork) {
         const pull = await github.sessionPullRequest(
           target.repository,
           work.branch,
+          base,
         );
         if (pull.state === "merged") return { error: "pull_request_merged" };
         const sha = await observeRun(
@@ -991,6 +1014,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         // The branch has moved: record it before anything else can fail.
         record = {
           branch: work.branch,
+          ...(base !== target.repository.defaultBranch && { base }),
           sha,
           parentSha: work.parentSha,
           tree: work.tree,
@@ -1005,6 +1029,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         const pull = await github.sessionPullRequest(
           target.repository,
           work.branch,
+          current.base,
         );
         const url =
           pull.state === "open"
@@ -1022,6 +1047,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
                       branch: current.branch,
                       sha,
                       headline: work.headline,
+                      ...(current.base && { base: current.base }),
                     },
                   ),
                 (result) => (result ? "succeeded" : "unknown"),
@@ -1240,7 +1266,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       // read now is looked at again on the next Turn.
       if (published?.sha && request.context.mode !== "plan") {
         const pull = await github
-          .sessionPullRequest(target, published.branch)
+          .sessionPullRequest(target, published.branch, published.base)
           .catch(() => null);
         if (pull?.state === "merged") {
           published = {

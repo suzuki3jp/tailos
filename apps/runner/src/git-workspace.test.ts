@@ -926,3 +926,60 @@ test("a second conflicting merge keeps the work kept after the first one", async
     },
   );
 });
+
+test("publishes into the branch the Agent moved the work to", async (t) => {
+  const repo = await repository(t);
+  const seed = repo.git("rev-parse", "--show-toplevel");
+  const identity = [
+    "-c",
+    "user.name=Seed",
+    "-c",
+    "user.email=seed@example.test",
+  ];
+  repo.git("checkout", "--quiet", "-b", "feature");
+  await writeFile(join(seed, "feature.txt"), "feature\n");
+  repo.git("add", "feature.txt");
+  repo.git(...identity, "commit", "--quiet", "-m", "Feature");
+  const feature = repo.git("rev-parse", "HEAD");
+  repo.git("checkout", "--quiet", "main");
+  const inRepo = async (cwd: string, ...args: string[]) => {
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    return gitIn(
+      cwd,
+      {},
+      undefined,
+      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+      ...args,
+    );
+  };
+  let sent: Parameters<Publisher>[0] | undefined;
+  const outcomes: unknown[] = [];
+  await repo.run(
+    async (cwd, _conversation, publish) => {
+      // The user asked to continue the feature branch.
+      await inRepo(cwd, "fetch", "--quiet", seed, "refs/heads/feature");
+      await inRepo(cwd, "checkout", "--quiet", "--detach", "FETCH_HEAD");
+      await writeFile(join(cwd, "notes.txt"), "on feature\n");
+      outcomes.push(await publish!("docs: add notes", "missing"));
+      outcomes.push(await publish!("docs: add notes", "-bad"));
+      outcomes.push(await publish!("docs: add notes", "feature"));
+      return result;
+    },
+    {
+      publisher: async (work) => {
+        sent = work;
+        return repo.publish(work);
+      },
+    },
+  );
+  expect(outcomes.slice(0, 2)).toEqual([
+    { published: false, reason: "invalid_base" },
+    { published: false, reason: "invalid_base" },
+  ]);
+  expect(outcomes[2]).toMatchObject({ published: true });
+  // Only the Agent's change goes into the pull request into the feature.
+  expect(sent).toMatchObject({ base: "feature", parentSha: feature });
+  expect(sent?.changes.additions.map((file) => file.path)).toEqual([
+    "notes.txt",
+  ]);
+});

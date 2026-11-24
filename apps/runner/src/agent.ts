@@ -25,8 +25,14 @@ export type PublishOutcome =
         | "unsupported_changes"
         | Exclude<PublicationRefusal["error"], "parent_moved">;
     };
-/** Publishes the work tree with a Conventional Commits headline. */
-export type Publish = (headline: unknown) => Promise<PublishOutcome>;
+/**
+ * Publishes the work tree with a Conventional Commits headline, to a pull
+ * request into `base` (the default branch when omitted).
+ */
+export type Publish = (
+  headline: unknown,
+  base?: string,
+) => Promise<PublishOutcome>;
 
 /**
  * The Agent's conversation across the Turns of a Session. `resume` continues
@@ -61,7 +67,10 @@ export interface AgentAdapter {
 export class AgentSandboxUnavailable extends Error {}
 export class PublicationFailed extends Error {
   constructor(
-    readonly code: "invalid_change_headline" | "unsupported_changes",
+    readonly code:
+      | "invalid_change_headline"
+      | "unsupported_changes"
+      | "invalid_base",
   ) {
     super(code);
   }

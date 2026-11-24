@@ -9,11 +9,12 @@ export const publicationTool = {
   type: "function",
   name: "tailos_publish",
   description:
-    "Publish the whole work tree of this Session to GitHub: Tailos checks the changes, makes a signed commit on this Session's branch and opens its pull request, or adds the commit to the pull request it already has. Give an English Conventional Commits headline of at most 100 characters that describes the changes since the last publication. Returns the pull request URL and the commit, or why nothing was published.",
+    "Publish the whole work tree of this Session to GitHub: Tailos checks the changes, makes a signed commit on this Session's branch and opens its pull request, or adds the commit to the pull request it already has. Give an English Conventional Commits headline of at most 100 characters that describes the changes since the last publication. The pull request merges into the default branch; if you started from another branch because the user asked, give it as base on the first publication: the work must be on top of a commit of that branch, and the pull request keeps that base. Returns the pull request URL and the commit, or why nothing was published.",
   inputSchema: {
     type: "object",
     properties: {
       headline: { type: "string", maxLength: 100 },
+      base: { type: "string", maxLength: 255 },
     },
     required: ["headline"],
     additionalProperties: false,
@@ -43,6 +44,8 @@ const reasons: Record<
     "Nothing was published: this Session's pull request was merged during this turn. The next turn starts from the latest default branch and publishes to a new pull request. Tell the user.",
   branch_moved:
     "Nothing was published: this Session's branch changed on GitHub outside this Session. Tell the user.",
+  invalid_base:
+    "Nothing was published: the base must be an existing branch of the repository that holds the commit the work starts from, and cannot change once the pull request is open. Check the branch and where the work tree started, or tell the user.",
   invalid_lease:
     "Nothing was published: this Turn may no longer publish. Tell the user.",
   invalid_publication:
@@ -58,11 +61,13 @@ const toolResult = (success: boolean, text: string) => ({
 
 /** Runs the publication tool and words its outcome for the Agent. */
 export async function callPublicationTool(publish: Publish, input: unknown) {
-  const headline = v.safeParse(v.strictObject({ headline: v.string() }), input);
-  if (!headline.success)
-    return toolResult(false, reasons.invalid_change_headline);
+  const call = v.safeParse(
+    v.strictObject({ headline: v.string(), base: v.optional(v.string()) }),
+    input,
+  );
+  if (!call.success) return toolResult(false, reasons.invalid_change_headline);
   try {
-    const outcome = await publish(headline.output.headline);
+    const outcome = await publish(call.output.headline, call.output.base);
     return outcome.published
       ? toolResult(
           true,

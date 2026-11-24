@@ -1232,8 +1232,8 @@ test("offers the publication tool to an implementation and answers its calls", a
 const assert = require("node:assert/strict");
 const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
 const results = [];
-const publish = (id, headline) => send({ id, method: "item/tool/call", params: {
-  threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline }
+const publish = (id, headline, base) => send({ id, method: "item/tool/call", params: {
+  threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline, ...(base && { base }) }
 } });
 require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
   const r = JSON.parse(line);
@@ -1252,7 +1252,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   }
   if (String(r.id).startsWith("publish-")) {
     results.push(r.result);
-    if (results.length === 1) return publish("publish-2", "not a headline");
+    if (results.length === 1) return publish("publish-2", "not a headline", "feature");
     send({ method: "item/completed", params: { threadId: "work", item: { type: "agentMessage", text: JSON.stringify({ reply: JSON.stringify(results), sessionTitle: null }) } } });
     send({ method: "turn/completed", params: { threadId: "work", turn: { status: "completed" } } });
   }
@@ -1267,8 +1267,8 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
     process.cwd(),
     undefined,
     undefined,
-    async (headline) => {
-      published.push(headline);
+    async (headline, base) => {
+      published.push(base ? [headline, base] : headline);
       return headline === "fix: handle an empty input"
         ? {
             published: true,
@@ -1278,7 +1278,10 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
         : { published: false, reason: "invalid_change_headline" };
     },
   );
-  expect(published).toEqual(["fix: handle an empty input", "not a headline"]);
+  expect(published).toEqual([
+    "fix: handle an empty input",
+    ["not a headline", "feature"],
+  ]);
   const [first, second] = JSON.parse(result.reply);
   expect(first).toMatchObject({ success: true });
   expect(first.contentItems[0].text).toContain(

@@ -17,6 +17,7 @@ import {
   AgentSandboxUnavailable,
   type AgentAdapter,
   type Conversation,
+  type Publish,
 } from "@/agent.ts";
 import { rolloutPath } from "@/continuity.ts";
 import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
@@ -31,6 +32,11 @@ import {
   githubToolCallSchema,
 } from "@/github-tool.ts";
 import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
+import {
+  callPublicationTool,
+  publicationTool,
+  publicationToolCallSchema,
+} from "@/publication-tool.ts";
 
 const threadSchema = v.object({
   thread: v.object({
@@ -192,7 +198,7 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics, conversation) {
+    async run(job, signal, cwd, diagnostics, conversation, publish) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
       // Outside the Agent's writable roots, and rebuilt every Turn: only the
@@ -231,6 +237,7 @@ export function createCodexAgent(
               thread = started;
             },
           },
+          publish,
         );
       } finally {
         // Codex may not report the path of a resumed thread: it is where
@@ -295,6 +302,7 @@ async function runTurn(
   conversation?: Conversation & {
     started(thread: { id: string; path?: string }): void;
   },
+  publish?: Publish,
 ) {
   // Commands may always reach the internet: GitHub credentials are added
   // outside the container, so none are here to send.
@@ -378,6 +386,27 @@ async function runTurn(
   };
   rpc.onFailure = fail;
   rpc.onRequest = async (method, params) => {
+    if (
+      method === "item/tool/call" &&
+      publish &&
+      threadId &&
+      v.is(publicationToolCallSchema, params)
+    ) {
+      if (params.threadId !== threadId)
+        throw new Error("Unexpected tool thread");
+      // The publication span records the outcome; the tool span only the call.
+      const span = diagnostics?.start(
+        "tool",
+        JSON.stringify({ name: publicationTool.name }),
+        agentSpan,
+      );
+      const result = await callPublicationTool(publish, params.arguments);
+      if (span)
+        diagnostics?.end(span, {
+          outcome: result.success ? "succeeded" : "failed",
+        });
+      return result;
+    }
     if (method === "item/tool/call" && githubReader && threadId) {
       const call = v.parse(githubToolCallSchema, params);
       if (call.threadId !== threadId) throw new Error("Unexpected tool thread");
@@ -604,7 +633,9 @@ async function runTurn(
         ...threadOptions,
         // A Session's conversation is kept for its next Turn.
         ephemeral: !conversation,
-        ...(job.checkout && { dynamicTools: [githubTool] }),
+        ...(job.checkout && {
+          dynamicTools: [githubTool, ...(publish ? [publicationTool] : [])],
+        }),
       }),
     );
     threadId = thread.thread.id;
@@ -626,7 +657,11 @@ async function runTurn(
       signal,
       prompt:
         continuityNotice(lostWork, lostConversation) +
-        agentPrompt(job, githubTool.name),
+        agentPrompt(
+          job,
+          githubTool.name,
+          publish ? publicationTool.name : undefined,
+        ),
       sensitive,
       failure: () => failure,
       async turn(prompt, revision, timeoutMs) {

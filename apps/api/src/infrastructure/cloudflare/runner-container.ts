@@ -12,7 +12,7 @@ import {
   type LegacyPublication,
   type PendingPublication,
 } from "@/application/runs/publication.ts";
-import { GitHubApp } from "@/infrastructure/github/app.ts";
+import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
 import {
   seal,
   unseal,
@@ -26,12 +26,16 @@ import {
 import { DurableObject } from "cloudflare:workers";
 import {
   continuitySaveMs,
+  ExecutionContext,
   FileChanges,
   maxContinuityBytes,
   maxRunnerJobBytes,
   RunnerStatus,
+  sessionBranch,
   type CheckedPublication,
-  type ExecutionContext,
+  type PublicationRefusal,
+  type PublishedWork,
+  type SessionPublication,
   type RunnerJob,
   type RepositoryTarget,
   type RunTrigger,
@@ -164,6 +168,23 @@ const continuityRunStorage = "continuityRun";
 const continuityKey = (sessionId: string, runId: string) =>
   `sessions/v1/${sessionId}/continuity/${runId}`;
 
+/**
+ * What the Session last published: the head of its branch, and the checked
+ * work that made it, so that the same work sent again after a lost response
+ * gets the same answer. `url` is set once the pull request is open.
+ */
+type SessionPublicationRecord = {
+  branch: string;
+  sha: string;
+  parentSha: string;
+  tree: string;
+  url?: string;
+};
+const sessionPublicationStorage = "sessionPublication";
+/** What this Run published last, which becomes its result. */
+type RunPublication = { branch: string; sha: string; url: string };
+const runPublicationStorage = "runPublication";
+
 /** Runs of this Session that wait for the current one to finish. */
 const queuedRuns = "queuedRuns";
 /**
@@ -180,6 +201,7 @@ const runStorage = [
   rejectedModelAccess,
   agentEgressClosed,
   continuityRunStorage,
+  runPublicationStorage,
 ] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
@@ -842,6 +864,163 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return staged;
   }
 
+  /** Publications of the Session, one at a time. */
+  private publications: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Commits work the Agent published with the publication tool on the
+   * Session's branch, and opens its pull request unless one is open.
+   */
+  async publishWork(
+    runId: string,
+    bearer: string,
+    work: SessionPublication,
+  ): Promise<PublishedWork | PublicationRefusal> {
+    const next = this.publications.then(() =>
+      this.publishNow(runId, bearer, work),
+    );
+    this.publications = next.catch(() => {});
+    return next;
+  }
+
+  private async publishNow(
+    runId: string,
+    bearer: string,
+    work: SessionPublication,
+  ): Promise<PublishedWork | PublicationRefusal> {
+    const run = await this.env.DB.prepare(
+      `SELECT execution_context, step_state FROM runs
+       WHERE id = ? AND status = 'running' AND deadline_at > ?`,
+    )
+      .bind(runId, Date.now())
+      .first<{ execution_context: string; step_state: string | null }>();
+    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
+    if (
+      !run ||
+      !lease ||
+      lease.runId !== runId ||
+      lease.expiresAt <= Date.now() ||
+      !matchRunLease(await hashRunLease(bearer), lease.digest)
+    )
+      return { error: "invalid_lease" };
+    const context = v.parse(
+      ExecutionContext,
+      JSON.parse(run.execution_context),
+    );
+    const step = v.safeParse(
+      v.object({ baseSha: v.string(), branch: v.string() }),
+      JSON.parse(run.step_state ?? "null"),
+    );
+    if (
+      context.engine !== "codex" ||
+      context.mode === "plan" ||
+      !context.repository ||
+      !context.trigger ||
+      !step.success ||
+      step.output.branch !== work.branch
+    )
+      return { error: "invalid_publication" };
+    const target = {
+      repository: context.repository,
+      trigger: context.trigger,
+    };
+    const github = this.github;
+    if (!github) return { error: "publication_unavailable" };
+
+    let record = await this.ctx.storage.get<SessionPublicationRecord>(
+      sessionPublicationStorage,
+    );
+    const sameWork =
+      record?.branch === work.branch &&
+      record.parentSha === work.parentSha &&
+      record.tree === work.tree;
+    // The Runner builds on what the Session last published.
+    const head =
+      record?.branch === work.branch ? record.sha : step.output.baseSha;
+    if (!sameWork && work.parentSha !== head) {
+      // The Runner missed the answer to the publication that moved the
+      // branch from its parent: it builds on the new head instead.
+      if (record?.branch === work.branch && record.parentSha === work.parentSha)
+        return { error: "parent_moved", sha: record.sha };
+      return { error: "invalid_publication" };
+    }
+
+    try {
+      if (!sameWork) {
+        const pull = await github.sessionPullRequest(
+          target.repository,
+          work.branch,
+        );
+        if (pull.state === "merged") return { error: "pull_request_merged" };
+        const sha = await observeRun(
+          this.env.DB,
+          runId,
+          "commit",
+          () =>
+            github.commitSessionWork(
+              target.repository,
+              runId,
+              work,
+              lease.expiresAt,
+            ),
+          (result) => (result ? "succeeded" : "unknown"),
+        );
+        if (!sha) return { error: "publication_unavailable" };
+        // The branch has moved: record it before anything else can fail.
+        record = {
+          branch: work.branch,
+          sha,
+          parentSha: work.parentSha,
+          tree: work.tree,
+          ...(pull.state === "open" && { url: pull.url }),
+        };
+        await this.ctx.storage.put(sessionPublicationStorage, record);
+      }
+      if (!record) return { error: "publication_unavailable" };
+      if (!record.url) {
+        const current = record;
+        const pull = await github.sessionPullRequest(
+          target.repository,
+          work.branch,
+        );
+        const url =
+          pull.state === "open"
+            ? pull.url
+            : await observeRun(
+                this.env.DB,
+                runId,
+                "pull_request",
+                () =>
+                  github.openPullRequest(
+                    target.repository,
+                    target.trigger,
+                    runId,
+                    {
+                      branch: current.branch,
+                      sha: current.sha,
+                      headline: work.headline,
+                    },
+                  ),
+                (result) => (result ? "succeeded" : "unknown"),
+              );
+        record = { ...current, url };
+        await this.ctx.storage.put(sessionPublicationStorage, record);
+      }
+      const url = record.url!;
+      await this.ctx.storage.put(runPublicationStorage, {
+        branch: record.branch,
+        sha: record.sha,
+        url,
+      } satisfies RunPublication);
+      return { sha: record.sha, url };
+    } catch (error) {
+      if (error instanceof WorkBranchMoved) return { error: "branch_moved" };
+      // oxlint-disable-next-line no-console -- Record publication failures without work data.
+      console.warn("Publishing the Session's work failed", { runId });
+      return { error: "publication_unavailable" };
+    }
+  }
+
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
     const { runId, prompt, deadlineAt, context } = request;
     const diagnostics = await this.diagnosticContext(runId, deadlineAt).catch(
@@ -990,6 +1169,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { status: "failed", errorCode: "runner_unavailable" } as const;
     if (previous && job.engine === "codex")
       job.continuity = previous.restore ? { restore: previous.restore } : {};
+    let publishedSha: string | undefined;
     if (target && trigger && job.engine === "codex") {
       const issue = triggerIssue(trigger);
       if (issue)
@@ -1007,9 +1187,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
+      const sessionId = await this.ctx.storage.get<string>("sessionId");
+      if (!sessionId)
+        return { status: "failed", errorCode: "runner_unavailable" } as const;
+      // The Session publishes to one branch, and builds on what it published.
+      const published = await this.ctx.storage.get<SessionPublicationRecord>(
+        sessionPublicationStorage,
+      );
       const checkout = await github
-        .checkout(target, trigger, request.runId, request.context.mode)
+        .checkout(
+          target,
+          trigger,
+          published?.branch ?? sessionBranch(sessionId),
+          request.context.mode,
+        )
         .catch(() => null);
+      publishedSha = published?.sha;
       if (!checkout)
         return {
           status: "failed",
@@ -1078,6 +1271,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         repository: target.repository,
         baseSha: checkout.baseSha,
         branch: checkout.branch,
+        ...(publishedSha && { publishedSha }),
       };
     }
     if (
@@ -1275,8 +1469,19 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { status: "running" } as const;
     }
     if (status.status !== "succeeded" || !target) return status;
-    if (!status.publication)
-      return { status: "failed", errorCode: "repository_unavailable" } as const;
+    // The Agent publishes with the publication tool: the Run's result is what
+    // it published last, if anything.
+    if (!status.publication) {
+      const published = await this.ctx.storage.get<RunPublication>(
+        runPublicationStorage,
+      );
+      return {
+        ...status,
+        publicationResult: published
+          ? { kind: "pull_request" as const, ...published }
+          : { kind: "no_changes" as const },
+      };
+    }
     if (status.publication.kind === "no_changes") {
       return { ...status, publicationResult: { kind: "no_changes" as const } };
     }

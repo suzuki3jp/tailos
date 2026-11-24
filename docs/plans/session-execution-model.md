@@ -9,7 +9,7 @@
 | [実行モデル](../pdr/records/PDR-20261123-execution-model.md) | Trigger・Routine・Session・Turn・Connector に分ける。出力は Connector、作業中のメッセージは順番待ち |
 | [Session 単位の隔離の境界](../pdr/records/PDR-20261123-repository-settings-session-boundary.md) | 隔離の境界を Session のコンテナとファイルシステムにする（PDR-20261114-009 の後継） |
 | [作業の引き継ぎ](../pdr/records/PDR-20261123-session-continuity.md) | Session の Durable Object がコンテナを持つ。スナップショットで速く戻し、正本は R2。待機時間は定数で既定 0 |
-| [公開ツール](../pdr/records/PDR-20261123-publication-tool.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。PR は Session ごとに 1 つ |
+| [公開ツール](../pdr/records/PDR-20261124-publication-tool.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す（PDR-20261123-publication-tool の後継） |
 | PDR-20261122-agent-egress-credential-proxy | 外部通信は常に許可し、GitHub の認証情報はコンテナの外で差し込む（suzuki3jp/tailos#121、実装済み） |
 
 ## 現状（2026-11-23 の `main`）
@@ -33,6 +33,7 @@
 | 4 | `claude/session-continuity` | 作業の引き継ぎ（R2、Codex の再開） | 下記 |
 | 4b | `claude/session-snapshot` | スナップショットでの高速な復元 | 下記 |
 | 5 | `claude/publication-tool` | 公開ツールと Session ごとの PR | 下記 |
+| 5b | `claude/publication-after-merge` | マージ後の載せ直しと始点の検査 | 下記 |
 | 6 | `claude/routine-triggers` | label と計画を Routine に統一し、専用の経路を廃止 | 下記 |
 
 Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR で行う。
@@ -84,12 +85,23 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 5. 公開ツールと Session ごとの PR
 
-- Codex の dynamic tool（Claude は MCP）として公開ツールを追加する。Runner が今の検査を行って API に預け、API が署名付きコミットを作る。
-- 作業ブランチを Session ごと（例: `tailos/session/<sessionId>`）にし、2 回目以降は同じブランチにコミットを足して PR を更新する。PR がマージ済みなら次の Turn の始めに作業ツリーを既定ブランチの最新に合わせ、新しい作業ブランチで PR を作る。マージせずに閉じていれば同じブランチ（削除済みなら作業ツリーの先頭から作り直す）で新しい PR を作る。
-- Turn の終わりに必ず公開する作りをやめる。label 起動の既定のプロンプトに公開の指示を入れる。
+- Codex の dynamic tool（`tailos_publish`）として公開ツールを追加する。Claude はまだ Run を始められないので、MCP での提供は Claude の実行を入れるときに行う。Agent は Conventional Commits の見出しを渡して呼ぶ。Runner が作業ツリー全体を、Session のブランチの先頭（最後に公開したコミット、なければ基準のコミット）からの変更として今の検査にかけ、API（`POST /_runner/runs/:runId/publish`）に渡す。Session の Durable Object が署名付きコミットを作り、PR を作るか、開いている PR にコミットを足して、PR の URL とコミットを Agent に返す。Agent は結果を待ってから続ける。
+- 公開した後は、Runner が作業ツリーの HEAD を公開したコミットに移す（ファイルはそのまま）。次の公開はその上に積む。
+- 作業ブランチを Session ごと（`tailos/session/<sessionId>`）にし（同時に開くのは 1 つ。Agent が git や gh でブランチ・コミット・PR を作ることを正式に認めるときに撤廃する）、2 回目以降は同じブランチにコミットを足して PR を更新する。マージせずに閉じていれば同じブランチ（削除済みなら最後に公開したコミットから作り直す）で新しい PR を作る。
+- Durable Object は Session が最後に公開したコミットと PR を保存し、次の Turn のジョブに `publishedSha` として渡す。引き継いだ作業を戻せなかった Turn も、そのコミットから始める。同じ変更が応答の喪失で 2 回届いても、コミットは 1 回だけ作る。
+- Turn の終わりに必ず公開する作りをやめる。Run の結果は、その Turn で最後に公開した PR か、公開しなければ `no_changes` とする。返答の `headline` はなくす。label 起動の Run（Issue から始まる作業）には、変更を公開してから終えるようプロンプトで指示する。
+- PR がマージ済みのときは、この段階では公開を断り、Agent に利用者へ伝えさせる。載せ直しは 5b で行う。
 - 置き換える判断: Run の結果として PR を保存する既存の判断。
+- 既に始まった Session の会話は、再開しても公開ツールを持たない（dynamic tool は thread の開始時に決まる）。この段階のデプロイ前に始まった Session は、新しい Session で公開する。
 
 完了条件: 公開ツールで PR を作成・更新できる。公開しない Turn が成功で終わる。既存の検査（tree・署名・既定ブランチの保護）が維持される。
+
+## 5b. マージ後の載せ直しと始点の検査
+
+- PR がマージ済みなら、次の Turn の始めに作業ツリーを既定ブランチの最新に合わせ、次の連番の作業ブランチ（`tailos/session/<sessionId>-2`、`-3`）で PR を作る。最後に公開したコミットより後の作業は既定ブランチの最新に載せ直す。競合したら既定ブランチの最新から始め、未公開の作業は作業ツリーの別の参照に残して Agent と利用者に知らせる。
+- 始点は既定であり、プロンプトで頼まれれば Agent が Turn の中で checkout などで動かしてよい。公開ツールの検査は、Turn の始めに checkout したコミットとの照合をやめ、公開するときの HEAD が対象リポジトリのコミットの上にあることを確かめる形にする。PR の基準もその始点に合わせる。
+
+完了条件: マージ後の Turn で未公開の作業が載せ直され、競合しても失われない。Agent が動かした始点から公開できる。
 
 ## 6. label と計画を Routine に統一
 

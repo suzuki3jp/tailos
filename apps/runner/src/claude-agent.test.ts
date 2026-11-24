@@ -143,11 +143,7 @@ test("runs an implementation turn inside the workspace with only the Run's crede
     cwd,
   );
 
-  expect(result).toEqual({
-    reply: "Done",
-    headline: "fix: repair the widget",
-    sessionTitle: "Widget repair",
-  });
+  expect(result).toEqual({ reply: "Done", sessionTitle: "Widget repair" });
   const { prompt, options } = calls[0]!;
   expect(prompt).toContain("Fix the bug");
   expect(prompt).toContain("Use mcp__tailos__github_get to look up");
@@ -458,8 +454,8 @@ test("asks the same session to shorten an oversized answer without tools", async
     cwd,
   );
 
-  // The first headline describes the verified work; secrets never reach the reply.
-  expect(result).toEqual({ reply: "Short [REDACTED]", headline: "fix: a" });
+  // Secrets never reach the reply.
+  expect(result).toEqual({ reply: "Short [REDACTED]" });
   expect(calls[1]!.prompt).toContain("Rewrite only the previous answer");
   expect(calls[1]!.options).toMatchObject({
     resume: "session-9",
@@ -485,7 +481,6 @@ test("keeps completed implementation work when the shortened answer fails", asyn
     cwd,
   );
 
-  expect(result.headline).toBe("fix: a");
   expect(result.reply).toContain("要約を取得できませんでした");
 });
 

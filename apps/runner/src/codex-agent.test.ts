@@ -75,7 +75,7 @@ const script = `
             !input[0].text.includes("use the bundled executable directly") ||
             !input[0].text.includes("pnpm_config_pm_on_fail=ignore"))
           throw new Error("Expected instructions to use the bundled pnpm for verification");
-        if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
+        if (!input[0].text.includes("cannot publish") || outputSchema.required.includes("headline") || !outputSchema.required.includes("reply"))
           throw new Error("Missing repository response schema");
       } else if (!input[0].text.startsWith("Answer the prompt") || !input[0].text.includes("concise progress messages") || outputSchema !== undefined) {
         throw new Error("Unexpected turn input");
@@ -211,10 +211,7 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       ),
     ).toEqual({
       reply: "Reply containing [REDACTED]",
-      ...(job.checkout && {
-        headline: "fix(api): handle refresh",
-        sessionTitle: "Credential refresh",
-      }),
+      ...(job.checkout && { sessionTitle: "Credential refresh" }),
     });
   },
 );
@@ -785,7 +782,6 @@ test.for(["plain", "implement", "plan"] as const)(
       ...(mode === "plan" && {
         plan: { planPresented: false, needsAnswer: true },
       }),
-      ...(mode === "implement" && { headline: "fix: preserve the changes" }),
     });
     const requests = await turns();
     expect(requests).toHaveLength(2);
@@ -869,7 +865,6 @@ test.for(["revisions", "deadline"] as const)(
     expect(result.reply).toContain("最終説明文");
     expect(result.reply).toContain("要約を取得できませんでした");
     expect(result.reply.length).toBeLessThanOrEqual(8000);
-    expect(result.headline).toBe("fix: preserve the changes");
     expect(await turns()).toHaveLength(count);
   },
 );
@@ -894,9 +889,6 @@ test("a stalled implementation revision leaves time for publication and stops th
   const result = agent.run(job, AbortSignal.timeout(5000));
   await revisionStarted;
   await vi.advanceTimersByTimeAsync(30_000);
-  await expect(result).resolves.toMatchObject({
-    headline: "fix: preserve the changes",
-  });
   expect((await result).reply).toContain("要約を取得できませんでした");
   expect(job.deadlineAt - Date.now()).toBeGreaterThan(30_000);
   expect(await turns()).toHaveLength(2);
@@ -910,7 +902,6 @@ test("an invalid implementation revision preserves the completed work", async (t
   const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
   const result = await agent.run(job, AbortSignal.timeout(5000));
   expect(result.reply).toContain("要約を取得できませんでした");
-  expect(result.headline).toBe("fix: preserve the changes");
   expect(await turns()).toHaveLength(2);
 });
 
@@ -1229,4 +1220,72 @@ test("refuses to restore a rollout outside the Codex sessions directory", async 
       save: () => {},
     }),
   ).rejects.toBeInstanceOf(ValiError);
+});
+
+test("offers the publication tool to an implementation and answers its calls", async () => {
+  const job = replyJob("implement");
+  const published: unknown[] = [];
+  const agent = createCodexAgent((directory) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const assert = require("node:assert/strict");
+const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
+const results = [];
+const publish = (id, headline) => send({ id, method: "item/tool/call", params: {
+  threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline }
+} });
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const r = JSON.parse(line);
+  const respond = result => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/start") {
+    assert.deepEqual(r.params.dynamicTools.map(tool => tool.name), ["tailos_github_get", "tailos_publish"]);
+    respond({ thread: { id: "work" } });
+  }
+  if (r.method === "turn/start") {
+    assert.ok(r.params.input[0].text.includes("call tailos_publish"));
+    assert.ok(!r.params.outputSchema.required.includes("headline"));
+    respond({});
+    publish("publish-1", "fix: handle an empty input");
+  }
+  if (String(r.id).startsWith("publish-")) {
+    results.push(r.result);
+    if (results.length === 1) return publish("publish-2", "not a headline");
+    send({ method: "item/completed", params: { threadId: "work", item: { type: "agentMessage", text: JSON.stringify({ reply: JSON.stringify(results), sessionTitle: null }) } } });
+    send({ method: "turn/completed", params: { threadId: "work", turn: { status: "completed" } } });
+  }
+});`,
+      ],
+      { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    ),
+  );
+  const result = await agent.run(
+    job,
+    AbortSignal.timeout(5000),
+    process.cwd(),
+    undefined,
+    undefined,
+    async (headline) => {
+      published.push(headline);
+      return headline === "fix: handle an empty input"
+        ? {
+            published: true,
+            sha: "b".repeat(40),
+            url: "https://github.com/owner/repo/pull/7",
+          }
+        : { published: false, reason: "invalid_change_headline" };
+    },
+  );
+  expect(published).toEqual(["fix: handle an empty input", "not a headline"]);
+  const [first, second] = JSON.parse(result.reply);
+  expect(first).toMatchObject({ success: true });
+  expect(first.contentItems[0].text).toContain(
+    "https://github.com/owner/repo/pull/7",
+  );
+  expect(second).toMatchObject({ success: false });
+  expect(second.contentItems[0].text).toContain("Conventional Commits");
 });

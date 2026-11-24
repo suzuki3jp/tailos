@@ -6,7 +6,8 @@ import {
 } from "@/infrastructure/d1/testing.ts";
 import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
-import { GitHubApp } from "@/infrastructure/github/app.ts";
+import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
+import { sessionBranch } from "@tailos/core/runner";
 import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 import { runSession } from "@/infrastructure/cloudflare/run-start.ts";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
@@ -396,6 +397,220 @@ test("only the active Run lease can stage the expected work branch without overw
       .bind(runId)
       .first("sha"),
   ).toBe(work.sha);
+});
+
+/** A running Turn of a Session that may publish with the publication tool. */
+async function publishingRun(t: import("vitest").TestContext) {
+  const DB = await createTestDb(t);
+  const repository = {
+    repository: "owner/private",
+    repositoryId: 42,
+    installationId: 19,
+    defaultBranch: "main",
+  };
+  const trigger = {
+    kind: "github.issue-label",
+    issueNumber: 8,
+    label: "tailos:run",
+  } as const;
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "publishing",
+    concurrencyKey: "target",
+    ownerId: "owner",
+    prompt: "Make changes",
+    timeoutMs: 30 * 60_000,
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "codex",
+      connectionId: "codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
+      repository,
+      trigger,
+    }),
+  });
+  const baseSha = "a".repeat(40);
+  const branch = sessionBranch(sessionId);
+  await DB.prepare(
+    "UPDATE runs SET status = 'running', step_state = ? WHERE id = ?",
+  )
+    .bind(JSON.stringify({ version: 2, baseSha, branch }), runId)
+    .run();
+  const bearer = newRunLease();
+  const stored = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    [
+      "refreshLease",
+      {
+        digest: await hashRunLease(bearer),
+        runId,
+        expiresAt: Date.now() + 60_000,
+      },
+    ],
+  ]);
+  const destroy = vi.fn(async () => {});
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(stored),
+      container: {
+        running: true,
+        destroy,
+        getTcpPort: () => ({
+          fetch: async () =>
+            Response.json({
+              status: "succeeded",
+              reply: "Done",
+              events: [{ type: "job_succeeded", at: Date.now() }],
+            }),
+        }),
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      TAILOS_GH_APP_ID: "100",
+      TAILOS_GH_APP_PRIVATE_KEY: "unused-test-key",
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  const work = {
+    branch,
+    parentSha: baseSha,
+    tree: "b".repeat(40),
+    headline: "feat: add the feature",
+    changes: {
+      additions: [{ path: "feature.ts", contents: "Cg==" }],
+      deletions: [],
+    },
+  };
+  return { DB, runId, runner, bearer, stored, work, repository, trigger };
+}
+
+test("publishes the Agent's work on the Session's branch, once per checked work", async (t) => {
+  const { runner, runId, bearer, stored, work, repository, trigger } =
+    await publishingRun(t);
+  const url = "https://github.com/owner/private/pull/1";
+  const first = "c".repeat(40);
+  const second = "d".repeat(40);
+  let pull: Awaited<ReturnType<GitHubApp["sessionPullRequest"]>> = {
+    state: "none",
+  };
+  vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockImplementation(
+    async () => pull,
+  );
+  const commit = vi
+    .spyOn(GitHubApp.prototype, "commitSessionWork")
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce(second);
+  const open = vi
+    .spyOn(GitHubApp.prototype, "openPullRequest")
+    .mockImplementation(async () => {
+      pull = { state: "open", url };
+      return url;
+    });
+
+  // Only this Turn, on this Session's branch and its head, may publish.
+  expect(await runner.publishWork(runId, newRunLease(), work)).toEqual({
+    error: "invalid_lease",
+  });
+  expect(
+    await runner.publishWork(runId, bearer, {
+      ...work,
+      branch: "tailos/session/x",
+    }),
+  ).toEqual({ error: "invalid_publication" });
+  expect(
+    await runner.publishWork(runId, bearer, {
+      ...work,
+      parentSha: "e".repeat(40),
+    }),
+  ).toEqual({ error: "invalid_publication" });
+  expect(commit).not.toHaveBeenCalled();
+
+  expect(await runner.publishWork(runId, bearer, work)).toEqual({
+    sha: first,
+    url,
+  });
+  expect(open).toHaveBeenCalledExactlyOnceWith(repository, trigger, runId, {
+    branch: work.branch,
+    sha: first,
+    headline: work.headline,
+  });
+  // The same work again, after its response was lost, is not committed twice.
+  expect(await runner.publishWork(runId, bearer, work)).toEqual({
+    sha: first,
+    url,
+  });
+  expect(commit).toHaveBeenCalledOnce();
+  // Changed work on the old parent, after the answer was lost, is told where
+  // the branch went instead.
+  expect(
+    await runner.publishWork(runId, bearer, { ...work, tree: "9".repeat(40) }),
+  ).toEqual({ error: "parent_moved", sha: first });
+  expect(commit).toHaveBeenCalledOnce();
+
+  // The next publication builds on the last one and updates the open PR.
+  const next = { ...work, parentSha: first, tree: "f".repeat(40) };
+  expect(await runner.publishWork(runId, bearer, next)).toEqual({
+    sha: second,
+    url,
+  });
+  expect(commit).toHaveBeenLastCalledWith(
+    repository,
+    runId,
+    next,
+    expect.any(Number),
+  );
+  expect(open).toHaveBeenCalledOnce();
+  expect(stored.get("sessionPublication")).toEqual({
+    branch: work.branch,
+    sha: second,
+    parentSha: first,
+    tree: next.tree,
+    url,
+  });
+
+  // A merged pull request is not published to again; neither is a branch
+  // that someone else moved.
+  pull = { state: "merged" };
+  const later = { ...work, parentSha: second, tree: "9".repeat(40) };
+  expect(await runner.publishWork(runId, bearer, later)).toEqual({
+    error: "pull_request_merged",
+  });
+  pull = { state: "open", url };
+  commit.mockRejectedValueOnce(new WorkBranchMoved("moved"));
+  expect(await runner.publishWork(runId, bearer, later)).toEqual({
+    error: "branch_moved",
+  });
+  expect(stored.get("sessionPublication")).toMatchObject({ sha: second });
+});
+
+test("a Turn's result is the pull request it published, and the Session keeps its branch", async (t) => {
+  const { DB, runner, runId, bearer, stored, work } = await publishingRun(t);
+  const url = "https://github.com/owner/private/pull/1";
+  const sha = "c".repeat(40);
+  vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockResolvedValue({
+    state: "none",
+  });
+  vi.spyOn(GitHubApp.prototype, "commitSessionWork").mockResolvedValue(sha);
+  vi.spyOn(GitHubApp.prototype, "openPullRequest").mockResolvedValue(url);
+  expect(await runner.publishWork(runId, bearer, work)).toEqual({ sha, url });
+
+  await runner.alarm();
+  const run = await DB.prepare("SELECT status, result FROM runs WHERE id = ?")
+    .bind(runId)
+    .first<{ status: string; result: string }>();
+  expect(run?.status).toBe("succeeded");
+  expect(JSON.parse(run!.result)).toMatchObject({
+    kind: "pull_request",
+    branch: work.branch,
+    sha,
+    url,
+  });
+  // The next Turn publishes on the same branch, but has no result of its own yet.
+  expect(stored.has("runPublication")).toBe(false);
+  expect(stored.get("sessionPublication")).toMatchObject({ sha, url });
 });
 
 async function preparedRun(
@@ -1189,6 +1404,17 @@ test.for([
           snapshot: { id: "snapshot-0", image: snapshotImage },
         },
       ],
+      // What an earlier Turn published, which this one builds on.
+      [
+        "sessionPublication",
+        {
+          branch: sessionBranch(sessionId),
+          sha: "e".repeat(40),
+          parentSha: savedBase,
+          tree: "f".repeat(40),
+          url: "https://github.com/owner/repo/pull/1",
+        },
+      ],
     ]);
     const requests: string[] = [];
     let collected = 0;
@@ -1206,6 +1432,10 @@ test.for([
         expect(job.continuity).toStrictEqual({ restore: "saved" });
         // The saved work continues on its own base, not the latest branch.
         expect(job.checkout.baseSha).toBe(savedBase);
+        expect(job.checkout).toMatchObject({
+          branch: sessionBranch(sessionId),
+          publishedSha: "e".repeat(40),
+        });
         return new Response(null, { status: 202 });
       }
       if (path === `/job/${runId}`)
@@ -1229,7 +1459,7 @@ test.for([
         token: "write-token",
         expiresAt: Date.now() + 60_000,
         baseSha: "a".repeat(40),
-        branch: `tailos/run/${runId}`,
+        branch: sessionBranch(sessionId),
       });
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
     t.onTestFinished(() => {
@@ -1280,6 +1510,8 @@ test.for([
     await runner.schedule(runId, sessionId);
     await runner.alarm();
     expect(checkout).toHaveBeenCalledOnce();
+    // The Session publishes to its own branch.
+    expect(checkout.mock.calls[0]![2]).toBe(sessionBranch(sessionId));
     // A snapshot of another image would silently run the older Runner.
     expect(start).toHaveBeenCalledExactlyOnceWith(
       fromSnapshot

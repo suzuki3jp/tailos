@@ -14,9 +14,11 @@ import { pathToFileURL } from "node:url";
 import { expect, test, vi, type TestContext } from "vitest";
 import {
   runInGitWorkspace,
+  type Publisher,
   type WorkspaceContinuity,
 } from "@/git-workspace.ts";
 import { decodeSavedWork } from "@/continuity.ts";
+import { PublicationRefused } from "@/agent.ts";
 import { access } from "node:fs/promises";
 import {
   parseDiagnosticBatch,
@@ -29,15 +31,7 @@ async function repository(t: TestContext) {
   t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const seed = join(directory, "seed");
   const git = (cwd: string, ...args: string[]) =>
-    execFileSync("git", args, {
-      cwd,
-      env: {
-        PATH: process.env.PATH,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
-      },
-      encoding: "utf8",
-    }).trim();
+    gitIn(cwd, {}, undefined, ...args);
 
   git(directory, "init", "--quiet", "-b", "main", seed);
   await writeFile(join(seed, "README.md"), "base\n");
@@ -57,39 +51,141 @@ async function repository(t: TestContext) {
     "Base",
   );
   const baseSha = git(seed, "rev-parse", "HEAD");
-  const branch = "tailos/issue-8/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+  const branch = "tailos/session/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+
+  /**
+   * Stands in for the controller and GitHub: signs the checked changes on
+   * top of their parent, as `createCommitOnBranch` would, and moves the
+   * Session's branch.
+   */
+  const publisher = vi.fn(async (work: SessionPublication) => {
+    const index = { GIT_INDEX_FILE: join(directory, "publish-index") };
+    gitIn(seed, index, undefined, "read-tree", work.parentSha);
+    for (const file of work.additions()) gitIn(seed, index, undefined, ...file);
+    for (const { path } of work.changes.deletions)
+      gitIn(seed, index, undefined, "update-index", "--force-remove", path);
+    const tree = gitIn(seed, index, undefined, "write-tree");
+    expect(tree).toBe(work.tree);
+    const sha = gitIn(
+      seed,
+      {
+        GIT_AUTHOR_NAME: "GitHub",
+        GIT_AUTHOR_EMAIL: "noreply@github.com",
+        GIT_COMMITTER_NAME: "GitHub",
+        GIT_COMMITTER_EMAIL: "noreply@github.com",
+      },
+      undefined,
+      "commit-tree",
+      tree,
+      "-p",
+      work.parentSha,
+      "-m",
+      work.headline,
+    );
+    git(seed, "update-ref", `refs/heads/${work.branch}`, sha);
+    return { sha, url: "https://github.com/owner/private/pull/1" };
+  });
+  /** What GitHub would store for each added file. */
+  const signed = (work: Omit<SessionPublication, "additions">) => ({
+    ...work,
+    additions: () =>
+      work.changes.additions.map(({ path, contents }) => {
+        const mode =
+          git(seed, "ls-tree", work.parentSha, "--", path).split(" ")[0] ||
+          "100644";
+        const blob = gitIn(
+          seed,
+          {},
+          Buffer.from(contents, "base64"),
+          "hash-object",
+          "-w",
+          "--stdin",
+        );
+        return [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `${mode},${blob},${path}`,
+        ];
+      }),
+  });
+
   return {
     baseSha,
     branch,
+    publisher,
     run(
       work: Parameters<typeof runInGitWorkspace>[2],
-      stage: Parameters<typeof runInGitWorkspace>[3],
-      mode?: "plan",
-      diagnostics?: Diagnostics,
-      continuity?: WorkspaceContinuity,
+      options: {
+        mode?: "plan";
+        diagnostics?: Diagnostics;
+        continuity?: WorkspaceContinuity;
+        publishedSha?: string;
+        publisher?: Publisher;
+      } = {},
     ) {
       return runInGitWorkspace(
         {
           repository: "owner/private",
           baseSha,
           branch,
+          ...(options.publishedSha && { publishedSha: options.publishedSha }),
         },
         AbortSignal.timeout(15_000),
         work,
-        stage,
+        options.publisher ??
+          ((work) => publisher(signed(work) as unknown as SessionPublication)),
         pathToFileURL(seed).href,
-        diagnostics,
-        mode,
-        continuity,
+        options.diagnostics,
+        options.mode,
+        options.continuity,
       );
     },
-    refs: () => git(seed, "for-each-ref", "--format=%(refname)"),
+    git: (...args: string[]) => git(seed, ...args),
+    publish: (work: Parameters<Publisher>[0]) =>
+      publisher(signed(work) as unknown as SessionPublication),
   };
 }
 
-const result = { reply: "Renamed README", headline: "docs: rename readme" };
+type SessionPublication = Parameters<Publisher>[0] & {
+  additions(): string[][];
+};
 
-test("records the failing publication stage and completes workspace cleanup", async (t) => {
+function gitIn(
+  cwd: string,
+  env: Record<string, string>,
+  input: Buffer | undefined,
+  ...args: string[]
+) {
+  return execFileSync("git", args, {
+    cwd,
+    env: {
+      PATH: process.env.PATH,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      ...env,
+    },
+    encoding: "utf8",
+    ...(input && { input }),
+  }).trim();
+}
+
+/** HEAD of a workspace whose `.git` points at metadata kept elsewhere. */
+async function head(cwd: string) {
+  const pointer = await readFile(join(cwd, ".git"), "utf8");
+  return gitIn(
+    cwd,
+    {},
+    undefined,
+    `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+    "rev-parse",
+    "HEAD",
+  );
+}
+
+const result = { reply: "Renamed README" };
+
+test("records a failed publication and completes workspace cleanup", async (t) => {
   const repo = await repository(t);
   const packets: string[] = [];
   const diagnostics = new RunnerDiagnostics(
@@ -113,20 +209,23 @@ test("records the failing publication stage and completes workspace cleanup", as
       return new Response(null, { status: 204 });
     },
   );
-  const failure = new Error("Publication checkpoint unavailable");
+  const failure = new Error("Publication unavailable");
   await expect(
     repo.run(
-      async (cwd) => {
+      async (cwd, _conversation, publish) => {
         await writeFile(join(cwd, "README.md"), "updated\n");
+        // The Agent is told; its Turn goes on.
+        await expect(publish!("docs: update the readme")).rejects.toBe(failure);
         return result;
       },
-      async () => {
-        throw failure;
+      {
+        diagnostics,
+        publisher: async () => {
+          throw failure;
+        },
       },
-      undefined,
-      diagnostics,
     ),
-  ).rejects.toBe(failure);
+  ).resolves.toEqual(result);
   await diagnostics.finish();
   const batches = packets.map((packet) =>
     parseDiagnosticBatch(JSON.parse(packet)),
@@ -141,70 +240,163 @@ test("records the failing publication stage and completes workspace cleanup", as
     ]),
   ).toEqual([
     ["checkout", "succeeded"],
-    ["workspace", "succeeded"],
     ["publication", "failed"],
     ["cleanup", "succeeded"],
     ["cleanup", "succeeded"],
   ]);
-  expect(JSON.parse(finishes[2]!.body!).errors[0].message).toBe(
+  expect(JSON.parse(finishes[1]!.body!).errors[0].message).toBe(
     failure.message,
   );
   expect(batches.at(-1)?.completed?.dropped).toBe(0);
 });
 
-test("stages changes without a package manifest, pushing, or storing credentials", async (t) => {
+test("publishes the whole work tree without pushing or storing credentials", async (t) => {
   const repo = await repository(t);
-  const stage = vi.fn();
+  let published: unknown;
+  let after = "";
   await expect(
-    repo.run(async (cwd) => {
+    repo.run(async (cwd, _conversation, publish) => {
       const pointer = await readFile(join(cwd, ".git"), "utf8");
       const metadata = pointer.slice("gitdir: ".length).trim();
       expect(await readFile(join(metadata, "config"), "utf8")).not.toMatch(
         /extraheader|Authorization/i,
       );
-      await rm(join(cwd, ".git"));
       await rename(join(cwd, "README.md"), join(cwd, "Guide.md"));
+      published = await publish!("docs: rename readme");
+      after = await head(cwd);
       return { ...result, sessionTitle: "Documentation update" };
-    }, stage),
+    }),
   ).resolves.toEqual({
     reply: result.reply,
     sessionTitle: "Documentation update",
-    publication: { kind: "checked" },
   });
-  expect(stage).toHaveBeenCalledExactlyOnceWith({
-    ...result,
-    sessionTitle: "Documentation update",
-    baseSha: repo.baseSha,
-    branch: repo.branch,
-    tree: expect.stringMatching(/^[a-f0-9]{40}$/),
-    changes: {
-      additions: [
-        {
-          path: "Guide.md",
-          contents: Buffer.from("base\n").toString("base64"),
-        },
-      ],
-      deletions: [{ path: "README.md" }],
-    },
+  expect(repo.publisher).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      branch: repo.branch,
+      parentSha: repo.baseSha,
+      headline: "docs: rename readme",
+      tree: expect.stringMatching(/^[a-f0-9]{40}$/),
+      changes: {
+        additions: [
+          {
+            path: "Guide.md",
+            contents: Buffer.from("base\n").toString("base64"),
+          },
+        ],
+        deletions: [{ path: "README.md" }],
+      },
+    }),
+  );
+  const sha = repo.git("rev-parse", `refs/heads/${repo.branch}`);
+  expect(published).toEqual({
+    published: true,
+    sha,
+    url: "https://github.com/owner/private/pull/1",
   });
-  expect(repo.refs()).toBe("refs/heads/main");
+  // The work tree now sits on the published commit.
+  expect(after).toBe(sha);
+  // Only the controller moved a branch: the Runner pushed nothing.
+  expect(repo.git("for-each-ref", "--format=%(refname)")).toBe(
+    `refs/heads/main\nrefs/heads/${repo.branch}`,
+  );
 });
 
-test("stages an existing executable with a content-only edit", async (t) => {
+test("publishes again on top of the last publication, in this Turn and the next", async (t) => {
+  const repo = await repository(t);
+  let first = "";
+  await repo.run(async (cwd, _conversation, publish) => {
+    await writeFile(join(cwd, "README.md"), "one\n");
+    await publish!("docs: first change");
+    first = await head(cwd);
+    await writeFile(join(cwd, "notes.txt"), "two\n");
+    expect(await publish!("docs: second change")).toMatchObject({
+      published: true,
+    });
+    // Nothing changed since the last publication.
+    expect(await publish!("docs: nothing")).toEqual({
+      published: false,
+      reason: "no_changes",
+    });
+    return result;
+  });
+  const second = repo.publisher.mock.calls[1]![0];
+  expect(second.parentSha).toBe(first);
+  expect(second.changes).toEqual({
+    additions: [
+      { path: "notes.txt", contents: Buffer.from("two\n").toString("base64") },
+    ],
+    deletions: [],
+  });
+
+  // A later Turn without the saved work starts from what was published.
+  const published = repo.git("rev-parse", `refs/heads/${repo.branch}`);
+  await repo.run(
+    async (cwd, _conversation, publish) => {
+      expect(await head(cwd)).toBe(published);
+      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe("two\n");
+      await writeFile(join(cwd, "notes.txt"), "three\n");
+      await publish!("docs: third change");
+      return result;
+    },
+    { publishedSha: published },
+  );
+  expect(repo.publisher.mock.calls[2]![0].parentSha).toBe(published);
+});
+
+test("builds on a publication whose answer was lost when it publishes newer work", async (t) => {
+  const repo = await repository(t);
+  let lost = "";
+  const sent: Parameters<Publisher>[0][] = [];
+  // Stands in for the controller, which remembers the lost publication.
+  const publisher: Publisher = async (work) => {
+    sent.push(work);
+    if (!lost) {
+      // GitHub has the commit, but its answer never reaches the Runner.
+      lost = (await repo.publish(work)).sha;
+      throw new Error("Publication unavailable");
+    }
+    if (work.parentSha !== lost)
+      throw new PublicationRefused({ error: "parent_moved", sha: lost });
+    return repo.publish(work);
+  };
+  await repo.run(
+    async (cwd, _conversation, publish) => {
+      await writeFile(join(cwd, "README.md"), "one\n");
+      await expect(publish!("docs: change the readme")).rejects.toThrow();
+      // The Agent fixes something, then publishes again.
+      await writeFile(join(cwd, "notes.txt"), "two\n");
+      expect(await publish!("docs: add notes")).toMatchObject({
+        published: true,
+      });
+      return result;
+    },
+    { publisher },
+  );
+  expect(sent.map((work) => work.parentSha)).toEqual([
+    repo.baseSha,
+    repo.baseSha,
+    lost,
+  ]);
+  // Only what changed since the lost publication is sent on top of it.
+  expect(sent[2]!.changes).toEqual({
+    additions: [
+      { path: "notes.txt", contents: Buffer.from("two\n").toString("base64") },
+    ],
+    deletions: [],
+  });
+});
+
+test("publishes an existing executable with a content-only edit", async (t) => {
   const repo = await repository(t);
   const contents = "#!/bin/sh\nprintf new\n";
-  const stage = vi.fn();
-
-  await expect(
-    repo.run(async (cwd) => {
-      await writeFile(join(cwd, "script.sh"), contents);
-      return {
-        reply: "Updated script",
-        headline: "fix: update script output",
-      };
-    }, stage),
-  ).resolves.toMatchObject({ publication: { kind: "checked" } });
-  expect(stage).toHaveBeenCalledExactlyOnceWith(
+  await repo.run(async (cwd, _conversation, publish) => {
+    await writeFile(join(cwd, "script.sh"), contents);
+    expect(await publish!("fix: update script output")).toMatchObject({
+      published: true,
+    });
+    return result;
+  });
+  expect(repo.publisher).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({
       changes: {
         additions: [
@@ -219,75 +411,65 @@ test("stages an existing executable with a content-only edit", async (t) => {
   );
 });
 
-test("rejects changes to executable mode and new executable files", async (t) => {
+test("refuses changes to executable mode, new executable files, and invalid headlines", async (t) => {
   const repo = await repository(t);
-  const stage = vi.fn();
-  await expect(
-    repo.run(async (cwd) => {
-      await chmod(join(cwd, "README.md"), 0o755);
-      return result;
-    }, stage),
-  ).rejects.toMatchObject({ code: "unsupported_changes" });
-  await expect(
-    repo.run(async (cwd) => {
-      await writeFile(join(cwd, "new-script.sh"), "#!/bin/sh\n", {
-        mode: 0o755,
-      });
-      return result;
-    }, stage),
-  ).rejects.toMatchObject({ code: "unsupported_changes" });
-  expect(stage).not.toHaveBeenCalled();
+  await repo.run(async (cwd, _conversation, publish) => {
+    await chmod(join(cwd, "README.md"), 0o755);
+    expect(await publish!("fix: change a mode")).toEqual({
+      published: false,
+      reason: "unsupported_changes",
+    });
+    await chmod(join(cwd, "README.md"), 0o644);
+    await writeFile(join(cwd, "new-script.sh"), "#!/bin/sh\n", {
+      mode: 0o755,
+    });
+    expect(await publish!("feat: add a script")).toEqual({
+      published: false,
+      reason: "unsupported_changes",
+    });
+    expect(await publish!("Implement GitHub issue\nextra line")).toEqual({
+      published: false,
+      reason: "invalid_change_headline",
+    });
+    return result;
+  });
+  expect(repo.publisher).not.toHaveBeenCalled();
 });
 
-test("returns no changes without staging", async (t) => {
+test("refuses to publish once the trusted Git config changed", async (t) => {
   const repo = await repository(t);
-  const stage = vi.fn();
-  await expect(
-    repo.run(async () => ({ reply: "No work" }), stage),
-  ).resolves.toEqual({ reply: "No work", publication: { kind: "no_changes" } });
-  expect(stage).not.toHaveBeenCalled();
+  await repo.run(async (cwd, _conversation, publish) => {
+    await writeFile(join(cwd, "README.md"), "changed\n");
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    await writeFile(
+      join(pointer.slice("gitdir: ".length).trim(), "config"),
+      "[core]\nfsmonitor = /bin/false\n",
+    );
+    await expect(publish!("docs: change")).rejects.toThrow(
+      "Git metadata configuration changed",
+    );
+    return result;
+  });
+  expect(repo.publisher).not.toHaveBeenCalled();
 });
 
-test("rejects an invalid headline and changes to trusted Git config before publication", async (t) => {
+test("planning reads the base and cannot publish, even if an adapter changes files", async (t) => {
   const repo = await repository(t);
-  const stage = vi.fn();
-  await expect(
-    repo.run(async (cwd) => {
-      await writeFile(join(cwd, "README.md"), "changed\n");
-      return { ...result, headline: "Implement GitHub issue\nextra line" };
-    }, stage),
-  ).rejects.toMatchObject({ code: "invalid_change_headline" });
-  await expect(
-    repo.run(async (cwd) => {
-      const pointer = await readFile(join(cwd, ".git"), "utf8");
-      await writeFile(
-        join(pointer.slice("gitdir: ".length).trim(), "config"),
-        "[core]\nfsmonitor = /bin/false\n",
-      );
-      return result;
-    }, stage),
-  ).rejects.toThrow("Git metadata configuration changed");
-  expect(stage).not.toHaveBeenCalled();
-});
-
-test("planning reads the base and skips staging, even if an adapter returns changes", async (t) => {
-  const repo = await repository(t);
-  const stage = vi.fn();
   const plan = { planPresented: false, needsAnswer: true };
   let workspace = "";
   await expect(
     repo.run(
-      async (cwd) => {
+      async (cwd, _conversation, publish) => {
         workspace = cwd;
+        expect(publish).toBeUndefined();
         expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
         await writeFile(join(cwd, "README.md"), "untrusted adapter");
         return { reply: "Which behavior is desired?", plan };
       },
-      stage,
-      "plan",
+      { mode: "plan" },
     ),
   ).resolves.toEqual({ reply: "Which behavior is desired?", plan });
-  expect(stage).not.toHaveBeenCalled();
+  expect(repo.publisher).not.toHaveBeenCalled();
   await expect(readFile(join(workspace, "README.md"))).rejects.toThrow();
 });
 
@@ -300,11 +482,13 @@ async function turn(
 ) {
   let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
   const result = await repo
-    .run(work, async () => {}, undefined, undefined, {
-      ...(restore && { restore }),
-      ...(workDir && { workDir }),
-      saved: (result) => {
-        saved = result;
+    .run(work, {
+      continuity: {
+        ...(restore && { restore }),
+        ...(workDir && { workDir }),
+        saved: (result) => {
+          saved = result;
+        },
       },
     })
     .catch((error: unknown) => error);
@@ -331,7 +515,7 @@ test("carries the work tree and conversation over to the next Turn", async (t) =
     await rm(join(cwd, "script.sh"));
     await writeFile(join(cwd, "notes.txt"), "untracked\n");
     conversation?.save(rollout);
-    return { reply: "first", headline: "docs: change the readme" };
+    return { reply: "first" };
   });
   expect(first.result).toMatchObject({ reply: "first" });
   if (!first.saved || !("archive" in first.saved)) throw new Error("not saved");
@@ -363,16 +547,21 @@ test("carries the work tree and conversation over to the next Turn", async (t) =
   const third = await turn(
     repo,
     second.saved.archive,
-    async (cwd, conversation) => {
+    async (cwd, conversation, publish) => {
       // Without a newer conversation, the earlier one still continues.
       expect(conversation?.resume).toStrictEqual(rollout);
       expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("changed\n");
       expect(await readFile(join(cwd, "more.txt"), "utf8")).toBe("more\n");
-      return { reply: "third", headline: "docs: add more" };
+      // The publication covers everything since the base, including
+      // earlier Turns.
+      expect(await publish!("docs: add more")).toMatchObject({
+        published: true,
+      });
+      return { reply: "third" };
     },
   );
-  // The publication covers everything since the base, including earlier Turns.
-  expect(third.result).toMatchObject({ publication: { kind: "checked" } });
+  expect(third.result).toMatchObject({ reply: "third" });
+  expect(repo.publisher.mock.calls[0]![0].changes.additions).toHaveLength(3);
 });
 
 test.for([
@@ -408,7 +597,7 @@ test("keeps the previous work when the Turn never reached it", async (t) => {
     },
     AbortSignal.timeout(15_000),
     async () => ({ reply: "never" }),
-    async () => {},
+    undefined,
     "file:///nonexistent",
     undefined,
     undefined,

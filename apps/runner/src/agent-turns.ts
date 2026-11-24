@@ -13,7 +13,6 @@ export type RepositoryJob = Exclude<RunnerJob, { engine: "fake" }>;
 const repositoryReplySchema = v.object({
   reply: v.string(),
   sessionTitle: v.optional(v.unknown()),
-  headline: v.nullable(v.string()),
 });
 const planReplySchema = v.object({
   reply: v.string(),
@@ -21,9 +20,14 @@ const planReplySchema = v.object({
   ...PlanResult.entries,
 });
 
-// The first input of a Run. `githubTool` is the name the Agent calls the
-// Tailos GitHub tool by, which differs between Agent runtimes.
-export function agentPrompt(job: RepositoryJob, githubTool: string) {
+// The first input of a Run. `githubTool` and `publishTool` are the names the
+// Agent calls the Tailos tools by, which differ between Agent runtimes. A
+// runtime without the publication tool cannot publish.
+export function agentPrompt(
+  job: RepositoryJob,
+  githubTool: string,
+  publishTool?: string,
+) {
   const sourceContext = job.githubContext
     ? "\n\nJob context (JSON):\n" +
       JSON.stringify({ github: job.githubContext }) +
@@ -31,17 +35,21 @@ export function agentPrompt(job: RepositoryJob, githubTool: string) {
     : "";
   const sessionTitleInstruction =
     job.checkout || job.mode === "plan"
-      ? "\n\nReturn sessionTitle with a concise, single-line summary of the conversation purpose in its primary language (1–100 UTF-16 code units, no control characters). This is separate from the commit headline. If unavailable, use null."
+      ? "\n\nReturn sessionTitle with a concise, single-line summary of the conversation purpose in its primary language (1–100 UTF-16 code units, no control characters). If unavailable, use null."
       : "";
   return (
     sourceContext +
-    workPrompt(job, githubTool) +
+    workPrompt(job, githubTool, publishTool) +
     sessionTitleInstruction +
     "\nDuring the work, provide concise progress messages at meaningful phase changes. Keep these separate from the final structured answer. Do not include credentials or private reasoning."
   );
 }
 
-function workPrompt(job: RepositoryJob, githubTool: string) {
+function workPrompt(
+  job: RepositoryJob,
+  githubTool: string,
+  publishTool?: string,
+) {
   if (job.mode === "plan") {
     return (
       job.prompt +
@@ -60,11 +68,23 @@ function workPrompt(job: RepositoryJob, githubTool: string) {
       "If that version satisfies the repository's requirements, use the bundled executable directly for dependency installation and verification. For those commands, keep its directory first on PATH and set pnpm_config_pm_on_fail=ignore so pnpm and nested scripts can use the same bundled version without resolving it again. " +
       "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
       "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
-      "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run. " +
-      "Give an English Conventional Commits headline of at most 100 characters describing the final diff. Use a null headline if you made no changes."
+      "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run." +
+      publishInstruction(job, publishTool)
     );
   }
   return job.prompt;
+}
+
+function publishInstruction(job: RepositoryJob, publishTool?: string) {
+  if (!publishTool)
+    return " This runtime cannot publish changes: say so if the user asks for a pull request.";
+  return (
+    ` To deliver changes as a pull request, call ${publishTool} after the checks pass. It publishes the whole work tree; publishing again in this Session adds a commit to the same pull request. Publish only when the request asks for changes to the repository, not for answers or investigation. Include the pull request URL in reply, or say why nothing was published.` +
+    // A labeled issue asks for its implementation: deliver it.
+    (job.githubContext
+      ? ` This work implements the GitHub issue above: when you changed files for it, publish them with ${publishTool} before you finish.`
+      : "")
+  );
 }
 
 // JSON Schema of the final answer, or undefined when the answer is plain text.
@@ -81,12 +101,12 @@ export function replySchema(job: RepositoryJob) {
             planPresented: { type: "boolean" },
             needsAnswer: { type: "boolean" },
           }
-        : { headline: { type: ["string", "null"] } }),
+        : {}),
     },
     required:
       job.mode === "plan"
         ? ["reply", "sessionTitle", "planPresented", "needsAnswer"]
-        : ["reply", "sessionTitle", "headline"],
+        : ["reply", "sessionTitle"],
     additionalProperties: false,
   };
 }
@@ -114,21 +134,16 @@ export async function runAgentTurns(options: {
     return text;
   };
   let prompt = options.prompt;
-  let implementationHeadline: string | null | undefined;
   let sessionTitle: string | undefined;
   const implementation = !!job.checkout && job.mode !== "plan";
-  const replyWithHeadline = (text: string) => ({
+  const finalReply = (text: string) => ({
     reply: text,
     ...(sessionTitle && { sessionTitle }),
-    ...(implementationHeadline != null &&
-    redact(implementationHeadline) === implementationHeadline
-      ? { headline: implementationHeadline }
-      : {}),
   });
   const implementationFallback = () =>
     // Summary failure must not discard completed code or silently truncate
-    // the answer. The original headline still describes the verified work.
-    replyWithHeadline(
+    // the answer.
+    finalReply(
       v.parse(
         replyText,
         `Agent の作業は完了しましたが、最終説明文が ${maxReplyLength} 文字の上限を超え、要約を取得できませんでした。`,
@@ -154,7 +169,7 @@ export async function runAgentTurns(options: {
         await turn(
           prompt,
           revision,
-          // Reserve at least 30 seconds for implementation staging/publication.
+          // Reserve at least 30 seconds for saving the work.
           implementation && revision > 0
             ? Math.min(30_000, job.deadlineAt - Date.now() - 30_000)
             : undefined,
@@ -165,8 +180,6 @@ export async function runAgentTurns(options: {
       if (implementation && revision > 0) return implementationFallback();
       throw error;
     }
-    if (revision === 0 && "headline" in result)
-      implementationHeadline = result.headline;
     if (!sessionTitle && "sessionTitle" in result) {
       const raw = result.sessionTitle;
       if (typeof raw === "string" && redact(raw) === raw)
@@ -178,7 +191,7 @@ export async function runAgentTurns(options: {
       const insufficientTime =
         job.deadlineAt - Date.now() < (implementation ? 60_000 : 5_000);
       if (!exhausted && !insufficientTime) {
-        prompt = `Your reply contains ${text.length} UTF-16 code units after redaction, exceeding the ${maxReplyLength} limit. Rewrite only the previous answer, aiming for ${maxReplyLength - 1000} UTF-16 code units or fewer. Preserve the essential plan, assumptions, questions and verification results, and keep any headline, planPresented and needsAnswer fields consistent. Do not investigate again, run checks, use tools or change files. Return the same response format.`;
+        prompt = `Your reply contains ${text.length} UTF-16 code units after redaction, exceeding the ${maxReplyLength} limit. Rewrite only the previous answer, aiming for ${maxReplyLength - 1000} UTF-16 code units or fewer. Preserve the essential plan, assumptions, questions and verification results, and keep any planPresented and needsAnswer fields consistent. Do not investigate again, run checks, use tools or change files. Return the same response format.`;
         continue;
       }
       if (implementation) return implementationFallback();
@@ -189,15 +202,16 @@ export async function runAgentTurns(options: {
       );
     }
     const validatedReply = v.parse(replyText, text);
-    if ("planPresented" in result && "needsAnswer" in result)
+    if (job.mode === "plan") {
+      const { planPresented, needsAnswer } = result as v.InferOutput<
+        typeof planReplySchema
+      >;
       return {
         reply: validatedReply,
         ...(sessionTitle && { sessionTitle }),
-        plan: {
-          planPresented: result.planPresented,
-          needsAnswer: result.needsAnswer,
-        },
+        plan: { planPresented, needsAnswer },
       };
-    return replyWithHeadline(validatedReply);
+    }
+    return finalReply(validatedReply);
   }
 }

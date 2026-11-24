@@ -8,17 +8,20 @@ import {
   changeHeadline,
   continuitySaveMs,
   maxPublicationBytes,
-  type CheckedPublication,
   type FileChanges,
+  type PublishedWork,
   type RunnerJob,
-  type RunnerPublication,
+  type SessionPublication,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import {
   PublicationFailed,
+  PublicationRefused,
   type AgentResult,
   type Conversation,
+  type Publish,
+  type PublishOutcome,
 } from "@/agent.ts";
 import {
   ContinuityTooLarge,
@@ -38,7 +41,8 @@ const exec = promisify(execFile);
 type Checkout = NonNullable<
   Extract<RunnerJob, { engine: "codex" }>["checkout"]
 >;
-type CheckedWork = Omit<CheckedPublication, "kind" | "events">;
+/** Hands checked work to the controller, which commits it and opens the PR. */
+export type Publisher = (work: SessionPublication) => Promise<PublishedWork>;
 
 /**
  * What the previous Turn left, and where this Turn's saved work goes. With a
@@ -70,8 +74,12 @@ const continuityIdentity = {
 export async function runInGitWorkspace(
   checkout: Checkout,
   signal: AbortSignal,
-  work: (cwd: string, conversation?: Conversation) => Promise<AgentResult>,
-  stage: (work: CheckedWork) => Promise<void>,
+  work: (
+    cwd: string,
+    conversation?: Conversation,
+    publish?: Publish,
+  ) => Promise<AgentResult>,
+  publisher: Publisher | undefined,
   remote = `https://github.com/${checkout.repository}.git`,
   diagnostics?: Diagnostics,
   mode?: RunnerJob["mode"],
@@ -79,7 +87,6 @@ export async function runInGitWorkspace(
 ): Promise<{
   reply: string;
   sessionTitle?: string;
-  publication?: RunnerPublication;
   plan?: AgentResult["plan"];
 }> {
   const workDir = continuity?.workDir;
@@ -214,6 +221,143 @@ export async function runInGitWorkspace(
     return saved.conversation;
   };
 
+  /** Fetches a commit of the target repository unless it is already here. */
+  const ensureCommit = async (sha: string) => {
+    const present = await git(["cat-file", "-e", `${sha}^{commit}`]).then(
+      () => true,
+      () => false,
+    );
+    if (!present) await git(["fetch", "--quiet", "--no-tags", remote, sha]);
+  };
+
+  /**
+   * The whole work tree as changes from `parent`, checked as GitHub can sign
+   * them. Null when the work tree is exactly `parent`.
+   */
+  const checkedChanges = async (parent: string) => {
+    const tree = await workTree(parent, {});
+    const paths = await git([
+      "diff-tree",
+      "-r",
+      "-z",
+      "--raw",
+      "--no-renames",
+      parent,
+      tree,
+    ]);
+    if (!paths.length) return null;
+    const changes: FileChanges = { additions: [], deletions: [] };
+    const entries = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+      .decode(paths)
+      .split("\0");
+    let size = 0;
+    for (let i = 0; i < entries.length - 1; i += 2) {
+      const [oldMode, newMode, , oid, status] = entries[i]!.slice(1).split(" ");
+      const path = entries[i + 1]!;
+      if (path.split("/").includes("node_modules") || i >= 1024)
+        throw new PublicationFailed("unsupported_changes");
+      if (status === "D") {
+        changes.deletions.push({ path });
+        continue;
+      }
+      // GitHub preserves the mode of an existing regular file and creates new files as 100644.
+      const supported =
+        status === "A"
+          ? newMode === "100644"
+          : oldMode === newMode &&
+            (newMode === "100644" || newMode === "100755");
+      if (!supported) throw new PublicationFailed("unsupported_changes");
+      const contents = (await git(["cat-file", "blob", oid!])).toString(
+        "base64",
+      );
+      size += contents.length;
+      if (size >= maxPublicationBytes)
+        throw new PublicationFailed("unsupported_changes");
+      changes.additions.push({ path, contents });
+    }
+    return { tree, changes };
+  };
+
+  // The head of the Session's branch: what the next publication builds on.
+  let published = checkout.publishedSha;
+  let publishing = false;
+  /**
+   * Publishes the whole work tree on the Session's branch. Refusals that the
+   * Agent can act on are outcomes; anything else throws.
+   */
+  const publish: Publish = async (headline) => {
+    if (!publisher || mode === "plan")
+      throw new Error("This Turn cannot publish");
+    if (publishing) return { published: false, reason: "in_progress" };
+    publishing = true;
+    const span = diagnostics?.start("publication");
+    try {
+      if (!trustedConfig || !(await readFile(configPath)).equals(trustedConfig))
+        throw new Error("Git metadata configuration changed");
+      const validated = v.safeParse(changeHeadline, headline);
+      if (!validated.success)
+        return finish({ published: false, reason: "invalid_change_headline" });
+      const submit = async () => {
+        const parent = published ?? checkout.baseSha;
+        await ensureCommit(parent);
+        const work = await checkedChanges(parent);
+        if (!work) return null;
+        return publisher({
+          branch: checkout.branch,
+          parentSha: parent,
+          tree: work.tree,
+          headline: validated.output,
+          changes: work.changes,
+        });
+      };
+      const result = await submit().catch(async (error: unknown) => {
+        // An earlier publication whose answer was lost moved the branch:
+        // build on it, once.
+        if (
+          !(error instanceof PublicationRefused) ||
+          error.code !== "parent_moved" ||
+          !error.sha
+        )
+          throw error;
+        published = error.sha;
+        await ensureCommit(error.sha);
+        await git(["reset", "--quiet", error.sha]);
+        return submit();
+      });
+      if (!result) return finish({ published: false, reason: "no_changes" });
+      published = result.sha;
+      // The work tree now sits on the published commit, as on GitHub. The
+      // files stay as they are.
+      await ensureCommit(result.sha)
+        .then(() => git(["reset", "--quiet", result.sha]))
+        .catch(() => {});
+      return finish({ published: true, ...result });
+    } catch (error) {
+      if (error instanceof PublicationFailed)
+        return finish({ published: false, reason: error.code });
+      if (error instanceof PublicationRefused && error.code !== "parent_moved")
+        return finish({ published: false, reason: error.code });
+      if (span)
+        diagnostics?.end(
+          span,
+          { outcome: "failed" },
+          diagnosticErrorBody(error),
+        );
+      throw error;
+    } finally {
+      publishing = false;
+    }
+    function finish(outcome: PublishOutcome) {
+      if (span)
+        diagnostics?.end(
+          span,
+          { outcome: outcome.published ? "succeeded" : "failed" },
+          JSON.stringify(outcome),
+        );
+      return outcome;
+    }
+  };
+
   /** Hands this Turn's work to the controller; never fails the Turn. */
   const save = async () => {
     if (!continuity) return;
@@ -316,6 +460,11 @@ export async function runInGitWorkspace(
         checkout.baseSha,
       ]);
       await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+      // What the Session already published is the starting point.
+      if (checkout.publishedSha) {
+        await ensureCommit(checkout.publishedSha);
+        await git(["checkout", "--quiet", "--detach", checkout.publishedSha]);
+      }
       if (activeSpan) diagnostics?.end(activeSpan);
       activeSpan = undefined;
     }
@@ -337,14 +486,11 @@ export async function runInGitWorkspace(
             );
         } catch (error) {
           lost = true;
-          // Start again from the base, without what the restore left behind.
-          await git([
-            "checkout",
-            "--quiet",
-            "--force",
-            "--detach",
-            checkout.baseSha,
-          ]);
+          // Start again from what was published, or the base, without what
+          // the restore left behind.
+          const start = checkout.publishedSha ?? checkout.baseSha;
+          await ensureCommit(start);
+          await git(["checkout", "--quiet", "--force", "--detach", start]);
           await git(["clean", "--quiet", "-d", "--force", "-x"]);
           if (activeSpan)
             diagnostics?.end(
@@ -376,9 +522,10 @@ export async function runInGitWorkspace(
     }
     trustedConfig = await readFile(configPath);
     agentStarted = true;
-    const { reply, headline, plan, sessionTitle } = await work(
+    const { reply, plan, sessionTitle } = await work(
       cwd,
       conversation,
+      mode === "plan" ? undefined : publish,
     );
     const title = sessionTitle ? { sessionTitle } : {};
     signal.throwIfAborted();
@@ -386,85 +533,8 @@ export async function runInGitWorkspace(
       if (!plan) throw new Error("Missing plan result");
       return { reply, plan, ...title };
     }
-    activeSpan = diagnostics?.start("workspace");
-    if (!(await readFile(configPath)).equals(trustedConfig!))
-      throw new Error("Git metadata configuration changed");
-
-    await git(["read-tree", checkout.baseSha]);
-    await git(["add", "--all"]);
-    const tree = (await git(["write-tree"])).toString().trim();
-    const paths = await git([
-      "diff-tree",
-      "-r",
-      "-z",
-      "--raw",
-      "--no-renames",
-      checkout.baseSha,
-      tree,
-    ]);
-    if (!paths.length) {
-      if (activeSpan) diagnostics?.end(activeSpan, {}, "no_changes");
-      activeSpan = undefined;
-      return { reply, publication: { kind: "no_changes" }, ...title };
-    }
-    const validatedHeadline = v.safeParse(changeHeadline, headline);
-    if (!validatedHeadline.success)
-      throw new PublicationFailed("invalid_change_headline");
-
-    const changes: FileChanges = { additions: [], deletions: [] };
-    const entries = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
-      .decode(paths)
-      .split("\0");
-    let size = 0;
-    for (let i = 0; i < entries.length - 1; i += 2) {
-      const [oldMode, newMode, , oid, status] = entries[i]!.slice(1).split(" ");
-      const path = entries[i + 1]!;
-      if (path.split("/").includes("node_modules") || i >= 1024)
-        throw new PublicationFailed("unsupported_changes");
-      if (status === "D") {
-        changes.deletions.push({ path });
-        continue;
-      }
-      // GitHub preserves the mode of an existing regular file and creates new files as 100644.
-      const supported =
-        status === "A"
-          ? newMode === "100644"
-          : oldMode === newMode &&
-            (newMode === "100644" || newMode === "100755");
-      if (!supported) throw new PublicationFailed("unsupported_changes");
-      const contents = (await git(["cat-file", "blob", oid!])).toString(
-        "base64",
-      );
-      size += contents.length;
-      if (size >= maxPublicationBytes)
-        throw new PublicationFailed("unsupported_changes");
-      changes.additions.push({ path, contents });
-    }
-
-    signal.throwIfAborted();
-    if (activeSpan)
-      diagnostics?.end(
-        activeSpan,
-        {},
-        JSON.stringify({
-          additions: changes.additions.map((file) => file.path),
-          deletions: changes.deletions.map((file) => file.path),
-          tree,
-        }),
-      );
-    activeSpan = diagnostics?.start("publication");
-    await stage({
-      branch: checkout.branch,
-      baseSha: checkout.baseSha,
-      tree,
-      headline: validatedHeadline.output,
-      reply,
-      changes,
-      ...title,
-    });
-    if (activeSpan) diagnostics?.end(activeSpan);
-    activeSpan = undefined;
-    return { reply, publication: { kind: "checked" }, ...title };
+    // Publishing is the Agent's choice, made with the publication tool.
+    return { reply, ...title };
   } catch (error) {
     if (activeSpan)
       diagnostics?.end(

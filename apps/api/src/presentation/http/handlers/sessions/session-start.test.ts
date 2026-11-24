@@ -21,7 +21,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  allowedActors: ["planner"],
   maxRunMinutes: 3,
 };
 

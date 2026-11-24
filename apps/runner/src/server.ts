@@ -140,8 +140,7 @@ function workspaceContinuity(
   previous: Buffer | undefined,
 ): WorkspaceContinuity | undefined {
   const input = job.input;
-  if (input.engine !== "codex" || !input.continuity || input.mode === "plan")
-    return undefined;
+  if (input.engine !== "codex" || !input.continuity) return undefined;
   job.saved = { state: "pending" };
   const restore = input.continuity.restore;
   return {

@@ -41,8 +41,7 @@ type RunOutcome =
         | "provider_unavailable"
         | "invalid_execution_context"
         | "artifact_write_failed"
-        | "planning_snapshot_failed"
-        | "planning_input_too_large";
+        | "message_too_large";
       events?: RunnerEvent[];
     };
 

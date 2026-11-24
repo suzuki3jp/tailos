@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-label-automation-dispatch
 key: triggers.label-automation-dispatch
-status: accepted
+status: superseded
 date: "2026-11-18"
 areas: [triggers, projects, database, api]
 keywords: [Routine, label, fanout, coalesced, 冪等性, revision, 移行, 設定管理]

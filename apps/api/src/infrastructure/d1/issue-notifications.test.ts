@@ -182,6 +182,19 @@ test("comment renders only image and session link plus hidden marker", () => {
   );
 });
 
+test("a guidance reply has no Session link and its own marker", () => {
+  expect(
+    commentBody("https://tailos.app", {
+      run_id: "guidance/42/100",
+      guidance_id: "42/100",
+      session_id: null,
+      project_id: null,
+      desired_state: "succeeded",
+      reply_body: "Send @tailos plan",
+    }),
+  ).toBe("Send @\u200btailos plan\n\n<!-- tailos:guidance:42/100:v1 -->");
+});
+
 test("rate limits persist their retry deadline independently of run recovery", async (t) => {
   const db = await createTestDb(t);
   const run = await admitTrigger(db, input);

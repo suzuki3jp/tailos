@@ -1,4 +1,4 @@
-import { processPlanningInputs } from "@/bootstrap/planning.ts";
+import { processSessionInbox } from "@/bootstrap/session-inbox.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { listDueRunIds } from "@/infrastructure/d1/run-recovery.ts";
 import type {
@@ -41,7 +41,7 @@ export default {
     ctx: ExecutionContext,
   ) {
     ctx.waitUntil(deliverIssueNotifications(env));
-    ctx.waitUntil(processPlanningInputs(env));
+    ctx.waitUntil(processSessionInbox(env));
     ctx.waitUntil(deliverTimelineNotifications(env));
     ctx.waitUntil(expireTimeline(env.DB));
     const runner = env.RUNNER;

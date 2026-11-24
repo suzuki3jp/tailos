@@ -214,6 +214,8 @@ export const ExecutionContext = v.pipe(
           projectRevision: positiveId,
         }),
       ),
+      // The Routine's prompt, when its message is what the user wrote.
+      instructions: v.optional(promptText),
       mode: v.optional(ExecutionMode),
       connectionId: v.pipe(
         v.string(),
@@ -243,9 +245,11 @@ export const ExecutionContext = v.pipe(
 export const maxRunnerJobBytes = 32 * 1024;
 
 const job = {
-  planningContext: v.optional(
-    v.pipe(v.string(), v.maxLength(maxRunnerJobBytes)),
-  ),
+  /**
+   * The message this Turn answers, such as an issue comment, when the
+   * prompt holds its Routine's instructions instead.
+   */
+  message: v.optional(v.pipe(v.string(), v.maxLength(maxRunnerJobBytes))),
   mode: v.optional(ExecutionMode),
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),

@@ -1,21 +1,18 @@
 import {
-  dispatchIssueLabel,
-  type LabelResult,
-  type LabelIgnoreReason,
-} from "@/application/routines/dispatch-label.ts";
+  dispatchIssueEvent,
+  type IssueGuidance,
+  type IssueIgnoreReason,
+  type IssueResult,
+} from "@/application/routines/dispatch-issue.ts";
 import type { Routine } from "@/application/routines/routines.ts";
-import type { AdmitTrigger } from "@/application/triggers/admit-trigger.ts";
-import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
+import type {
+  AdmitIssueMessage,
+  IssueMessage,
+} from "@/application/triggers/admit-trigger.ts";
 import type { ProjectRecord } from "@/application/projects/store.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { parseGithubEvent } from "@/application/triggers/github-event.ts";
-import type {
-  PlanningAdmission,
-  PlanningReceipt,
-} from "@/application/triggers/planning.ts";
-import { type ExecutionContext } from "@tailos/core/runner";
-import { codexConnectionId } from "@/application/auth/device.ts";
 import type { Bindings } from "@/bindings.ts";
 import type { TriggerDiagnostic } from "@/application/diagnostics/store.ts";
 
@@ -29,7 +26,7 @@ function parseJson(body: string): unknown {
 
 export function createGithubWebhook(
   scheduleRun: (env: Bindings) => ((id: string) => Promise<void>) | undefined,
-  admit: (env: Bindings) => AdmitTrigger,
+  admit: (env: Bindings) => AdmitIssueMessage,
   findOperatorUserId: (env: Bindings) => Promise<string | null>,
   validSignature: (
     secret: string,
@@ -42,21 +39,30 @@ export function createGithubWebhook(
     event: TriggerDiagnostic,
   ) => Promise<void> = async () => {},
   notify: (env: Bindings) => Promise<void> = async () => {},
-  acceptPlan?: (
-    env: Bindings,
-    input: PlanningAdmission,
-  ) => Promise<PlanningReceipt>,
-  processPlans: (env: Bindings) => Promise<void> = async () => {},
   readRoutines: (
     env: Bindings,
     projectId: string,
   ) => Promise<Routine[]> = async () => [],
-  replayLabels: (
+  replay: (
     env: Bindings,
+    source: IssueMessage["source"],
     deliveryId: string,
     ownerId: string,
     diagnostics?: { traceId: string; requestId: string },
-  ) => Promise<LabelResult[]> = async () => [],
+  ) => Promise<IssueResult[]> = async () => [],
+  latestCommentSession: (
+    env: Bindings,
+    scope: {
+      ownerId: string;
+      projectId: string;
+      repositoryId: number;
+      issueNumber: number;
+    },
+  ) => Promise<string | null> = async () => null,
+  guide: (
+    env: Bindings,
+    guidance: IssueGuidance,
+  ) => Promise<void> = async () => {},
 ) {
   const githubWebhook = new Hono<{ Bindings: Bindings }>();
   githubWebhook.post("/", bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -83,7 +89,7 @@ export function createGithubWebhook(
         ...c.get("diagnosticRequest"),
         source:
           c.req.header("X-GitHub-Event") === "issue_comment"
-            ? "github.issue-plan"
+            ? "github.issue-comment"
             : "github.issue-label",
         reason,
         outcome,
@@ -114,167 +120,76 @@ export function createGithubWebhook(
       return c.json({ error: "invalid_event" }, 400);
     }
 
-    if (normalized.kind === "label") {
-      const delivery = c.req.header("X-GitHub-Delivery");
-      if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
-        await decision("delivery", "failed");
-        return c.json({ error: "missing_delivery_id" }, 400);
-      }
-      const ownerId = await findOperatorUserId(c.env);
-      if (!ownerId) return c.json({ error: "operator_not_initialized" }, 503);
-      let result;
-      let ignoredReason: LabelIgnoreReason = "repository";
-      try {
-        result = await dispatchIssueLabel(
-          {
-            event: normalized.data,
-            deliveryId: delivery,
-            ownerId,
-            diagnostics: c.get("diagnosticRequest"),
-          },
-          {
-            projects: () => readProjects(c.env),
-            routines: (id) => readRoutines(c.env, id),
-            replay: (id, owner) =>
-              replayLabels(c.env, id, owner, c.get("diagnosticRequest")),
-            admit: admit(c.env),
-            ignored: (reason) => {
-              ignoredReason = reason;
-            },
-          },
-        );
-      } catch {
-        await decision("project_config", "failed");
-        return c.json({ error: "invalid_project_config" }, 503);
-      }
-      for (const admission of result.results) {
-        await scheduleRun(c.env)?.(admission.runId).catch(async () => {
-          await decision("schedule", "unknown");
-        });
-      }
-      if (result.results.length) c.executionCtx.waitUntil(notify(c.env));
-      if (result.failed.length) {
-        for (const routineId of result.failed)
-          await decision("project_config", "failed", routineId);
-        return c.json({ ...result, error: "routine_admission_failed" }, 503);
-      }
-      if (!result.results.length) return ignore(ignoredReason);
-      return c.json(result, 202);
+    const delivery = c.req.header("X-GitHub-Delivery");
+    if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
+      await decision("delivery", "failed");
+      return c.json({ error: "missing_delivery_id" }, 400);
     }
-
-    // Repeat only admission-time Project conflicts. Every retry rereads and
-    // reauthorizes the entire trigger; signatures and event parsing stay fixed.
-    const accept = async () => {
-      let projects: ProjectRecord[];
-      try {
-        projects = await readProjects(c.env);
-      } catch {
-        await decision("project_config", "failed");
-        return c.json({ error: "invalid_project_config" }, 503);
-      }
-      const data = normalized.data;
-      const projectRecord = projects.find(
-        (item) => item.project.repositoryId === data.repository.id,
-      );
-      const target = projectRecord?.project;
-      if (
-        !target ||
-        target.repository.toLowerCase() !==
-          data.repository.full_name.toLowerCase()
-      )
-        return ignore("repository");
-      if (target.installationId !== data.installation.id)
-        return ignore("installation");
-      if (
-        !target.allowedActors.some(
-          (actor) => actor.toLowerCase() === data.sender.login.toLowerCase(),
-        )
-      )
-        return ignore("actor");
-      if (data.issue.state !== "open") return ignore("issue_state");
-      if (data.issue.pull_request) return ignore("pull_request");
-
-      const delivery = c.req.header("X-GitHub-Delivery");
-      if (!delivery || !/^[A-Za-z0-9-]{1,100}$/.test(delivery)) {
-        await decision("delivery", "failed");
-        return c.json({ error: "missing_delivery_id" }, 400);
-      }
-
-      const ownerId = await findOperatorUserId(c.env);
-      if (!ownerId) {
-        await decision("operator", "failed");
-        return c.json({ error: "operator_not_initialized" }, 503);
-      }
-
-      const executionContext = {
-        version: 1,
-        engine: "codex",
-        connectionId: codexConnectionId(ownerId),
-        repository: {
-          repository: target.repository,
-          repositoryId: target.repositoryId,
-          installationId: target.installationId,
-          defaultBranch: data.repository.default_branch,
-        },
-        trigger: {
-          kind: "github.issue-comment",
-          issueNumber: data.issue.number,
-        },
-      } satisfies ExecutionContext;
-      const sessionMetadata = {
-        initialTitle: data.issue.title,
-        triggerMetadata: JSON.stringify({
-          kind: "github.issue",
-          repository: target.repository,
-          number: data.issue.number,
-          url: `https://github.com/${target.repository}/issues/${data.issue.number}`,
-        }),
-      };
-      if ("comment" in data && normalized.kind === "comment") {
-        if (!acceptPlan) return c.json({ error: "planning_unavailable" }, 503);
-        const receipt = await acceptPlan(c.env, {
-          ...sessionMetadata,
-          ownerId,
-          projectId: target.id,
-          projectRevision: projectRecord?.revision,
-          repositoryId: target.repositoryId,
-          issueNumber: data.issue.number,
-          commentId: data.comment.id,
-          actor: data.comment.user.login,
-          url: data.comment.html_url,
-          body: data.comment.body,
+    const ownerId = await findOperatorUserId(c.env);
+    if (!ownerId) {
+      await decision("operator", "failed");
+      return c.json({ error: "operator_not_initialized" }, 503);
+    }
+    const source: IssueMessage["source"] =
+      normalized.kind === "label"
+        ? "github.issue-label"
+        : "github.issue-comment";
+    let result;
+    let ignoredReason: IssueIgnoreReason = "repository";
+    let guided = false;
+    try {
+      result = await dispatchIssueEvent(
+        {
+          event: normalized,
           deliveryId: delivery,
-          start: normalized.command.start,
-          executionContext: JSON.stringify({
-            ...executionContext,
-            mode: "plan",
-          }),
-          timeoutMs: target.maxRunMinutes * 60_000,
-        });
-        c.executionCtx.waitUntil(
-          processPlans(c.env)
-            .catch(async () => {
-              // The recovery sweep can dispatch and schedule the persisted input.
-              await decision("schedule", "unknown");
-            })
-            .then(() => notify(c.env)),
-        );
-        return c.json(receipt, 202);
-      }
-      return c.json({ error: "invalid_event" }, 400);
-    };
-    try {
-      return await accept();
-    } catch (error) {
-      if (!(error instanceof ProjectChanged)) throw error;
-    }
-    try {
-      return await accept();
-    } catch (error) {
-      if (!(error instanceof ProjectChanged)) throw error;
+          ownerId,
+          diagnostics: c.get("diagnosticRequest"),
+        },
+        {
+          projects: () => readProjects(c.env),
+          routines: (id) => readRoutines(c.env, id),
+          replay: (id, owner) =>
+            replay(c.env, source, id, owner, c.get("diagnosticRequest")),
+          admit: admit(c.env),
+          latestCommentSession: (scope) => latestCommentSession(c.env, scope),
+          guide: async (guidance) => {
+            await guide(c.env, guidance);
+            guided = true;
+          },
+          ignored: (reason) => {
+            ignoredReason = reason;
+          },
+        },
+      );
+    } catch {
       await decision("project_config", "failed");
-      return c.json({ error: "project_changed" }, 503);
+      return c.json({ error: "invalid_project_config" }, 503);
     }
+    // GitHub gets its answer without waiting: the Turns and the issue
+    // comments are already saved.
+    const started = result.started;
+    if (started.length || guided)
+      c.executionCtx.waitUntil(
+        Promise.all(
+          started.map((runId) =>
+            scheduleRun(c.env)?.(runId).catch(async () => {
+              // The recovery sweep schedules the persisted Turn.
+              await decision("schedule", "unknown");
+            }),
+          ),
+        ).then(() => notify(c.env)),
+      );
+    const body = { results: result.results, failed: result.failed };
+    if (result.failed.length) {
+      for (const routineId of result.failed)
+        await decision("project_config", "failed", routineId);
+      return c.json({ ...body, error: "routine_admission_failed" }, 503);
+    }
+    if (!result.results.length) {
+      if (guided) return c.json(body, 202);
+      return ignore(ignoredReason);
+    }
+    return c.json(body, 202);
   });
 
   return githubWebhook;

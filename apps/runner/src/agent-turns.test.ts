@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import * as v from "valibot";
 import { normalizeSessionTitle, RunnerStatus } from "@tailos/core/runner";
 import {
+  agentPrompt,
   runAgentTurns,
   replySchema,
   type RepositoryJob,
@@ -128,4 +129,17 @@ test("shortening retains the first valid title and keeps the existing validation
         }),
     }),
   ).rejects.toThrow();
+});
+
+test("a Routine's message follows its prompt in either mode", () => {
+  const message = { ...job, message: "@tailos plan Use option B" };
+  for (const mode of [undefined, "plan" as const]) {
+    const prompt = agentPrompt({ ...message, mode }, "tailos_github_get");
+    expect(prompt.indexOf("Work")).toBeLessThan(
+      prompt.indexOf("@tailos plan Use option B"),
+    );
+  }
+  expect(agentPrompt(job, "tailos_github_get")).not.toContain(
+    "The message to answer",
+  );
 });

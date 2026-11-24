@@ -12,8 +12,10 @@ const notificationLabels = {
 export type IssueNotification = {
   run_id: string;
   input_id?: number;
+  /** A reply that tells a commenter how to start; it has no Session. */
+  guidance_id?: string;
   reply_body?: string;
-  session_id: string;
+  session_id: string | null;
   project_id: string | null;
   target: string;
   /** Absent for contexts stored before triggers, which kept the issue in target. */
@@ -33,8 +35,10 @@ export class NotificationError extends Error {
   }
 }
 export function notificationMarker(
-  n: Pick<IssueNotification, "run_id" | "input_id">,
+  n: Pick<IssueNotification, "run_id" | "input_id" | "guidance_id">,
 ) {
+  if (n.guidance_id !== undefined)
+    return `<!-- tailos:guidance:${n.guidance_id}:v1 -->`;
   return n.input_id === undefined
     ? `<!-- tailos:run:${n.run_id}:v1 -->`
     : `<!-- tailos:plan:${n.run_id}:input:${n.input_id}:reply:v1 -->`;
@@ -49,25 +53,28 @@ export function commentBody(
     | "project_id"
     | "desired_state"
     | "input_id"
+    | "guidance_id"
     | "reply_body"
   >,
 ) {
-  const sessionPath = `/sessions/${encodeURIComponent(n.session_id)}`;
   const projectPath =
     n.project_id === null ? "" : `/${encodeURIComponent(n.project_id)}`;
-  const sessionUrl = new URL(projectPath + sessionPath, origin);
+  // A guidance reply has no Session to link to.
+  const link = n.session_id
+    ? `[セッションを開く ↗](${new URL(`${projectPath}/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n`
+    : "";
   if (n.reply_body !== undefined) {
     // Escape all mentions, including team mentions and copied command examples.
     const text = n.reply_body
       .replaceAll("@", "@\u200b")
       .replaceAll("<!-- tailos:", "&lt;!-- tailos:");
-    return `${text}\n\n[セッションを開く ↗](${sessionUrl})\n\n${notificationMarker(n)}`;
+    return `${text}\n\n${link}${notificationMarker(n)}`;
   }
   const state = n.desired_state;
   const alt = notificationLabels[state];
   const asset =
     state === "processing" ? "tailos-rolling-v1.gif" : `tailos-${state}-v1.png`;
-  return `![Tailos が${alt}](${new URL(`/assets/${asset}`, origin)})\n\n[セッションを開く ↗](${sessionUrl})\n\n<!-- tailos:run:${n.run_id}:v1 -->`;
+  return `![Tailos が${alt}](${new URL(`/assets/${asset}`, origin)})\n\n${link}<!-- tailos:run:${n.run_id}:v1 -->`;
 }
 export type NotificationStore = {
   claim(): Promise<IssueNotification[]>;

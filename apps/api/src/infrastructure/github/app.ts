@@ -113,7 +113,6 @@ export type GitHubCheckout = {
   expiresAt: number;
   baseSha: string;
   branch: string;
-  issueSnapshot?: { title: string; body: string };
 };
 
 export const workBranchFor = (trigger: RunTrigger, runId: string) => {
@@ -484,13 +483,6 @@ export class GitHubApp {
             "The default branch must have active creation, update and deletion restrictions",
           );
       }
-      const issueSnapshot =
-        mode === "plan" && issue
-          ? v.parse(
-              v.object({ title: v.string(), body: v.nullable(v.string()) }),
-              issue,
-            )
-          : undefined;
       const base = v.parse(
         refSchema,
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
@@ -499,12 +491,6 @@ export class GitHubApp {
         // The Run's token, added to the Agent's GitHub requests outside the
         // container. It is limited to the target repository only.
         ...(await this.token(target)),
-        ...(issueSnapshot && {
-          issueSnapshot: {
-            title: issueSnapshot.title,
-            body: issueSnapshot.body ?? "",
-          },
-        }),
         baseSha: base.object.sha,
         branch: workBranch,
       };

@@ -20,7 +20,6 @@ test("signed label webhook runs the saved Routine with the Project settings", as
       repository: "owner/private",
       repositoryId: 42,
       installationId: 19,
-      allowedActors: ["plan-user"],
       maxRunMinutes: 3,
     },
     owner.id,
@@ -119,7 +118,8 @@ test("signed label webhook runs the saved Routine with the Project settings", as
   expect(data.results).toHaveLength(1);
   expect(data.results[0].routineId).toBe(routine.id);
   expect(await (await send(event)).json()).toEqual(data);
-  expect(schedule).toHaveBeenCalledTimes(2);
+  // The redelivery reports the same Turn without starting it again.
+  expect(schedule).toHaveBeenCalledTimes(1);
   expect(
     await db
       .prepare(

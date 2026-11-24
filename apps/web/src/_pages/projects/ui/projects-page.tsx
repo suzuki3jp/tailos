@@ -21,7 +21,6 @@ const empty: ProjectSettings = {
   repository: "",
   repositoryId: 0,
   installationId: 0,
-  allowedActors: [],
   maxRunMinutes: 30,
 };
 const fieldClass =
@@ -45,10 +44,6 @@ function Snapshot({ project }: { project: ProjectChange["before"] }) {
         </div>
       )}
       <div>
-        <dt className="text-muted-foreground">plan の許可ユーザー</dt>
-        <dd>{project.allowedActors.join(", ")}</dd>
-      </div>
-      <div>
         <dt className="text-muted-foreground">制限時間</dt>
         <dd>{project.maxRunMinutes}分</dd>
       </div>
@@ -71,7 +66,6 @@ export function ProjectsPage() {
   const history = useQuery(projectHistoryQueryOptions(before));
   const [editing, setEditing] = useState<ProjectItem | null>(null);
   const [settings, setSettings] = useState<ProjectSettings>({ ...empty });
-  const [actors, setActors] = useState("");
   const [legacyJson, setLegacyJson] = useState("");
   const invalidate = async () => {
     await Promise.all([
@@ -83,15 +77,10 @@ export function ProjectsPage() {
   const reset = () => {
     setEditing(null);
     setSettings({ ...empty });
-    setActors("");
   };
   const save = useMutation({
     mutationFn: () =>
-      saveProject(
-        { ...settings, allowedActors: actors.split(/[,\s]+/).filter(Boolean) },
-        editing?.project.id,
-        editing?.revision,
-      ),
+      saveProject(settings, editing?.project.id, editing?.revision),
     onSuccess: async () => {
       reset();
       await invalidate();
@@ -294,10 +283,8 @@ export function ProjectsPage() {
                           repository: item.project.repository,
                           repositoryId: item.project.repositoryId,
                           installationId: item.project.installationId,
-                          allowedActors: item.project.allowedActors,
                           maxRunMinutes: item.project.maxRunMinutes,
                         });
-                        setActors(item.project.allowedActors.join(", "));
                         save.reset();
                       }}
                     >
@@ -414,27 +401,10 @@ export function ProjectsPage() {
             />
           </label>
         </div>
-        <label className="block space-y-2 text-sm">
-          plan の起動を許可する GitHub ユーザー
-          <input
-            required
-            className={fieldClass}
-            value={actors}
-            onChange={(e) => setActors(e.target.value)}
-            placeholder="login1, login2"
-          />
-          <span className="text-muted-foreground">
-            ログイン名をカンマまたは空白で区切って入力します（1〜100件）。
-          </span>
-        </label>
         <div className="flex gap-3">
           <button
             className="action action-primary"
-            disabled={
-              busy ||
-              selected < 0 ||
-              actors.split(/[,\s]+/).filter(Boolean).length === 0
-            }
+            disabled={busy || selected < 0}
             type="submit"
           >
             {save.isPending ? "保存しています…" : "保存"}

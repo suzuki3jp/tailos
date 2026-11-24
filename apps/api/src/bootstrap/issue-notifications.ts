@@ -1,4 +1,4 @@
-import { planningReplyStore } from "@/infrastructure/d1/planning-replies.ts";
+import { issueGuidanceStore } from "@/infrastructure/d1/issue-guidance.ts";
 import type { Bindings } from "@/bindings.ts";
 import { sendIssueNotifications } from "@/application/notifications/issue-comment.ts";
 import { issueNotificationStore } from "@/infrastructure/d1/issue-notifications.ts";
@@ -17,7 +17,7 @@ export async function deliverIssueNotifications(env: Bindings) {
   });
   for (const store of [
     issueNotificationStore(env.DB),
-    planningReplyStore(env.DB),
+    issueGuidanceStore(env.DB),
   ])
     await sendIssueNotifications(
       store,

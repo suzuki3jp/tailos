@@ -1,5 +1,6 @@
 import {
   implementationPrompt,
+  planningPrompt,
   routineSettings,
 } from "@/application/routines/routines.ts";
 import type { D1Database } from "@cloudflare/workers-types";
@@ -35,12 +36,15 @@ function readProject(value: string, name?: string): Project {
     triggerLabel: _legacyLabel,
     // Agent egress is always allowed now; stored rows are not rewritten.
     agentNetworkAccess: _removedNetworkSetting,
+    // Routines hold the users who may start them; history keeps old values.
+    allowedActors: _routineActors,
     ...config
   } = v.parse(
     v.looseObject({
       name: v.optional(v.string()),
       triggerLabel: v.optional(v.string()),
       agentNetworkAccess: v.optional(v.unknown()),
+      allowedActors: v.optional(v.unknown()),
     }),
     JSON.parse(value),
   );
@@ -107,8 +111,13 @@ export function d1Projects(db: D1Database): ProjectStore {
         actorId,
       );
   function configuration(project: ProjectSnapshot) {
-    const { name: _name, triggerLabel: _legacyLabel, ...config } = project;
-    return config;
+    const {
+      name: _name,
+      triggerLabel: _legacyLabel,
+      ...config
+    } = project as ProjectSnapshot & { allowedActors?: string[] };
+    const { allowedActors: _routineActors, ...settings } = config;
+    return settings;
   }
   return {
     async settings(ownerId) {
@@ -211,7 +220,11 @@ export function d1Projects(db: D1Database): ProjectStore {
       v.parse(
         projectsSchema,
         projects.map((project) => {
-          const { triggerLabel: _label, ...settings } = project;
+          const {
+            triggerLabel: _label,
+            allowedActors: _actors,
+            ...settings
+          } = project;
           return settings;
         }),
       );
@@ -275,6 +288,34 @@ export function d1Projects(db: D1Database): ProjectStore {
               ),
           );
         }
+        // `@tailos plan` started for the same users.
+        statements.push(
+          db
+            .prepare(`INSERT INTO routines (id, project_id, config, created_at, updated_at, updated_by)
+          SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
+            .bind(
+              crypto.randomUUID(),
+              project.id,
+              JSON.stringify(
+                v.parse(routineSettings, {
+                  name: "Issue planning",
+                  enabled: true,
+                  trigger: {
+                    version: 1,
+                    type: "github.issue-comment",
+                    command: "plan",
+                  },
+                  allowedActors: project.allowedActors,
+                  prompt: planningPrompt,
+                  engine: "codex",
+                }),
+              ),
+              now,
+              now,
+              actorId,
+              changeId,
+            ),
+        );
         statements.push(
           db
             .prepare(`UPDATE sessions SET project_id = ? WHERE project_id = ?

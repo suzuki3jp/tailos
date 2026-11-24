@@ -8,12 +8,27 @@ import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import app from "@/bootstrap/http.ts";
 import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
 import {
-  acceptPlanningInput,
-  dispatchPlanningInputs,
-} from "@/infrastructure/d1/planning.ts";
+  admitIssueMessage,
+  dispatchSessionInbox,
+} from "@/infrastructure/d1/session-inbox.ts";
 import { d1Projects } from "@/infrastructure/d1/projects.ts";
+import { d1Routines } from "@/infrastructure/d1/routines.ts";
+import {
+  planningPrompt,
+  type RoutineSettings,
+} from "@/application/routines/routines.ts";
+import { planningGuidance } from "@/application/routines/dispatch-issue.ts";
 
-test("accepts explicit new planning comments without labels and rejects ineligible comments", async (t) => {
+const planRoutine: RoutineSettings = {
+  name: "Planning",
+  enabled: true,
+  trigger: { version: 1, type: "github.issue-comment", command: "plan" },
+  allowedActors: ["allowed"],
+  engine: "codex",
+  prompt: planningPrompt,
+};
+
+test("runs plan comments as the plan Routine's Session and rejects ineligible comments", async (t) => {
   const db = await createTestDb(t);
   const schedule = vi.fn(async () => {});
   const background: Promise<unknown>[] = [];
@@ -24,18 +39,18 @@ test("accepts explicit new planning comments without labels and rejects ineligib
     TAILOS_GH_APP_ID: "100",
     TAILOS_GH_APP_PRIVATE_KEY: "unused",
   };
-  await d1Projects(db).create(
+  const owner = await createTestOperator(env);
+  const project = await d1Projects(db).create(
     {
       name: "Tailos",
       repository: "owner/repo",
       repositoryId: 42,
       installationId: 19,
-      allowedActors: ["allowed"],
       maxRunMinutes: 30,
     },
-    "setup",
+    owner.id,
   );
-  await createTestOperator(env);
+  await d1Routines(db).save(owner.id, project.project.id, planRoutine);
   const event = {
     action: "created",
     repository: { id: 42, full_name: "owner/repo", default_branch: "main" },
@@ -129,12 +144,19 @@ test("accepts explicit new planning comments without labels and rejects ineligib
   expect(
     await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
   ).toBe(0);
+  // Nothing to continue yet: the commenter hears how to start.
   const guidance = await send({
     ...event,
     comment: { ...event.comment, body: "@tailos help" },
   });
   expect(guidance.status).toBe(202);
   expect(schedule).not.toHaveBeenCalled();
+  expect(
+    await db.prepare("SELECT body FROM issue_guidance").first("body"),
+  ).toBe(planningGuidance);
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
+  ).toBe(0);
   let rejectScheduling: (error: Error) => void = () => {};
   const scheduling = new Promise<void>((_resolve, reject) => {
     rejectScheduling = reject;
@@ -152,8 +174,8 @@ test("accepts explicit new planning comments without labels and rejects ineligib
   expect(first.status).toBe(202);
   // The response and durable receipt must be available while scheduling is blocked.
   expect(
-    await db.prepare("SELECT count(*) AS n FROM planning_inbox").first("n"),
-  ).toBe(2);
+    await db.prepare("SELECT count(*) AS n FROM session_inbox").first("n"),
+  ).toBe(1);
   await vi.waitFor(() => expect(schedule).toHaveBeenCalledOnce());
   rejectScheduling(new Error("Alarm unavailable"));
   await Promise.all(background);
@@ -164,43 +186,63 @@ test("accepts explicit new planning comments without labels and rejects ineligib
       )
       .first("reason"),
   ).toBe("schedule");
-  const receipt = await first.json();
-  assert(
-    receipt &&
-      typeof receipt === "object" &&
-      "sessionId" in receipt &&
-      typeof receipt.sessionId === "string",
-  );
-  const second = await send({
-    ...event,
-    comment: { ...event.comment, id: 102, body: "@tailos choose option B" },
-  });
-  const secondReceipt = await second.json();
-  assert(
-    secondReceipt &&
-      typeof secondReceipt === "object" &&
-      "sessionId" in secondReceipt,
-  );
-  expect(secondReceipt.sessionId).toBe(receipt.sessionId);
-  expect(schedule).toHaveBeenCalledTimes(1);
-  expect(
-    await db
-      .prepare(
-        "SELECT count(*) AS n FROM planning_inbox WHERE state = 'pending'",
-      )
-      .first("n"),
-  ).toBe(1);
+  const receipt: {
+    results: { sessionId: string; runId?: string; disposition: string }[];
+  } = await first.json();
+  const [started] = receipt.results;
+  assert(started?.runId);
+  expect(started.disposition).toBe("started");
+  // The comment is the message; the Routine's prompt says what to do.
   expect(
     JSON.parse(
       (await db
         .prepare("SELECT execution_context FROM runs")
         .first<string>("execution_context"))!,
-    ).mode,
-  ).toBe("plan");
+    ),
+  ).toMatchObject({
+    mode: "plan",
+    instructions: planningPrompt,
+    trigger: { kind: "github.issue-comment", issueNumber: 8 },
+  });
+  expect(
+    await db
+      .prepare("SELECT body FROM session_messages WHERE seq = 1")
+      .first("body"),
+  ).toBe("@tailos plan");
+  // A comment while the Turn runs waits in the same Session.
+  const second = await send({
+    ...event,
+    comment: { ...event.comment, id: 102, body: "@tailos choose option B" },
+  });
+  const secondReceipt: typeof receipt = await second.json();
+  expect(secondReceipt.results).toEqual([
+    {
+      routineId: expect.any(String),
+      sessionId: started.sessionId,
+      disposition: "queued",
+    },
+  ]);
+  expect(schedule).toHaveBeenCalledTimes(1);
+  await db
+    .prepare(
+      "UPDATE runs SET status = 'succeeded', finished_at = 1 WHERE id = ?",
+    )
+    .bind(started.runId)
+    .run();
+  const [next] = await dispatchSessionInbox(db);
+  expect(
+    await db
+      .prepare(
+        "SELECT m.body FROM runs r JOIN session_messages m ON m.id = r.start_message_id WHERE r.id = ?",
+      )
+      .bind(next)
+      .first("body"),
+  ).toBe("@tailos choose option B");
+  const receipt2 = { sessionId: started.sessionId };
   expect(
     (
       await app.request(
-        `https://api.tailos.example/v1/sessions/${receipt.sessionId}`,
+        `https://api.tailos.example/v1/sessions/${receipt2.sessionId}`,
         undefined,
         env,
       )
@@ -209,14 +251,10 @@ test("accepts explicit new planning comments without labels and rejects ineligib
 });
 
 test.for([false, true])(
-  "delivers planning status after dispatch without blocking acknowledgement (schedule fails: %s)",
+  "shows the plan Turn on the issue without waiting for scheduling (schedule fails: %s)",
   async (scheduleFails, t) => {
     const DB = await createTestDb(t);
-    let releaseDispatch: () => void = () => {};
-    const dispatchGate = new Promise<void>((resolve) => {
-      releaseDispatch = resolve;
-    });
-    const background: Promise<unknown>[] = [];
+    const owner = "00000000-0000-4000-8000-000000000001";
     const recordDecision = vi.fn(async () => {});
     const notify = vi.fn(async () => {
       expect(
@@ -225,33 +263,30 @@ test.for([false, true])(
         ),
       ).toBe(1);
     });
-    await d1Projects(DB).create(
+    const background: Promise<unknown>[] = [];
+    const project = await d1Projects(DB).create(
       {
         name: "Tailos",
         repository: "owner/repo",
         repositoryId: 42,
         installationId: 19,
-        allowedActors: ["allowed"],
         maxRunMinutes: 30,
       },
-      "setup",
+      owner,
     );
+    await d1Routines(DB).save(owner, project.project.id, planRoutine);
+    const schedule = vi.fn(async () => {
+      if (scheduleFails) throw new Error("Alarm unavailable");
+    });
     const webhook = createGithubWebhook(
-      () => undefined,
-      () => async () => {
-        throw new Error("Unexpected label admission");
-      },
-      async () => "operator",
+      () => schedule,
+      (env) => (input) => admitIssueMessage(env.DB, input),
+      async () => owner,
       async () => true,
       (env) => d1Projects(env.DB).list(),
       recordDecision,
       notify,
-      (env, input) => acceptPlanningInput(env.DB, input),
-      async (env) => {
-        await dispatchGate;
-        expect(await dispatchPlanningInputs(env.DB)).toHaveLength(1);
-        if (scheduleFails) throw new Error("Alarm unavailable");
-      },
+      (env, id) => d1Routines(env.DB).candidates(id),
     );
     const response = await webhook.request(
       "/",
@@ -294,16 +329,8 @@ test.for([false, true])(
       },
     );
     expect(response.status).toBe(202);
-    expect(await response.json()).toEqual({
-      sessionId: expect.any(String),
-      inputId: expect.any(Number),
-    });
-    expect(notify).not.toHaveBeenCalled();
-    expect(await DB.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(
-      0,
-    );
-    releaseDispatch();
     await Promise.all(background);
+    expect(schedule).toHaveBeenCalledOnce();
     expect(notify).toHaveBeenCalledOnce();
     if (scheduleFails) {
       expect(recordDecision).toHaveBeenCalledWith(

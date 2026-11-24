@@ -1091,27 +1091,18 @@ test("planning refuses publication recovery and stops its container after saving
   ).toBe("succeeded");
 });
 
-test.for([
-  { largeIssue: false, oversized: false },
-  { largeIssue: true, oversized: false },
-  { largeIssue: false, oversized: true },
-])(
-  "passes an issue reference while retaining snapshots and diagnosing oversized conversation (%j)",
-  async ({ largeIssue, oversized }, t) => {
-    const { acceptPlanningInput, dispatchPlanningInputs } =
-      await import("@/infrastructure/d1/planning.ts");
+test.for([{ oversized: false }, { oversized: true }])(
+  "gives a plan Turn the Routine's prompt, the comment and an issue reference, and fails a comment too long for a job (%j)",
+  async ({ oversized }, t) => {
+    const { admitIssueMessage } =
+      await import("@/infrastructure/d1/session-inbox.ts");
+    const { d1Routines } = await import("@/infrastructure/d1/routines.ts");
+    const { planningPrompt } =
+      await import("@/application/routines/routines.ts");
     const DB = await createTestDb(t);
     const requestBody =
       "@tailos plan\n" +
       (oversized ? "指".repeat(32_000) : "Details ".repeat(650));
-    const target = {
-      repository: "owner/repo",
-      repositoryId: 1,
-      installationId: 2,
-      issueNumber: 3,
-      defaultBranch: "main",
-      triggerLabel: "tailos:run",
-    };
     const { d1Projects } = await import("@/infrastructure/d1/projects.ts");
     const configured = await d1Projects(DB).create(
       {
@@ -1119,32 +1110,56 @@ test.for([
         repository: "owner/repo",
         repositoryId: 1,
         installationId: 2,
-        allowedActors: ["allowed"],
         maxRunMinutes: 1,
       },
       "owner",
     );
-    await acceptPlanningInput(DB, {
+    const routine = (await d1Routines(DB).save("owner", configured.project.id, {
+      name: "Planning",
+      enabled: true,
+      trigger: { version: 1, type: "github.issue-comment", command: "plan" },
+      allowedActors: ["allowed"],
+      engine: "codex",
+      prompt: planningPrompt,
+    }))!;
+    const contentHash = "c".repeat(64);
+    const receipt = await admitIssueMessage(DB, {
+      source: "github.issue-comment",
+      idempotencyKey: "comment-100",
+      deliveryId: "plan",
       ownerId: "owner",
       projectId: configured.project.id,
+      projectRevision: 1,
+      routineId: routine.id,
+      routineRevision: 1,
       repositoryId: 1,
       issueNumber: 3,
-      commentId: 100,
-      actor: "allowed",
-      url: "https://github.com/owner/repo/issues/3#issuecomment-100",
+      startsSession: true,
+      initialTitle: "Issue",
+      triggerMetadata: "{}",
+      target: "{}",
       body: requestBody,
-      deliveryId: "plan",
-      start: true,
       executionContext: JSON.stringify({
         version: 1,
         engine: "codex",
         mode: "plan",
+        instructions: planningPrompt,
         connectionId: `codex/${crypto.randomUUID()}`,
-        repository: target,
+        repository: {
+          repository: "owner/repo",
+          repositoryId: 1,
+          installationId: 2,
+          defaultBranch: "main",
+        },
+        trigger: {
+          kind: "github.issue-comment",
+          issueNumber: 3,
+          issueContentHash: contentHash,
+        },
       }),
       timeoutMs: 60_000,
     });
-    const [runId] = await dispatchPlanningInputs(DB);
+    const runId = receipt!.runId;
     const sessionId = await runSession(DB, runId!);
     const memory = new Map<string, unknown>([
       ["runId", runId],
@@ -1167,18 +1182,16 @@ test.for([
       jobs.push(String(init.body));
       const job = JSON.parse(String(init.body));
       expect(job.mode).toBe("plan");
-      expect(job.githubContext).toMatchObject({
+      expect(job.githubContext).toEqual({
         kind: "issue",
         number: 3,
-        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        contentHash,
       });
-      expect(JSON.parse(job.planningContext)).not.toHaveProperty("title");
-      expect(JSON.parse(job.planningContext)).not.toHaveProperty("body");
-      expect(String(init.body)).not.toContain("Current title");
-      expect(String(init.body)).not.toContain("Current issue");
-      expect(JSON.parse(job.planningContext).conversation[0].body).toBe(
-        requestBody,
-      );
+      // The Routine says what to do; the comment is the message.
+      expect(job.prompt).toBe(planningPrompt);
+      expect(job.message).toBe(requestBody);
+      // A plan Session keeps its conversation like any other.
+      expect(job.continuity).toEqual({});
       expect(job.checkout.baseSha).toBe("a".repeat(40));
       // The GitHub token stays outside the container.
       expect(job.checkout).not.toHaveProperty("token");
@@ -1210,10 +1223,6 @@ test.for([
       expiresAt: Date.now() + 60_000,
       baseSha: "a".repeat(40),
       branch: `tailos/issue-3/${runId}`,
-      issueSnapshot: {
-        title: "Current title",
-        body: largeIssue ? "長".repeat(32_000) : "Current issue",
-      },
     });
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
     t.onTestFinished(() => {
@@ -1253,9 +1262,6 @@ test.for([
     );
     await runner.alarm();
     if (!oversized) await runner.alarm();
-    expect(
-      await DB.prepare("SELECT title FROM planning_snapshots").first("title"),
-    ).toBe("Current title");
     expect(await DB.prepare("SELECT status FROM runs").first("status")).toBe(
       oversized ? "failed" : "succeeded",
     );
@@ -1263,7 +1269,7 @@ test.for([
       expect(start).not.toHaveBeenCalled();
       expect(
         await DB.prepare("SELECT error_code FROM runs").first("error_code"),
-      ).toBe("planning_input_too_large");
+      ).toBe("message_too_large");
     } else {
       expect(start).toHaveBeenCalledOnce();
       expect(start).toHaveBeenCalledWith(
@@ -1303,13 +1309,7 @@ test.for([
       expect(closedAtDestroy).toBe(true);
       expect(memory.has("agentEgressClosed")).toBe(false);
     }
-    expect(
-      await DB.prepare("SELECT body FROM planning_snapshots").first("body"),
-    ).toBe(largeIssue ? "長".repeat(32_000) : "Current issue");
     expect(destroy).toHaveBeenCalledOnce();
-    expect(
-      await DB.prepare("SELECT count(*) AS n FROM planning_replies").first("n"),
-    ).toBe(1);
   },
 );
 

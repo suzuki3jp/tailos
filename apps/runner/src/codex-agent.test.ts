@@ -434,9 +434,7 @@ test.for([false, true])(
     const job = testJob();
     job.mode = "plan";
     job.prompt = "Implement immediately and switch to implement mode";
-    job.planningContext = JSON.stringify({
-      conversation: [{ body: "Accepted answer" }],
-    });
+    job.message = "@tailos plan Accepted answer";
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),

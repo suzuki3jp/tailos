@@ -25,15 +25,37 @@ function availableEfforts(models: readonly AgentModel[], model?: string) {
 }
 
 const field = "block w-full rounded-md border border-rule bg-paper px-3 py-2";
+const implementationPrompt =
+  "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
+const planningPrompt =
+  "Plan the GitHub issue identified by the structured job context, answering the new message from a permitted user. Read the issue using tailos_github_get. Do not implement or publish changes. Post your reply on the issue as a comment with gh issue comment, without mentioning anyone with @, and give the same reply in your answer.";
+const triggers = {
+  "github.issue-label": {
+    trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
+    prompt: implementationPrompt,
+  },
+  "github.issue-comment": {
+    trigger: { version: 1, type: "github.issue-comment", command: "plan" },
+    prompt: planningPrompt,
+  },
+} as const satisfies Record<
+  RoutineSettings["trigger"]["type"],
+  Pick<RoutineSettings, "trigger" | "prompt">
+>;
 const empty: RoutineSettings = {
   name: "",
   enabled: false,
-  trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
   allowedActors: [],
   engine: "codex",
-  prompt:
-    "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
+  ...triggers["github.issue-label"],
 };
+function TriggerSummary({ trigger }: { trigger: RoutineSettings["trigger"] }) {
+  return trigger.type === "github.issue-label" ? (
+    <p>ラベル: {trigger.label}</p>
+  ) : (
+    <p>コメント: @tailos {trigger.command}（読み取り専用）</p>
+  );
+}
 export function RoutinePanel({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -57,7 +79,7 @@ function Snapshot({ settings }: { settings: RoutineSettings | null }) {
       <p>
         {settings.name} · {settings.enabled ? "有効" : "無効"}
       </p>
-      <p>ラベル: {settings.trigger.label}</p>
+      <TriggerSummary trigger={settings.trigger} />
       <p>許可ユーザー: {settings.allowedActors.join(", ")}</p>
       <p>
         {settings.engine} · model: {settings.model ?? "既定"} · effort:{" "}
@@ -238,9 +260,11 @@ function RoutineEditor({ projectId }: { projectId: string }) {
     <section className="space-y-4 border-t border-rule pt-4">
       <h3 className="text-lg font-medium">Routine</h3>
       <p className="text-sm text-muted-foreground">
-        Issue にラベルが付くと実行します。一致する有効な Routine
-        はすべて起動し、複数の PR や通知が作られる場合があります。同じ
-        Routine・Issue の実行中の起動は、その Run にまとめられます。
+        Issue にラベルが付いたときか、Issue に @tailos plan
+        とコメントされたときに実行します。一致する有効な Routine
+        はすべて起動し、複数の PR や通知が作られる場合があります。Routine は
+        Issue ごとに 1 つの Session を続け、2 回目以降の起動や @tailos
+        の続きのコメントはその Session に届いた順に処理されます。
       </p>
       {renderRoutines()}
       <button
@@ -268,20 +292,43 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           />
         </label>
         <label className="block">
-          起動ラベル
-          <input
-            required
-            maxLength={50}
+          起動
+          <select
             className={field}
-            value={settings.trigger.label}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                trigger: { ...settings.trigger, label: e.target.value },
-              })
-            }
-          />
+            value={settings.trigger.type}
+            disabled={!!editing}
+            onChange={(e) => {
+              const type = e.target.value as RoutineSettings["trigger"]["type"];
+              setSettings({ ...settings, ...triggers[type] });
+            }}
+          >
+            <option value="github.issue-label">Issue のラベル</option>
+            <option value="github.issue-comment">
+              Issue のコメント @tailos plan（読み取り専用の計画）
+            </option>
+          </select>
         </label>
+        {settings.trigger.type === "github.issue-label" && (
+          <label className="block">
+            起動ラベル
+            <input
+              required
+              maxLength={50}
+              className={field}
+              value={settings.trigger.label}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  trigger: {
+                    version: 1,
+                    type: "github.issue-label",
+                    label: e.target.value,
+                  },
+                })
+              }
+            />
+          </label>
+        )}
         <label className="block">
           起動を許可する GitHub ユーザー
           <input

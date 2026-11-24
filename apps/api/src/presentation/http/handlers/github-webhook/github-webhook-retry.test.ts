@@ -1,8 +1,11 @@
 import {
   d1Routines,
-  replayLabelDelivery,
+  replayIssueDelivery,
 } from "@/infrastructure/d1/routines.ts";
-import { implementationPrompt } from "@/application/routines/routines.ts";
+import {
+  implementationPrompt,
+  planningPrompt,
+} from "@/application/routines/routines.ts";
 import { Hono } from "hono";
 import { expect, test, vi, type TestContext } from "vitest";
 import { createGithubWebhook } from "./github-webhook.ts";
@@ -10,8 +13,10 @@ import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import { requestDiagnostics } from "@/presentation/http/middlewares/request-diagnostics.ts";
 import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import { d1Projects } from "@/infrastructure/d1/projects.ts";
-import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
-import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
+import {
+  admitIssueMessage,
+  latestCommentSession,
+} from "@/infrastructure/d1/session-inbox.ts";
 import type { Bindings } from "@/bindings.ts";
 
 const settings = {
@@ -19,9 +24,9 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  allowedActors: ["allowed"],
   maxRunMinutes: 30,
 };
+const allowedActors = ["allowed"];
 type Kind = "label" | "comment";
 type Change =
   | "settings"
@@ -39,12 +44,15 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
   const project = await store.create(settings, owner);
   const routines = d1Routines(DB);
   const routine = await routines.save(owner, project.project.id, {
-    name: "Implementation",
+    name: kind === "label" ? "Implementation" : "Planning",
     enabled: true,
-    trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
-    allowedActors: settings.allowedActors,
+    trigger:
+      kind === "label"
+        ? { version: 1, type: "github.issue-label", label: "tailos:run" }
+        : { version: 1, type: "github.issue-comment", command: "plan" },
+    allowedActors,
     engine: "codex",
-    prompt: implementationPrompt,
+    prompt: kind === "label" ? implementationPrompt : planningPrompt,
   });
   let attempts = 0;
   const race = async () => {
@@ -52,7 +60,7 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
     if (change === "unexpected") throw new Error("original owner mismatch");
     if (change === "repeated") throw new ProjectChanged("another edit");
     if (attempts !== 1) return;
-    if (kind === "label" && (change === "actor" || change === "label")) {
+    if (change === "actor" || (kind === "label" && change === "label")) {
       await routines.save(
         owner,
         project.project.id,
@@ -65,7 +73,13 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
           engine: routine!.engine,
           ...(change === "actor"
             ? { allowedActors: ["someone-else"] }
-            : { trigger: { ...routine!.trigger, label: "new-label" } }),
+            : {
+                trigger: {
+                  version: 1,
+                  type: "github.issue-label",
+                  label: "new-label",
+                },
+              }),
         },
         { id: routine!.id, revision: 1 },
       );
@@ -80,7 +94,6 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
       {
         ...settings,
         maxRunMinutes: 2,
-        ...(change === "actor" && { allowedActors: ["someone-else"] }),
         ...(change === "installation" && { installationId: 20 }),
         ...(change === "repository" && { repositoryId: 43 }),
       },
@@ -93,20 +106,18 @@ async function fixture(t: TestContext, kind: Kind, change: Change) {
     () => undefined,
     (env) => async (input) => {
       await race();
-      return admitTrigger(env.DB, input);
+      return admitIssueMessage(env.DB, input);
     },
     async () => "00000000-0000-4000-8000-000000000001",
     async () => true,
     read,
     diagnostic,
     async () => {},
-    async (env, input) => {
-      await race();
-      return acceptPlanningInput(env.DB, input);
-    },
-    async () => {},
     (env, id) => d1Routines(env.DB).candidates(id),
-    (env, id, ownerId) => replayLabelDelivery(env.DB, id, ownerId),
+    (env, source, id, ownerId) =>
+      replayIssueDelivery(env.DB, source, id, ownerId),
+    async (env, scope) =>
+      (await latestCommentSession(env.DB, scope))?.routineId ?? null,
   );
   const app = new Hono<{ Bindings: Bindings }>()
     .use("*", requestDiagnostics)
@@ -162,23 +173,13 @@ test.for(["label", "comment"] as const)(
     expect(
       await f.DB.prepare("SELECT count(*) AS n FROM sessions").first("n"),
     ).toBe(1);
-    if (kind === "label") {
-      const row = await f.DB.prepare(
-        "SELECT execution_context, deadline_at - created_at AS timeout FROM runs",
-      ).first<{ execution_context: string; timeout: number }>();
-      expect(JSON.parse(row!.execution_context).repository).not.toHaveProperty(
-        "agentNetworkAccess",
-      );
-      expect(row!.timeout).toBe(120_000);
-    } else {
-      const row = await f.DB.prepare(
-        "SELECT execution_context, timeout_ms AS timeout FROM planning_inbox",
-      ).first<{ execution_context: string; timeout: number }>();
-      expect(JSON.parse(row!.execution_context).repository).not.toHaveProperty(
-        "agentNetworkAccess",
-      );
-      expect(row!.timeout).toBe(120_000);
-    }
+    const row = await f.DB.prepare(
+      "SELECT execution_context, deadline_at - created_at AS timeout FROM runs",
+    ).first<{ execution_context: string; timeout: number }>();
+    expect(JSON.parse(row!.execution_context)).toMatchObject(
+      kind === "label" ? {} : { mode: "plan", instructions: planningPrompt },
+    );
+    expect(row!.timeout).toBe(120_000);
   },
 );
 
@@ -200,7 +201,7 @@ for (const kind of ["label", "comment"] as const) {
     const response = await f.send();
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({
-      error: kind === "label" ? "routine_admission_failed" : "project_changed",
+      error: "routine_admission_failed",
     });
     expect(f.read).toHaveBeenCalledTimes(2);
     expect(f.attempts()).toBe(2);
@@ -216,7 +217,7 @@ for (const kind of ["label", "comment"] as const) {
     expect(storage.read).toHaveBeenCalledTimes(1);
     expect(storage.attempts()).toBe(0);
     const mismatch = await fixture(t, kind, "unexpected");
-    expect((await mismatch.send()).status).toBe(kind === "label" ? 503 : 500);
+    expect((await mismatch.send()).status).toBe(503);
     expect(mismatch.attempts()).toBe(1);
     expect(mismatch.read).toHaveBeenCalledTimes(1);
   });

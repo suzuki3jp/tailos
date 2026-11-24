@@ -23,6 +23,8 @@ export type RepositoryChoice = Pick<
   "repository" | "repositoryId" | "installationId"
 >;
 export type ProjectSnapshot = Project & { triggerLabel?: string };
+/** A Project imported from the legacy settings, with its Routines' users. */
+export type ImportedProject = ProjectSnapshot & { allowedActors: string[] };
 export type ProjectChange = {
   id: number;
   projectId: string;
@@ -51,7 +53,7 @@ export type ProjectStore = {
   ): Promise<ProjectRecord | null>;
   remove(id: string, revision: number, actorId: string): Promise<boolean>;
   import(
-    projects: ProjectSnapshot[],
+    projects: ImportedProject[],
     legacyIds: string[],
     actorId: string,
   ): Promise<void>;

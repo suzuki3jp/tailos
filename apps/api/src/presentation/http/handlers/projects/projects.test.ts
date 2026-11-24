@@ -18,7 +18,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  allowedActors: ["operator"],
 };
 test("operator-only CRUD and repository discovery enforce Origin, validation and server-side GitHub verification", async (t) => {
   const db = await createTestDb(t);
@@ -86,7 +85,7 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
     { ...settings, id: crypto.randomUUID() },
     { ...settings, agent: "claude" },
     { ...settings, maxRunMinutes: 31 },
-    { ...settings, allowedActors: [] },
+    { ...settings, allowedActors: ["operator"] },
     { ...settings, repositoryId: 0 },
   ])
     expect((await send("", input)).status).toBe(400);
@@ -189,6 +188,7 @@ test("imports only valid unique legacy projects and verifies all GitHub targets 
   const { name: _name, ...legacySettings } = settings;
   const legacy = {
     ...legacySettings,
+    allowedActors: ["operator"],
     triggerLabel: "tailos:run",
     id: "meguri",
   };

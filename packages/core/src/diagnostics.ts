@@ -68,6 +68,7 @@ export const DiagnosticAttributes = v.strictObject({
       "unknown",
       "ignored",
       "coalesced",
+      "queued",
       "replayed",
       "running",
     ]),

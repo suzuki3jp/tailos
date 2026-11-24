@@ -1,7 +1,4 @@
-import {
-  dispatchPlanningInputs,
-  savePlanningSnapshot,
-} from "@/infrastructure/d1/planning.ts";
+import { dispatchSessionInbox } from "@/infrastructure/d1/session-inbox.ts";
 import {
   beginPublicationReconciliation,
   stageRunPublication,
@@ -394,7 +391,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     } finally {
       // A revocation that will be retried keeps the Run current until then.
       if (await this.revokeRepositoryGrant(runId)) await this.finishRun();
-      const next = await dispatchPlanningInputs(this.env.DB);
+      // The Session's next message, or another Session's, may start now.
+      const next = await dispatchSessionInbox(this.env.DB);
       const schedule = runStarter(this.env);
       if (schedule) await Promise.all(next.map((id) => schedule(id)));
       const idleUntil = await this.ctx.storage.get<number>(idleUntilStorage);
@@ -1051,11 +1049,15 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const diagnostics = await this.diagnosticContext(runId, deadlineAt).catch(
       () => undefined,
     );
+    // A Routine's message is what someone wrote; its prompt says what to do.
+    const instructions =
+      context.engine === "codex" ? context.instructions : undefined;
     const base = {
       version: 1 as const,
       ...(context.mode === "plan" && { mode: "plan" as const }),
       runId,
-      prompt,
+      prompt: instructions ?? prompt,
+      ...(instructions && { message: prompt }),
       deadlineAt,
       ...(diagnostics && { diagnostics }),
     };
@@ -1150,7 +1152,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
    * base, a record that it was lost, or nothing for a first Turn. Null when
    * the saved work cannot be read now, so that this Turn does not replace it.
    */
-  private async previousWork(): Promise<{
+  private async previousWork(runId: string): Promise<{
     restore?: "saved" | "lost";
     baseSha?: string;
     archive?: { body?: unknown };
@@ -1158,7 +1160,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
   } | null> {
     const record =
       await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
-    if (!record) return {};
+    // Earlier Turns left nothing, as before Sessions kept their work: the
+    // Agent hears that the conversation is gone.
+    if (!record)
+      return (await this.hadEarlierTurns(runId)) ? { restore: "lost" } : {};
     if (!("key" in record)) return { restore: "lost" };
     const bucket = this.env.RUN_ARTIFACTS;
     if (!bucket) return null;
@@ -1174,6 +1179,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
       : { restore: "lost" };
   }
 
+  private async hadEarlierTurns(runId: string) {
+    const row = await this.env.DB.prepare(
+      `SELECT 1 AS earlier FROM runs r JOIN runs current ON current.session_id = r.session_id
+      WHERE current.id = ? AND r.id != current.id AND r.created_at < current.created_at LIMIT 1`,
+    )
+      .bind(runId)
+      .first<{ earlier: number }>();
+    return !!row;
+  }
+
   private async submitJob(request: RunRequest) {
     const job = await this.prepareJob(request).catch(() => null);
     if (!job)
@@ -1185,10 +1200,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
         : undefined;
     const trigger =
       request.context.engine === "codex" ? request.context.trigger : undefined;
-    // Planning keeps its own conversation until it becomes a Routine.
     const previous =
-      target && trigger && job.engine === "codex" && job.mode !== "plan"
-        ? await this.previousWork()
+      target && trigger && job.engine === "codex"
+        ? await this.previousWork(request.runId)
         : undefined;
     if (previous === null)
       return { status: "failed", errorCode: "runner_unavailable" } as const;
@@ -1251,32 +1265,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
-      try {
-        if (
-          request.context.mode === "plan" &&
-          checkout.issueSnapshot &&
-          job.githubContext
-        ) {
-          const snapshot = await savePlanningSnapshot(
-            this.env.DB,
-            request.runId,
-            checkout.issueSnapshot,
-            checkout.baseSha,
-          );
-          if (snapshot) {
-            checkout.baseSha = snapshot.baseSha;
-            job.prompt = snapshot.prompt;
-            job.planningContext = snapshot.context;
-            job.githubContext.contentHash = snapshot.contentHash;
-          }
-        }
-      } catch {
-        await github.revoke(checkout.token).catch(() => {});
-        return {
-          status: "failed",
-          errorCode: "planning_snapshot_failed",
-        } as const;
-      }
       // The saved work sits on the base it started from, not on the latest
       // default branch, unless it moves there after a merge.
       if (realignFrom && previous?.restore === "saved" && previous.baseSha)
@@ -1324,14 +1312,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
         ...(realign && { realign }),
       };
     }
+    // A long message, such as an issue comment, may not fit in a job.
     if (
-      job.mode === "plan" &&
       new TextEncoder().encode(JSON.stringify(job)).byteLength >
-        maxRunnerJobBytes
+      maxRunnerJobBytes
     )
       return {
         status: "failed",
-        errorCode: "planning_input_too_large",
+        errorCode: "message_too_large",
       } as const;
     const sessionId = await this.ctx.storage.get<string>("sessionId");
     if (!sessionId)

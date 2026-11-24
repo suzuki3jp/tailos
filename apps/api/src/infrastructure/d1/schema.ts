@@ -4,6 +4,7 @@ import {
   foreignKey,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   unique,
@@ -546,4 +547,103 @@ export const planningReplies = sqliteTable(
     errorCategory: text("error_category"),
   },
   (t) => [index("planning_reply_due").on(t.nextAttemptAt)],
+);
+
+/**
+ * Messages for a Session, kept in the order they arrived. A message becomes a
+ * Turn (`run_id`) once the Session has no Turn in progress, so a message that
+ * waits does not use up its time limit.
+ */
+export const sessionInbox = sqliteTable(
+  "session_inbox",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    source: text().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deliveryId: text("delivery_id"),
+    routineId: text("routine_id").references(() => routines.id),
+    routineRevision: integer("routine_revision"),
+    authorKind: text("author_kind", {
+      enum: ["user", "automation"],
+    }).notNull(),
+    body: text().notNull(),
+    executionContext: text("execution_context").notNull(),
+    timeoutMs: integer("timeout_ms").notNull(),
+    receivedAt: integer("received_at").notNull(),
+    runId: text("run_id")
+      .unique()
+      .references(() => runs.id),
+  },
+  (t) => [
+    unique("session_inbox_delivery").on(t.source, t.idempotencyKey),
+    index("session_inbox_waiting")
+      .on(t.sessionId, t.id)
+      .where(sql`${t.runId} is null`),
+  ],
+);
+
+/** The one Session a Routine keeps for an issue. */
+export const routineSessions = sqliteTable(
+  "routine_sessions",
+  {
+    ownerId: text("owner_id").notNull(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id),
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id),
+    repositoryId: integer("repository_id").notNull(),
+    issueNumber: integer("issue_number").notNull(),
+    sessionId: text("session_id")
+      .notNull()
+      .unique()
+      .references(() => sessions.id),
+    lastMessageAt: integer("last_message_at").notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [
+        t.ownerId,
+        t.projectId,
+        t.routineId,
+        t.repositoryId,
+        t.issueNumber,
+      ],
+    }),
+    index("routine_session_issue").on(
+      t.projectId,
+      t.repositoryId,
+      t.issueNumber,
+      t.lastMessageAt,
+    ),
+  ],
+);
+
+/**
+ * How to start a Session, sent once in reply to a comment that cannot
+ * continue one.
+ */
+export const issueGuidance = sqliteTable(
+  "issue_guidance",
+  {
+    id: text().primaryKey().notNull(),
+    target: text().notNull(),
+    trigger: text().notNull(),
+    body: text().notNull(),
+    commentId: integer("comment_id"),
+    state: text({ enum: ["pending", "sent", "failed"] })
+      .notNull()
+      .default("pending"),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at"),
+    lease: text(),
+    leaseUntil: integer("lease_until"),
+    errorCategory: text("error_category"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("issue_guidance_due").on(t.nextAttemptAt)],
 );

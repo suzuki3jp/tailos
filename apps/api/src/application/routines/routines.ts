@@ -1,10 +1,27 @@
 import * as v from "valibot";
 import { supportsCodexSelection } from "@tailos/core/models";
 import { promptText } from "@tailos/core/runner";
-import { projectName, projectSchema } from "@/application/triggers/projects.ts";
+import { allowedActors, projectName } from "@/application/triggers/projects.ts";
 
 export const implementationPrompt =
   "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
+/** The prompt migration gave every Project's plan Routine. */
+export const planningPrompt =
+  "Plan the GitHub issue identified by the structured job context, answering the new message from a permitted user. Read the issue using tailos_github_get. Do not implement or publish changes. Post your reply on the issue as a comment with gh issue comment, without mentioning anyone with @, and give the same reply in your answer.";
+export const labelTrigger = v.strictObject({
+  version: v.literal(1),
+  type: v.literal("github.issue-label"),
+  label: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
+});
+/**
+ * `@tailos plan` on an issue. Only planning runs from comments for now, and
+ * it reads the repository without changing it.
+ */
+export const commentTrigger = v.strictObject({
+  version: v.literal(1),
+  type: v.literal("github.issue-comment"),
+  command: v.literal("plan"),
+});
 const option = v.pipe(
   v.string(),
   v.trim(),
@@ -14,12 +31,8 @@ const option = v.pipe(
 export const routineSettings = v.strictObject({
   name: projectName,
   enabled: v.optional(v.boolean(), false),
-  trigger: v.strictObject({
-    version: v.literal(1),
-    type: v.literal("github.issue-label"),
-    label: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
-  }),
-  allowedActors: projectSchema.entries.allowedActors,
+  trigger: v.variant("type", [labelTrigger, commentTrigger]),
+  allowedActors,
   prompt: promptText,
   engine: v.literal("codex"),
   model: v.optional(option),

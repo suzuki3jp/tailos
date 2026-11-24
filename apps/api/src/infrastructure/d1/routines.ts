@@ -1,6 +1,8 @@
 import { diagnosticRetentionMs } from "@tailos/core/diagnostics";
 import type { D1Database } from "@cloudflare/workers-types";
 import * as v from "valibot";
+import type { IssueMessage } from "@/application/triggers/admit-trigger.ts";
+import type { IssueResult } from "@/application/routines/dispatch-issue.ts";
 import {
   routine,
   routineSettings,
@@ -123,18 +125,23 @@ export function d1Routines(db: D1Database): RoutineStore {
   };
 }
 
-export async function replayLabelDelivery(
+/**
+ * What a delivery already did, so that a redelivery does not do it again.
+ * Each Routine it reached gave its Session one message.
+ */
+export async function replayIssueDelivery(
   db: D1Database,
+  source: IssueMessage["source"],
   deliveryId: string,
   ownerId: string,
   diagnostics?: { traceId: string; requestId: string },
-) {
+): Promise<IssueResult[]> {
   const rows = await db
-    .prepare(`SELECT e.routine_id AS routineId, e.run_id AS runId, r.session_id AS sessionId, e.disposition
-    FROM trigger_events e JOIN runs r ON r.id = e.run_id JOIN sessions s ON s.id = r.session_id
-    WHERE e.source = 'github.issue-label' AND e.delivery_id = ? AND s.owner_id = ? AND e.routine_id IS NOT NULL`)
-    .bind(deliveryId, ownerId)
-    .all<import("@/application/routines/dispatch-label.ts").LabelResult>();
+    .prepare(`SELECT i.routine_id AS routineId, i.session_id AS sessionId, i.run_id AS runId
+    FROM session_inbox i JOIN sessions s ON s.id = i.session_id
+    WHERE i.source = ? AND i.delivery_id = ? AND s.owner_id = ? AND i.routine_id IS NOT NULL`)
+    .bind(source, deliveryId, ownerId)
+    .all<{ routineId: string; sessionId: string; runId: string | null }>();
   if (diagnostics && rows.results.length) {
     const now = Date.now();
     const { traceId, requestId } = diagnostics;
@@ -142,21 +149,26 @@ export async function replayLabelDelivery(
       .batch([
         db
           .prepare(`INSERT INTO diagnostic_traces (id, owner_id, session_id, source, delivery_id, request_id, created_at, expires_at)
-        VALUES (?, ?, ?, 'github.issue-label', ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`)
           .bind(
             traceId,
             ownerId,
             rows.results[0].sessionId,
+            source,
             deliveryId,
             requestId,
             now,
             now + diagnosticRetentionMs,
           ),
         ...rows.results.flatMap((row) => [
-          db
-            .prepare(`INSERT INTO diagnostic_links (from_trace, to_trace, relation)
+          ...(row.runId
+            ? [
+                db
+                  .prepare(`INSERT INTO diagnostic_links (from_trace, to_trace, relation)
           VALUES (?, ?, 'replays') ON CONFLICT DO NOTHING`)
-            .bind(traceId, `run/${row.runId}`),
+                  .bind(traceId, `run/${row.runId}`),
+              ]
+            : []),
           db
             .prepare(`INSERT INTO diagnostic_events (event_id, trace_id, span_id, producer_id, request_id, occurred_at, received_at, name, attributes)
           VALUES (?, ?, ?, 'api', ?, ?, ?, 'trigger.decided', ?)`)
@@ -176,5 +188,10 @@ export async function replayLabelDelivery(
         console.warn("Replay diagnostic write failed", { traceId, requestId });
       });
   }
-  return rows.results;
+  return rows.results.map((row) => ({
+    routineId: row.routineId,
+    sessionId: row.sessionId,
+    ...(row.runId && { runId: row.runId }),
+    disposition: row.runId ? "started" : "queued",
+  }));
 }

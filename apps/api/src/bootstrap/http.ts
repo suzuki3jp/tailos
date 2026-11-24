@@ -1,11 +1,14 @@
 import {
   d1Routines,
-  replayLabelDelivery,
+  replayIssueDelivery,
 } from "@/infrastructure/d1/routines.ts";
 import { createRoutineRoutes } from "@/presentation/http/handlers/routines/routines.ts";
 import { codexConnectionId } from "@/application/auth/device.ts";
-import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
-import { processPlanningInputs } from "@/bootstrap/planning.ts";
+import {
+  admitIssueMessage,
+  latestCommentSession,
+} from "@/infrastructure/d1/session-inbox.ts";
+import { queueIssueGuidance } from "@/infrastructure/d1/issue-guidance.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { validSignature } from "@/infrastructure/github/webhook-signature.ts";
 import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts";
@@ -93,17 +96,18 @@ const triggerRoutes = createTriggerRoutes(
 
 const githubWebhook = createGithubWebhook(
   runStarter,
-  (env) => (input) => admitTrigger(env.DB, input),
+  (env) => (input) => admitIssueMessage(env.DB, input),
   findOperatorUserId,
   validSignature,
   (env) => d1Projects(env.DB).list(),
   (env, event) => recordTriggerDecision(env.DB, event),
   deliverIssueNotifications,
-  (env, input) => acceptPlanningInput(env.DB, input),
-  processPlanningInputs,
   (env, id) => d1Routines(env.DB).candidates(id),
-  (env, delivery, owner, diagnostics) =>
-    replayLabelDelivery(env.DB, delivery, owner, diagnostics),
+  (env, source, delivery, owner, diagnostics) =>
+    replayIssueDelivery(env.DB, source, delivery, owner, diagnostics),
+  async (env, scope) =>
+    (await latestCommentSession(env.DB, scope))?.routineId ?? null,
+  (env, guidance) => queueIssueGuidance(env.DB, guidance),
 );
 
 const runRoutes = createRunRoutes(

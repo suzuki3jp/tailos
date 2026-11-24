@@ -1289,3 +1289,46 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   expect(second).toMatchObject({ success: false });
   expect(second.contentItems[0].text).toContain("Conventional Commits");
 });
+
+test.for([
+  { kept: undefined, text: "was re-applied on top as uncommitted changes" },
+  {
+    kept: "refs/tailos/unpublished",
+    text: "git diff refs/tailos/unpublished^ refs/tailos/unpublished",
+  },
+  {
+    kept: "refs/tailos/unpublished",
+    keptEarlier: "refs/tailos/unpublished^2",
+    text: "git diff refs/tailos/unpublished^2^ refs/tailos/unpublished^2",
+  },
+])(
+  "tells the Agent that its work moved onto the default branch after a merge (kept: $kept, earlier: $keptEarlier)",
+  async ({ kept, keptEarlier, text }) => {
+    const save = vi.fn();
+    const agent = createCodexAgent(conversationStub([], true, true));
+    await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "saved-thread",
+          path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+          content: Buffer.from("earlier turn\n"),
+        },
+        realigned: {
+          publishedSha: "e".repeat(40),
+          ...(kept && { kept }),
+          ...(keptEarlier && { keptEarlier }),
+        },
+        save,
+      },
+    );
+    const content = save.mock.calls[0]![0].content.toString();
+    expect(content).toContain(
+      "Note: this Session's pull request has been merged.",
+    );
+    expect(content).toContain(text);
+  },
+);

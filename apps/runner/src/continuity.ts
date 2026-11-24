@@ -30,6 +30,11 @@ export type SavedWork = {
   config?: string;
   bundle: Buffer;
   conversation?: SavedConversation;
+  /**
+   * Unpublished work kept aside after a merge, which the bundle also
+   * carries until the Agent deletes it.
+   */
+  kept?: string;
 };
 
 const sha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
@@ -46,6 +51,7 @@ const Header = v.strictObject({
   work: sha,
   config: v.optional(v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/))),
   bundle: size,
+  kept: v.optional(sha),
   conversation: v.optional(
     v.strictObject({
       threadId: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
@@ -66,6 +72,7 @@ export async function encodeSavedWork(saved: SavedWork) {
     work: saved.work,
     ...(saved.config && { config: saved.config }),
     bundle: saved.bundle.length,
+    ...(saved.kept && { kept: saved.kept }),
     ...(saved.conversation && {
       conversation: {
         threadId: saved.conversation.threadId,
@@ -106,6 +113,7 @@ export async function decodeSavedWork(archive: Buffer): Promise<SavedWork> {
     work: header.work,
     ...(header.config && { config: header.config }),
     bundle: data.subarray(end + 1, bundleEnd),
+    ...(header.kept && { kept: header.kept }),
     ...(header.conversation && {
       conversation: {
         threadId: header.conversation.threadId,

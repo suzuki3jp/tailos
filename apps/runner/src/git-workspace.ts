@@ -61,6 +61,8 @@ export type WorkspaceContinuity = {
 };
 
 const continuityRef = "refs/tailos/continuity";
+/** Where unpublished work that conflicts with the latest default branch stays. */
+export const unpublishedRef = "refs/tailos/unpublished";
 const digest = (data: Buffer) =>
   createHash("sha256").update(data).digest("hex");
 // The saved work commit is never published, only carried to the next Turn.
@@ -179,7 +181,7 @@ export async function runInGitWorkspace(
    */
   const matchesInPlace = async (saved: SavedWork) => {
     try {
-      if (saved.baseSha !== checkout.baseSha || !saved.config) return false;
+      if (saved.baseSha !== restoreBase() || !saved.config) return false;
       if (digest(await readFile(configPath)) !== saved.config) return false;
       const head = (await git(["rev-parse", "HEAD"])).toString().trim();
       if (head !== saved.head) return false;
@@ -196,7 +198,7 @@ export async function runInGitWorkspace(
 
   /** Puts the previous Turn's commits and work tree on top of its base. */
   const restore = async (saved: SavedWork) => {
-    if (saved.baseSha !== checkout.baseSha)
+    if (saved.baseSha !== restoreBase())
       throw new Error("Saved work has another base");
     const bundle = join(metadata, "tailos-continuity.bundle");
     await writeFile(bundle, saved.bundle);
@@ -206,12 +208,19 @@ export async function runInGitWorkspace(
       "--no-tags",
       bundle,
       `${continuityRef}:${continuityRef}`,
+      ...(saved.kept ? [`+${unpublishedRef}:${unpublishedRef}`] : []),
     ]);
     await rm(bundle, { force: true });
+    if (
+      saved.kept &&
+      (await git(["rev-parse", unpublishedRef])).toString().trim() !==
+        saved.kept
+    )
+      throw new Error("Kept work does not match");
     const parent = (await git(["rev-parse", `${saved.work}^`])).toString();
     if (parent.trim() !== saved.head)
       throw new Error("Saved work does not follow its HEAD");
-    await git(["merge-base", "--is-ancestor", checkout.baseSha, saved.head]);
+    await git(["merge-base", "--is-ancestor", restoreBase(), saved.head]);
     await git(["checkout", "--quiet", "--detach", saved.head]);
     // Bring the work tree to the saved one, then leave those changes
     // unstaged as they were.
@@ -221,13 +230,132 @@ export async function runInGitWorkspace(
     return saved.conversation;
   };
 
-  /** Fetches a commit of the target repository unless it is already here. */
-  const ensureCommit = async (sha: string) => {
+  /**
+   * Fetches a commit of the target repository unless it is already here;
+   * `shallow` fetches it without its history.
+   */
+  const ensureCommit = async (sha: string, shallow = false) => {
     const present = await git(["cat-file", "-e", `${sha}^{commit}`]).then(
       () => true,
       () => false,
     );
-    if (!present) await git(["fetch", "--quiet", "--no-tags", remote, sha]);
+    if (!present)
+      await git([
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        ...(shallow ? ["--depth", "1"] : []),
+        remote,
+        sha,
+      ]);
+  };
+
+  /**
+   * Moves the restored work onto the latest default branch after the
+   * Session's pull request was merged. What changed since `publishedSha`, in
+   * commits or not, is applied on top as uncommitted changes. When it
+   * conflicts, the work tree is the default branch as it is, and the work
+   * stays at `unpublishedRef` for the Agent, across Turns until it deletes
+   * it: a root commit with the published tree, and on it one with the work
+   * tree, so that it needs no other commit to be carried over.
+   */
+  const realign = async (publishedSha: string) => {
+    const head = (await git(["rev-parse", "HEAD"])).toString().trim();
+    const work = (
+      await git(
+        [
+          "commit-tree",
+          await workTree(head, {}),
+          "-p",
+          head,
+          "-m",
+          "Tailos unpublished work",
+        ],
+        { env: continuityIdentity },
+      )
+    )
+      .toString()
+      .trim();
+    await ensureCommit(publishedSha);
+    const patch = join(metadata, "tailos-realign.patch");
+    await git([
+      "diff",
+      "--binary",
+      "--full-index",
+      `--output=${patch}`,
+      publishedSha,
+      work,
+    ]);
+    await ensureCommit(checkout.baseSha, true);
+    const start = async () => {
+      await git([
+        "checkout",
+        "--quiet",
+        "--force",
+        "--detach",
+        checkout.baseSha,
+      ]);
+      // Ignored files, such as installed dependencies, stay.
+      await git(["clean", "--quiet", "-d", "--force"]);
+    };
+    await start();
+    try {
+      if ((await readFile(patch)).length) {
+        await git(["apply", "--3way", "--whitespace=nowarn", patch]);
+        // Unpublished work stays uncommitted, as the Agent left it.
+        await git(["reset", "--quiet"]);
+      }
+      return { publishedSha };
+    } catch {
+      const commit = async (tree: string, parents: string[], message: string) =>
+        (
+          await git(
+            [
+              "commit-tree",
+              tree,
+              ...parents.flatMap((parent) => ["-p", parent]),
+              "-m",
+              message,
+            ],
+            { env: continuityIdentity },
+          )
+        )
+          .toString()
+          .trim();
+      const merged = await commit(
+        `${publishedSha}^{tree}`,
+        [],
+        `Tailos published work ${publishedSha}`,
+      );
+      // Work kept after an earlier merge, which the Agent has not deleted,
+      // stays reachable as the second parent.
+      const earlier = await git([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        unpublishedRef,
+      ]).then(
+        (sha) => sha.toString().trim(),
+        () => undefined,
+      );
+      await git([
+        "update-ref",
+        unpublishedRef,
+        await commit(
+          `${work}^{tree}`,
+          [merged, ...(earlier ? [earlier] : [])],
+          "Tailos unpublished work",
+        ),
+      ]);
+      await start();
+      return {
+        publishedSha,
+        kept: unpublishedRef,
+        ...(earlier && { keptEarlier: `${unpublishedRef}^2` }),
+      };
+    } finally {
+      await rm(patch, { force: true });
+    }
   };
 
   /**
@@ -386,9 +514,26 @@ export async function runInGitWorkspace(
         .toString()
         .trim();
       await git(["update-ref", continuityRef, work], { signal: saveSignal });
+      // Work kept aside after a merge goes along until the Agent deletes it.
+      const kept = await git(
+        ["rev-parse", "--verify", "--quiet", unpublishedRef],
+        {
+          signal: saveSignal,
+        },
+      ).then(
+        (sha) => sha.toString().trim(),
+        () => undefined,
+      );
       const bundle = join(metadata, "tailos-continuity.bundle");
       await git(
-        ["bundle", "create", bundle, continuityRef, `^${checkout.baseSha}`],
+        [
+          "bundle",
+          "create",
+          bundle,
+          continuityRef,
+          ...(kept ? [unpublishedRef] : []),
+          `^${checkout.baseSha}`,
+        ],
         { signal: saveSignal },
       );
       continuity.saved({
@@ -398,6 +543,7 @@ export async function runInGitWorkspace(
           work,
           config: digest(trustedConfig),
           bundle: await readFile(bundle),
+          ...(kept && { kept }),
           ...(savedConversation && { conversation: savedConversation }),
         }),
       });
@@ -420,6 +566,11 @@ export async function runInGitWorkspace(
 
   // The previous Turn's saved work, read once for both ways of restoring it.
   let saved: SavedWork | undefined;
+  // The saved work sits on its own base; after a merge it moves from there.
+  const restoreBase = () =>
+    saved && checkout.realign
+      ? checkout.realign.previousBase
+      : checkout.baseSha;
   let unreadable: unknown;
   if (Buffer.isBuffer(continuity?.restore))
     saved = await decodeSavedWork(continuity.restore).catch((error) => {
@@ -442,7 +593,7 @@ export async function runInGitWorkspace(
         "checkout",
         JSON.stringify({
           repository: checkout.repository,
-          baseSha: checkout.baseSha,
+          baseSha: restoreBase(),
           branch: checkout.branch,
         }),
       );
@@ -457,9 +608,9 @@ export async function runInGitWorkspace(
         "1",
         "--no-tags",
         remote,
-        checkout.baseSha,
+        restoreBase(),
       ]);
-      await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
+      await git(["checkout", "--quiet", "--detach", restoreBase()]);
       // What the Session already published is the starting point.
       if (checkout.publishedSha) {
         await ensureCommit(checkout.publishedSha);
@@ -472,17 +623,24 @@ export async function runInGitWorkspace(
     if (continuity) {
       let resume: SavedConversation | undefined;
       let lost = continuity.restore === "lost";
+      let realigned: Conversation["realigned"];
       if (Buffer.isBuffer(continuity.restore)) {
         activeSpan = diagnostics?.start("continuity");
         try {
           if (!saved) throw unreadable;
           if (!inPlace) await restore(saved);
           resume = saved.conversation;
+          if (checkout.realign)
+            realigned = await realign(checkout.realign.publishedSha);
           if (activeSpan)
             diagnostics?.end(
               activeSpan,
               {},
-              JSON.stringify({ restored: true, inPlace }),
+              JSON.stringify({
+                restored: true,
+                inPlace,
+                ...(realigned && { realigned: !realigned.kept }),
+              }),
             );
         } catch (error) {
           lost = true;
@@ -515,6 +673,7 @@ export async function runInGitWorkspace(
       conversation = {
         ...(resume && { resume }),
         ...(lost && { lost: true }),
+        ...(realigned && { realigned }),
         save: (saved) => {
           savedConversation = saved;
         },

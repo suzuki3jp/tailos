@@ -122,6 +122,7 @@ async function repository(t: TestContext) {
         continuity?: WorkspaceContinuity;
         publishedSha?: string;
         publisher?: Publisher;
+        checkout?: Partial<Parameters<typeof runInGitWorkspace>[0]>;
       } = {},
     ) {
       return runInGitWorkspace(
@@ -130,6 +131,7 @@ async function repository(t: TestContext) {
           baseSha,
           branch,
           ...(options.publishedSha && { publishedSha: options.publishedSha }),
+          ...options.checkout,
         },
         AbortSignal.timeout(15_000),
         work,
@@ -653,4 +655,274 @@ test("uses the work left in place when it is exactly the saved work", async (t) 
       "[core]\n\tpager = sh\n",
   );
   expect(await seen(kept)).toBe(false);
+});
+
+/**
+ * Merges the Session's pull request the way GitHub squashes it: one commit on
+ * `main` with the published tree, followed by `then` on the default branch.
+ */
+async function squashMerge(
+  repo: Awaited<ReturnType<typeof repository>>,
+  published: string,
+  then: Record<string, string>,
+) {
+  const tree = repo.git("rev-parse", `${published}^{tree}`);
+  const identity = [
+    "-c",
+    "user.name=Seed",
+    "-c",
+    "user.email=seed@example.test",
+  ];
+  const squash = repo.git(
+    ...identity,
+    "commit-tree",
+    tree,
+    "-p",
+    repo.baseSha,
+    "-m",
+    "Squashed",
+  );
+  repo.git("update-ref", "refs/heads/main", squash);
+  repo.git("checkout", "--quiet", "--force", "main");
+  for (const [path, contents] of Object.entries(then))
+    await writeFile(
+      join(repo.git("rev-parse", "--show-toplevel"), path),
+      contents,
+    );
+  repo.git("add", ".");
+  repo.git(...identity, "commit", "--quiet", "-m", "Later work");
+  return repo.git("rev-parse", "main");
+}
+
+/** A Turn that publishes, then leaves unpublished work for the next one. */
+async function publishedTurn(
+  repo: Awaited<ReturnType<typeof repository>>,
+  unpublished: (cwd: string) => Promise<void>,
+) {
+  let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
+  let published = "";
+  await repo.run(
+    async (cwd, conversation, publish) => {
+      await writeFile(join(cwd, "README.md"), "published\n");
+      published = ((await publish!("docs: publish")) as { sha: string }).sha;
+      await unpublished(cwd);
+      conversation?.save({
+        threadId: "thread-1",
+        path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread-1.jsonl",
+        content: Buffer.from("{}\n"),
+      });
+      return result;
+    },
+    { continuity: { saved: (result) => (saved = result) } },
+  );
+  if (!saved || !("archive" in saved)) throw new Error("not saved");
+  return { archive: saved.archive, published };
+}
+
+test("moves unpublished work onto the latest default branch after the merge", async (t) => {
+  const repo = await repository(t);
+  const { archive, published } = await publishedTurn(repo, async (cwd) => {
+    await writeFile(join(cwd, "notes.txt"), "unpublished\n");
+    await writeFile(join(cwd, "script.sh"), "#!/bin/sh\nprintf unpublished\n");
+  });
+  const latest = await squashMerge(repo, published, { "other.txt": "main\n" });
+
+  let realigned: unknown;
+  let sent: Parameters<Publisher>[0] | undefined;
+  await repo.run(
+    async (cwd, conversation, publish) => {
+      realigned = conversation?.realigned;
+      expect(conversation?.resume?.threadId).toBe("thread-1");
+      expect(await head(cwd)).toBe(latest);
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
+        "published\n",
+      );
+      expect(await readFile(join(cwd, "other.txt"), "utf8")).toBe("main\n");
+      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe(
+        "unpublished\n",
+      );
+      await publish!("docs: carry on");
+      return result;
+    },
+    {
+      continuity: { restore: archive, saved: () => {} },
+      checkout: {
+        baseSha: latest,
+        branch: `${repo.branch}-2`,
+        realign: { previousBase: repo.baseSha, publishedSha: published },
+      },
+      publisher: async (work) => {
+        sent = work;
+        return repo.publish(work);
+      },
+    },
+  );
+  expect(realigned).toEqual({ publishedSha: published });
+  // The new pull request holds only what was not merged.
+  expect(sent?.parentSha).toBe(latest);
+  expect(sent?.changes.additions.map((file) => file.path).sort()).toEqual([
+    "notes.txt",
+    "script.sh",
+  ]);
+  expect(sent?.changes.deletions).toEqual([]);
+});
+
+test("keeps conflicting unpublished work aside, across Turns until the Agent deletes it", async (t) => {
+  const repo = await repository(t);
+  const { archive, published } = await publishedTurn(repo, async (cwd) => {
+    await writeFile(join(cwd, "README.md"), "unpublished\n");
+  });
+  const latest = await squashMerge(repo, published, {
+    "README.md": "changed on main\n",
+  });
+  const inRepo = async (cwd: string, ...args: string[]) => {
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    return gitIn(
+      cwd,
+      {},
+      undefined,
+      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+      ...args,
+    );
+  };
+  /** The unpublished change, as the Agent is told to look at it. */
+  const keptChange = (cwd: string) =>
+    inRepo(
+      cwd,
+      "diff",
+      "refs/tailos/unpublished^",
+      "refs/tailos/unpublished",
+      "--",
+      "README.md",
+    );
+
+  // Read through a holder: each Turn sets it from its callback.
+  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
+  const lastSaved = () => out.saved;
+  const next = { baseSha: latest, branch: `${repo.branch}-2` };
+  await repo.run(
+    async (cwd, conversation) => {
+      expect(conversation?.realigned).toEqual({
+        publishedSha: published,
+        kept: "refs/tailos/unpublished",
+      });
+      expect(conversation?.lost).toBeUndefined();
+      expect(await head(cwd)).toBe(latest);
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
+        "changed on main\n",
+      );
+      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
+      return result;
+    },
+    {
+      continuity: { restore: archive, saved: (result) => (out.saved = result) },
+      checkout: {
+        ...next,
+        realign: { previousBase: repo.baseSha, publishedSha: published },
+      },
+    },
+  );
+  const first = lastSaved();
+  if (!first || !("archive" in first)) throw new Error("not saved");
+  expect((await decodeSavedWork(first.archive)).kept).toMatch(/^[a-f0-9]{40}$/);
+
+  // A later Turn, in a new container, still has it; the Agent deletes it.
+  const later = first.archive;
+  delete out.saved;
+  await repo.run(
+    async (cwd, conversation) => {
+      expect(conversation?.realigned).toBeUndefined();
+      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
+      await inRepo(cwd, "update-ref", "-d", "refs/tailos/unpublished");
+      return result;
+    },
+    {
+      continuity: { restore: later, saved: (result) => (out.saved = result) },
+      checkout: next,
+    },
+  );
+  const second = lastSaved();
+  if (!second || !("archive" in second)) throw new Error("not saved");
+  expect((await decodeSavedWork(second.archive)).kept).toBeUndefined();
+});
+
+test("a second conflicting merge keeps the work kept after the first one", async (t) => {
+  const repo = await repository(t);
+  const { archive, published } = await publishedTurn(repo, async (cwd) => {
+    await writeFile(join(cwd, "README.md"), "first unpublished\n");
+  });
+  const latest = await squashMerge(repo, published, {
+    "README.md": "changed on main\n",
+  });
+  const inRepo = async (cwd: string, ...args: string[]) => {
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    return gitIn(
+      cwd,
+      {},
+      undefined,
+      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+      ...args,
+    );
+  };
+  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
+  let second = "";
+  // The first work is kept aside; the Agent publishes more without
+  // deleting it, and leaves another change that will conflict too.
+  await repo.run(
+    async (cwd, conversation, publish) => {
+      expect(conversation?.realigned?.kept).toBe("refs/tailos/unpublished");
+      await writeFile(join(cwd, "README.md"), "published again\n");
+      second = ((await publish!("docs: publish again")) as { sha: string }).sha;
+      await writeFile(join(cwd, "README.md"), "second unpublished\n");
+      return result;
+    },
+    {
+      continuity: { restore: archive, saved: (saved) => (out.saved = saved) },
+      checkout: {
+        baseSha: latest,
+        branch: `${repo.branch}-2`,
+        realign: { previousBase: repo.baseSha, publishedSha: published },
+      },
+    },
+  );
+  const saved = out.saved;
+  if (!saved || !("archive" in saved)) throw new Error("not saved");
+  const again = await squashMerge(repo, second, {
+    "README.md": "changed on main again\n",
+  });
+  await repo.run(
+    async (cwd, conversation) => {
+      expect(conversation?.realigned).toEqual({
+        publishedSha: second,
+        kept: "refs/tailos/unpublished",
+        keptEarlier: "refs/tailos/unpublished^2",
+      });
+      // Both are there, each as the Agent is told to look at it.
+      expect(
+        await inRepo(
+          cwd,
+          "diff",
+          "refs/tailos/unpublished^",
+          "refs/tailos/unpublished",
+        ),
+      ).toContain("-published again\n+second unpublished");
+      expect(
+        await inRepo(
+          cwd,
+          "diff",
+          "refs/tailos/unpublished^2^",
+          "refs/tailos/unpublished^2",
+        ),
+      ).toContain("-published\n+first unpublished");
+      return result;
+    },
+    {
+      continuity: { restore: saved.archive, saved: () => {} },
+      checkout: {
+        baseSha: again,
+        branch: `${repo.branch}-3`,
+        realign: { previousBase: latest, publishedSha: second },
+      },
+    },
+  );
 });

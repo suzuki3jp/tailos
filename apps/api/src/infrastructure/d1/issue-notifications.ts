@@ -16,6 +16,8 @@ export function issueNotificationStore(db: D1Database): NotificationStore {
             AND applied_version < version ORDER BY next_attempt_at LIMIT 1)
         RETURNING *,
           (SELECT session_id FROM runs WHERE runs.id = issue_notifications.run_id) AS session_id,
+          (SELECT s.project_id FROM runs r JOIN sessions s ON s.id = r.session_id
+            WHERE r.id = issue_notifications.run_id) AS project_id,
           (SELECT json_extract(execution_context, '$.repository') FROM runs
             WHERE runs.id = issue_notifications.run_id) AS target,
           (SELECT json_extract(execution_context, '$.trigger') FROM runs

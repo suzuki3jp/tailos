@@ -1085,3 +1085,148 @@ test("records Codex error notices and the failure reason without credentials", a
     ),
   ).toBe(true);
 });
+
+/** Keeps a rollout in CODEX_HOME as Codex does, and resumes it by thread ID. */
+function conversationStub(
+  requests: unknown[],
+  resumable = true,
+  reportPath = true,
+) {
+  return (directory: string) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+const home = ${JSON.stringify(directory)};
+const saved = path.join(home, "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl");
+const fresh = path.join(home, "sessions/2026/11/24/rollout-2026-11-24T00-00-01-new-thread.jsonl");
+let thread;
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const r = JSON.parse(line);
+  send({ method: "log", params: r });
+  const respond = (result) => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/resume") {
+    if (${resumable} && r.params.threadId === "saved-thread" && fs.existsSync(saved)) {
+      thread = { id: "saved-thread", path: saved };
+      // Codex does not always report where a resumed thread is kept.
+      respond({ thread: ${reportPath} ? thread : { id: thread.id } });
+    } else send({ id: r.id, error: { code: -32600, message: "no rollout found" } });
+  }
+  if (r.method === "thread/start") {
+    // A Session's thread is kept for its next Turn.
+    if (r.params.ephemeral !== false) throw new Error("Expected a kept thread");
+    fs.mkdirSync(path.dirname(fresh), { recursive: true });
+    fs.writeFileSync(fresh, "");
+    thread = { id: "new-thread", path: fresh };
+    respond({ thread });
+  }
+  if (r.method !== "turn/start") return;
+  fs.appendFileSync(thread.path, r.params.input[0].text + "\\n");
+  respond({});
+  send({ method: "item/completed", params: { threadId: thread.id, item: { type: "agentMessage", text: "done" } } });
+  send({ method: "turn/completed", params: { threadId: thread.id, turn: { status: "completed" } } });
+});`,
+      ],
+      { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    );
+}
+
+test.for([true, false])(
+  "continues the saved Codex thread and hands its rollout back (path reported: %s)",
+  async (reportPath) => {
+    const requests: unknown[] = [];
+    const save = vi.fn();
+    const agent = createCodexAgent(
+      conversationStub(requests, true, reportPath),
+    );
+    const result = await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "saved-thread",
+          path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+          content: Buffer.from("earlier turn\n"),
+        },
+        save,
+      },
+    );
+    expect(result.reply).toBe("done");
+    expect(save).toHaveBeenCalledOnce();
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("saved-thread");
+    expect(saved.path).toBe(
+      "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+    );
+    const content = saved.content.toString();
+    expect(content.startsWith("earlier turn\nAnswer the prompt")).toBe(true);
+    expect(content).not.toContain("could not be restored");
+  },
+);
+
+test.for([
+  {
+    name: "the previous work is lost",
+    resumable: true,
+    lost: true,
+    notice:
+      /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
+  },
+  {
+    name: "only the thread cannot be resumed",
+    resumable: false,
+    lost: false,
+    notice:
+      /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+  },
+])(
+  "starts a kept thread and tells the Agent when $name",
+  async ({ resumable, lost, notice }) => {
+    const save = vi.fn();
+    const agent = createCodexAgent(conversationStub([], resumable));
+    await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        ...(lost
+          ? { lost: true }
+          : {
+              resume: {
+                threadId: "saved-thread",
+                path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+                content: Buffer.from("earlier turn\n"),
+              },
+            }),
+        save,
+      },
+    );
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("new-thread");
+    expect(saved.content.toString()).toMatch(notice);
+  },
+);
+
+test("refuses to restore a rollout outside the Codex sessions directory", async () => {
+  const agent = createCodexAgent(conversationStub([]));
+  await expect(
+    agent.run(testJob(), AbortSignal.timeout(5000), process.cwd(), undefined, {
+      resume: {
+        threadId: "saved-thread",
+        path: "../config.toml",
+        content: Buffer.from("model = 'other'"),
+      },
+      save: () => {},
+    }),
+  ).rejects.toBeInstanceOf(ValiError);
+});

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   changeHeadline,
+  continuitySaveMs,
   maxPublicationBytes,
   type CheckedPublication,
   type FileChanges,
@@ -13,7 +14,17 @@ import {
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
-import { PublicationFailed, type AgentResult } from "@/agent.ts";
+import {
+  PublicationFailed,
+  type AgentResult,
+  type Conversation,
+} from "@/agent.ts";
+import {
+  ContinuityTooLarge,
+  decodeSavedWork,
+  encodeSavedWork,
+  type SavedConversation,
+} from "@/continuity.ts";
 import { trustEnvironment } from "@/egress.ts";
 import {
   diagnosticErrorBody,
@@ -27,14 +38,35 @@ type Checkout = NonNullable<
 >;
 type CheckedWork = Omit<CheckedPublication, "kind" | "events">;
 
+/** What the previous Turn left, and where this Turn's saved work goes. */
+export type WorkspaceContinuity = {
+  restore?: Buffer | "lost";
+  saved(
+    result:
+      | { archive: Buffer }
+      | { skipped: true }
+      | { failed: "too_large" | "error" },
+  ): void;
+};
+
+const continuityRef = "refs/tailos/continuity";
+// The saved work commit is never published, only carried to the next Turn.
+const continuityIdentity = {
+  GIT_AUTHOR_NAME: "Tailos",
+  GIT_AUTHOR_EMAIL: "tailos@localhost",
+  GIT_COMMITTER_NAME: "Tailos",
+  GIT_COMMITTER_EMAIL: "tailos@localhost",
+};
+
 export async function runInGitWorkspace(
   checkout: Checkout,
   signal: AbortSignal,
-  work: (cwd: string) => Promise<AgentResult>,
+  work: (cwd: string, conversation?: Conversation) => Promise<AgentResult>,
   stage: (work: CheckedWork) => Promise<void>,
   remote = `https://github.com/${checkout.repository}.git`,
   diagnostics?: Diagnostics,
   mode?: RunnerJob["mode"],
+  continuity?: WorkspaceContinuity,
 ): Promise<{
   reply: string;
   sessionTitle?: string;
@@ -64,7 +96,10 @@ export async function runInGitWorkspace(
     GIT_CONFIG_GLOBAL: "/dev/null",
     ...trustEnvironment(),
   };
-  const git = async (args: string[]) => {
+  const git = async (
+    args: string[],
+    options: { env?: Record<string, string>; signal?: AbortSignal } = {},
+  ) => {
     try {
       return (
         await exec(
@@ -89,8 +124,8 @@ export async function runInGitWorkspace(
           ],
           {
             cwd,
-            env,
-            signal,
+            env: { ...env, ...options.env },
+            signal: options.signal ?? signal,
             maxBuffer: maxPublicationBytes,
             encoding: "buffer",
           },
@@ -104,6 +139,105 @@ export async function runInGitWorkspace(
       );
     }
   };
+  const configPath = join(metadata, "config");
+  let trustedConfig: Buffer | undefined;
+  let agentStarted = false;
+  let savedConversation: SavedConversation | undefined;
+
+  /** Puts the previous Turn's commits and work tree on top of its base. */
+  const restore = async (archive: Buffer) => {
+    const saved = await decodeSavedWork(archive);
+    if (saved.baseSha !== checkout.baseSha)
+      throw new Error("Saved work has another base");
+    const bundle = join(metadata, "tailos-continuity.bundle");
+    await writeFile(bundle, saved.bundle);
+    await git([
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      bundle,
+      `${continuityRef}:${continuityRef}`,
+    ]);
+    await rm(bundle, { force: true });
+    const parent = (await git(["rev-parse", `${saved.work}^`])).toString();
+    if (parent.trim() !== saved.head)
+      throw new Error("Saved work does not follow its HEAD");
+    await git(["merge-base", "--is-ancestor", checkout.baseSha, saved.head]);
+    await git(["checkout", "--quiet", "--detach", saved.head]);
+    // Bring the work tree to the saved one, then leave those changes
+    // unstaged as they were.
+    await git(["read-tree", "-m", "-u", saved.head, saved.work]);
+    await git(["reset", "--quiet"]);
+    await git(["update-ref", "-d", continuityRef]);
+    return saved.conversation;
+  };
+
+  /** Hands this Turn's work to the controller; never fails the Turn. */
+  const save = async () => {
+    if (!continuity) return;
+    // Nothing ran on the previous Turn's work, which therefore stays current.
+    if (!agentStarted || !trustedConfig) {
+      continuity.saved({ skipped: true });
+      return;
+    }
+    const saveSignal = AbortSignal.timeout(continuitySaveMs);
+    const index = { GIT_INDEX_FILE: join(metadata, "tailos-continuity-index") };
+    try {
+      if (!(await readFile(configPath)).equals(trustedConfig))
+        throw new Error("Git metadata configuration changed");
+      const head = (await git(["rev-parse", "HEAD"], { signal: saveSignal }))
+        .toString()
+        .trim();
+      await git(["read-tree", head], { env: index, signal: saveSignal });
+      await git(["add", "--all"], { env: index, signal: saveSignal });
+      const tree = (
+        await git(["write-tree"], { env: index, signal: saveSignal })
+      )
+        .toString()
+        .trim();
+      const work = (
+        await git(
+          ["commit-tree", tree, "-p", head, "-m", "Tailos saved work"],
+          {
+            env: continuityIdentity,
+            signal: saveSignal,
+          },
+        )
+      )
+        .toString()
+        .trim();
+      await git(["update-ref", continuityRef, work], { signal: saveSignal });
+      const bundle = join(metadata, "tailos-continuity.bundle");
+      await git(
+        ["bundle", "create", bundle, continuityRef, `^${checkout.baseSha}`],
+        { signal: saveSignal },
+      );
+      continuity.saved({
+        archive: await encodeSavedWork({
+          baseSha: checkout.baseSha,
+          head,
+          work,
+          bundle: await readFile(bundle),
+          ...(savedConversation && { conversation: savedConversation }),
+        }),
+      });
+    } catch (error) {
+      continuity.saved({
+        failed: error instanceof ContinuityTooLarge ? "too_large" : "error",
+      });
+      const span = diagnostics?.start(
+        "continuity",
+        JSON.stringify({ target: "save" }),
+      );
+      if (span)
+        diagnostics?.end(
+          span,
+          { outcome: "failed" },
+          diagnosticErrorBody(error),
+        );
+    }
+  };
+
   let activeSpan: string | undefined;
   try {
     activeSpan = diagnostics?.start(
@@ -128,9 +262,65 @@ export async function runInGitWorkspace(
     await git(["checkout", "--quiet", "--detach", checkout.baseSha]);
     if (activeSpan) diagnostics?.end(activeSpan);
     activeSpan = undefined;
-    const configPath = join(metadata, "config");
-    const trustedConfig = await readFile(configPath);
-    const { reply, headline, plan, sessionTitle } = await work(cwd);
+    let conversation: Conversation | undefined;
+    if (continuity) {
+      let resume: SavedConversation | undefined;
+      let lost = continuity.restore === "lost";
+      if (Buffer.isBuffer(continuity.restore)) {
+        activeSpan = diagnostics?.start("continuity");
+        try {
+          resume = await restore(continuity.restore);
+          if (activeSpan)
+            diagnostics?.end(
+              activeSpan,
+              {},
+              JSON.stringify({ restored: true }),
+            );
+        } catch (error) {
+          lost = true;
+          // Start again from the base, without what the restore left behind.
+          await git([
+            "checkout",
+            "--quiet",
+            "--force",
+            "--detach",
+            checkout.baseSha,
+          ]);
+          await git(["clean", "--quiet", "-d", "--force", "-x"]);
+          if (activeSpan)
+            diagnostics?.end(
+              activeSpan,
+              { outcome: "failed" },
+              diagnosticErrorBody(error),
+            );
+        }
+        activeSpan = undefined;
+      } else if (lost) {
+        // The previous Turn's work was not saved: the user sees it here.
+        const span = diagnostics?.start("continuity");
+        if (span)
+          diagnostics?.end(
+            span,
+            { outcome: "failed" },
+            JSON.stringify({ restored: false }),
+          );
+      }
+      // Until the Agent hands over a newer one, the conversation stays as it was.
+      savedConversation = resume;
+      conversation = {
+        ...(resume && { resume }),
+        ...(lost && { lost: true }),
+        save: (saved) => {
+          savedConversation = saved;
+        },
+      };
+    }
+    trustedConfig = await readFile(configPath);
+    agentStarted = true;
+    const { reply, headline, plan, sessionTitle } = await work(
+      cwd,
+      conversation,
+    );
     const title = sessionTitle ? { sessionTitle } : {};
     signal.throwIfAborted();
     if (mode === "plan") {
@@ -138,7 +328,7 @@ export async function runInGitWorkspace(
       return { reply, plan, ...title };
     }
     activeSpan = diagnostics?.start("workspace");
-    if (!(await readFile(configPath)).equals(trustedConfig))
+    if (!(await readFile(configPath)).equals(trustedConfig!))
       throw new Error("Git metadata configuration changed");
 
     await git(["read-tree", checkout.baseSha]);
@@ -225,6 +415,7 @@ export async function runInGitWorkspace(
       );
     throw error;
   } finally {
+    await save();
     const cleanup = [
       withDiagnosticSpan(
         diagnostics,

@@ -1118,3 +1118,288 @@ test("hands the Run's GitHub token only to its own unexpired grant", async () =>
   memory.delete("repositoryGrant");
   expect(await runner.githubToken(runId)).toBeNull();
 });
+
+/** A bucket that keeps objects as text, for the saved work of a Session. */
+function memoryBucket(objects: Map<string, string>) {
+  return {
+    get: vi.fn(async (key: string) => {
+      const value = objects.get(key);
+      return value === undefined
+        ? null
+        : { text: async () => value, body: new Response(value).body };
+    }),
+    put: vi.fn(async (key: string, value: unknown) => {
+      objects.set(key, await new Response(value as BodyInit).text());
+    }),
+    delete: vi.fn(async (key: string) => {
+      objects.delete(key);
+    }),
+  };
+}
+
+test("continues a Session's Turn from its saved work and keeps the new work", async (t) => {
+  const DB = await createTestDb(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "continuity",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "Keep going",
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "codex",
+      connectionId: `codex/${crypto.randomUUID()}`,
+      repository: {
+        repository: "owner/repo",
+        repositoryId: 1,
+        installationId: 2,
+        defaultBranch: "main",
+      },
+      trigger: { kind: "web.message" },
+    }),
+    timeoutMs: 60_000,
+  });
+  const savedBase = "b".repeat(40);
+  const previousKey = `sessions/v1/${sessionId}/continuity/previous`;
+  const objects = new Map([[previousKey, "previous work"]]);
+  const bucket = memoryBucket(objects);
+  const memory = new Map<string, unknown>([
+    ["sessionId", sessionId],
+    ["continuity", { key: previousKey, baseSha: savedBase }],
+  ]);
+  const requests: string[] = [];
+  let collected = 0;
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path === "/health")
+      return Response.json({ status: "ok", service: "runner" });
+    requests.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/continuity") {
+      expect(await new Response(init?.body).text()).toBe("previous work");
+      return new Response(null, { status: 204 });
+    }
+    if (path === "/job") {
+      const job = JSON.parse(String(init?.body));
+      expect(job.continuity).toStrictEqual({ restore: "saved" });
+      // The saved work continues on its own base, not the latest branch.
+      expect(job.checkout.baseSha).toBe(savedBase);
+      return new Response(null, { status: 202 });
+    }
+    if (path === `/job/${runId}`)
+      return Response.json({
+        status: "failed",
+        errorCode: "agent_failed",
+        events: [],
+      });
+    if (path === `/job/${runId}/continuity`) {
+      // The Runner may still be packing the work when the Turn has ended.
+      if (collected++ === 0) return Response.json({}, { status: 202 });
+      return new Response("next work", {
+        headers: { "Content-Length": "9" },
+      });
+    }
+    throw new Error(`Unexpected request ${path}`);
+  });
+  const checkout = vi.spyOn(GitHubApp.prototype, "checkout").mockResolvedValue({
+    token: "write-token",
+    expiresAt: Date.now() + 60_000,
+    baseSha: "a".repeat(40),
+    branch: `tailos/run/${runId}`,
+  });
+  vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  const destroy = vi.fn(async () => {});
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(memory),
+      container: {
+        images: { runner: "image" },
+        start: () => {},
+        interceptOutboundHttps: async () => {},
+        running: true,
+        async setInactivityTimeout() {},
+        getTcpPort: () => ({ fetch }),
+        destroy,
+      },
+      exports: { GitHubEgress: () => ({}), ModelEgress: () => ({}) },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: bucket,
+      TAILOS_GH_APP_ID: "100",
+      TAILOS_GH_APP_PRIVATE_KEY: "unused",
+      TAILOS_PUBLIC_ORIGIN: "https://api.tailos.app",
+      CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      CREDENTIALS: {
+        getByName: () => ({
+          issueAccess: async () => ({
+            accessToken: "access",
+            accountId: "account",
+            connectionVersion: crypto.randomUUID(),
+            accessVersion: crypto.randomUUID(),
+          }),
+        }),
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+
+  await runner.schedule(runId, sessionId);
+  await runner.alarm();
+  expect(checkout).toHaveBeenCalledOnce();
+  // The previous work reaches the Runner before the job that continues it.
+  expect(requests).toStrictEqual(["PUT /continuity", "POST /job"]);
+  await runner.alarm();
+
+  expect(destroy).toHaveBeenCalledOnce();
+  const savedKey = `sessions/v1/${sessionId}/continuity/${runId}`;
+  expect(objects.get(savedKey)).toBe("next work");
+  expect(memory.get("continuity")).toStrictEqual({
+    key: savedKey,
+    baseSha: savedBase,
+  });
+  // Only the latest work of the Session is kept.
+  expect(objects.has(previousKey)).toBe(false);
+  expect(memory.has("continuityRun")).toBe(false);
+});
+
+test.for([
+  {
+    name: "records lost work when the Runner could not save it",
+    respond: () => Response.json({}, { status: 410 }),
+    record: { lost: true },
+    kept: false,
+  },
+  {
+    name: "records lost work when the Runner cannot be reached",
+    respond: () => {
+      throw new Error("Runner unavailable");
+    },
+    record: { lost: true },
+    kept: false,
+  },
+  {
+    name: "records lost work when the Runner lost its job",
+    respond: () => Response.json({}, { status: 404 }),
+    record: { lost: true },
+    kept: false,
+  },
+  {
+    name: "records lost work when the container is gone",
+    respond: () => new Response(null, { status: 204 }),
+    record: { lost: true },
+    kept: false,
+    running: false,
+  },
+  {
+    name: "keeps the previous work when the Turn never reached it",
+    respond: () => new Response(null, { status: 204 }),
+    record: {
+      key: "sessions/v1/session/continuity/previous",
+      baseSha: "b".repeat(40),
+    },
+    kept: true,
+  },
+])("$name", async ({ respond, record, kept, running = true }, t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "saving",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const previousKey = "sessions/v1/session/continuity/previous";
+  const objects = new Map([[previousKey, "previous work"]]);
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    ["continuity", { key: previousKey, baseSha: "b".repeat(40) }],
+    ["continuityRun", { runId, baseSha: "b".repeat(40) }],
+  ]);
+  const fetch = vi.fn(async () => respond());
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(memory),
+      container: {
+        running,
+        getTcpPort: () => ({ fetch }),
+        destroy: async () => {},
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: memoryBucket(objects),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await runner.alarm();
+  expect(memory.get("continuity")).toStrictEqual(record);
+  expect(objects.has(previousKey)).toBe(kept);
+  // Failed attempts are retried a few times, never without end.
+  expect(fetch.mock.calls.length).toBeLessThanOrEqual(3);
+});
+
+test("keeps the saved work when the Run's cleanup is retried", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "retried-cleanup",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    ["continuityRun", { runId, baseSha: "b".repeat(40) }],
+    [
+      "repositoryGrant",
+      { value: {}, expiresAt: Date.now() + 60_000, attempts: 0 },
+    ],
+  ]);
+  const container = {
+    running: true,
+    getTcpPort: () => ({
+      fetch: async () =>
+        new Response("work", { headers: { "Content-Length": "4" } }),
+    }),
+    destroy: async () => {
+      container.running = false;
+    },
+  };
+  // Without the GitHub App the revocation fails and the cleanup is retried.
+  const runner = new RunnerContainer(
+    {
+      storage: memoryStorage(memory),
+      container,
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: memoryBucket(new Map()),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await runner.alarm();
+  const saved = {
+    key: `sessions/v1/${sessionId}/continuity/${runId}`,
+    baseSha: "b".repeat(40),
+  };
+  expect(memory.get("continuity")).toStrictEqual(saved);
+  expect(memory.get("runId")).toBe(runId);
+  await runner.alarm();
+  expect(memory.get("continuity")).toStrictEqual(saved);
+});

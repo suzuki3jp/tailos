@@ -24,6 +24,7 @@ const kinds = {
 };
 const stages: Record<string, string> = {
   checkout: "Checking out repository",
+  continuity: "Carrying over work",
   agent: "Agent",
   publication: "Publishing",
   commit: "Creating commit",

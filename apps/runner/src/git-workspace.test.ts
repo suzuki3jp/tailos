@@ -11,7 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, test, vi, type TestContext } from "vitest";
-import { runInGitWorkspace } from "@/git-workspace.ts";
+import {
+  runInGitWorkspace,
+  type WorkspaceContinuity,
+} from "@/git-workspace.ts";
+import { decodeSavedWork } from "@/continuity.ts";
+import { access } from "node:fs/promises";
 import {
   parseDiagnosticBatch,
   type Diagnostics,
@@ -60,6 +65,7 @@ async function repository(t: TestContext) {
       stage: Parameters<typeof runInGitWorkspace>[3],
       mode?: "plan",
       diagnostics?: Diagnostics,
+      continuity?: WorkspaceContinuity,
     ) {
       return runInGitWorkspace(
         {
@@ -73,6 +79,7 @@ async function repository(t: TestContext) {
         pathToFileURL(seed).href,
         diagnostics,
         mode,
+        continuity,
       );
     },
     refs: () => git(seed, "for-each-ref", "--format=%(refname)"),
@@ -281,4 +288,128 @@ test("planning reads the base and skips staging, even if an adapter returns chan
   ).resolves.toEqual({ reply: "Which behavior is desired?", plan });
   expect(stage).not.toHaveBeenCalled();
   await expect(readFile(join(workspace, "README.md"))).rejects.toThrow();
+});
+
+/** Runs a Turn that carries work over, and returns what it saved. */
+async function turn(
+  repo: Awaited<ReturnType<typeof repository>>,
+  restore: WorkspaceContinuity["restore"],
+  work: Parameters<typeof runInGitWorkspace>[2],
+) {
+  let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
+  const result = await repo
+    .run(work, async () => {}, undefined, undefined, {
+      ...(restore && { restore }),
+      saved: (result) => {
+        saved = result;
+      },
+    })
+    .catch((error: unknown) => error);
+  return { result, saved };
+}
+
+const exists = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+test("carries the work tree and conversation over to the next Turn", async (t) => {
+  const repo = await repository(t);
+  const rollout = {
+    threadId: "thread-1",
+    path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread-1.jsonl",
+    content: Buffer.from('{"type":"session_meta"}\n'),
+  };
+  const first = await turn(repo, undefined, async (cwd, conversation) => {
+    expect(conversation?.resume).toBeUndefined();
+    expect(conversation?.lost).toBeUndefined();
+    await writeFile(join(cwd, "README.md"), "changed\n");
+    await rm(join(cwd, "script.sh"));
+    await writeFile(join(cwd, "notes.txt"), "untracked\n");
+    conversation?.save(rollout);
+    return { reply: "first", headline: "docs: change the readme" };
+  });
+  expect(first.result).toMatchObject({ reply: "first" });
+  if (!first.saved || !("archive" in first.saved)) throw new Error("not saved");
+  const saved = await decodeSavedWork(first.saved.archive);
+  expect(saved.baseSha).toBe(repo.baseSha);
+  expect(saved.head).toBe(repo.baseSha);
+  expect(saved.conversation).toStrictEqual(rollout);
+
+  // A failed Turn still keeps its work for the next one.
+  const second = await turn(
+    repo,
+    first.saved.archive,
+    async (cwd, conversation) => {
+      expect(conversation?.resume).toStrictEqual(rollout);
+      expect(conversation?.lost).toBeUndefined();
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("changed\n");
+      expect(await exists(join(cwd, "script.sh"))).toBe(false);
+      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe(
+        "untracked\n",
+      );
+      await writeFile(join(cwd, "more.txt"), "more\n");
+      throw new Error("Agent failed");
+    },
+  );
+  expect(second.result).toBeInstanceOf(Error);
+  if (!second.saved || !("archive" in second.saved))
+    throw new Error("not saved");
+
+  const third = await turn(
+    repo,
+    second.saved.archive,
+    async (cwd, conversation) => {
+      // Without a newer conversation, the earlier one still continues.
+      expect(conversation?.resume).toStrictEqual(rollout);
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("changed\n");
+      expect(await readFile(join(cwd, "more.txt"), "utf8")).toBe("more\n");
+      return { reply: "third", headline: "docs: add more" };
+    },
+  );
+  // The publication covers everything since the base, including earlier Turns.
+  expect(third.result).toMatchObject({ publication: { kind: "checked" } });
+});
+
+test.for([
+  ["lost", "lost"],
+  ["unreadable", Buffer.from("not saved work")],
+] as const)(
+  "starts over from the base and tells the Agent when the previous work is %s",
+  async ([, restore], t) => {
+    const repo = await repository(t);
+    const { result, saved } = await turn(
+      repo,
+      restore,
+      async (cwd, conversation) => {
+        expect(conversation?.lost).toBe(true);
+        expect(conversation?.resume).toBeUndefined();
+        expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
+        return { reply: "fresh" };
+      },
+    );
+    expect(result).toMatchObject({ reply: "fresh" });
+    expect(saved && "archive" in saved).toBe(true);
+  },
+);
+
+test("keeps the previous work when the Turn never reached it", async (t) => {
+  const repo = await repository(t);
+  let saved: unknown;
+  await runInGitWorkspace(
+    {
+      repository: "owner/private",
+      baseSha: "f".repeat(40),
+      branch: repo.branch,
+    },
+    AbortSignal.timeout(15_000),
+    async () => ({ reply: "never" }),
+    async () => {},
+    "file:///nonexistent",
+    undefined,
+    undefined,
+    { restore: "lost", saved: (result) => (saved = result) },
+  ).catch(() => {});
+  expect(saved).toStrictEqual({ skipped: true });
 });

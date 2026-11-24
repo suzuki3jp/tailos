@@ -74,6 +74,7 @@ export function timelineObservation(record: DiagnosticRecord) {
       kind = "file";
       break;
     case "checkout":
+    case "continuity":
     case "agent":
     case "publication":
     case "commit":

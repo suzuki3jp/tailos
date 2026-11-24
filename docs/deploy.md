@@ -157,10 +157,10 @@ Codex に渡す出力スキーマには文字列の長さ制約を付けず、�
 
 ### Issue 内で計画を相談する
 
-GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、PROJECTS の repository ID・installation ID・allowedActors の設定も必要。
+GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261124-planning-routine.md)）。
 
-許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。タイトル・本文を使った計画または質問が返るので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で再調査する。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は引き続き `tailos:run` ラベルから開始し、コメントでは起動しない。
+許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。plan Routine の Session で Agent が計画または質問を Issue にコメントするので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で続ける。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は label の Routine から開始し、コメントでは起動しない。
 
-新 migration は planning_issues / planning_inbox / planning_deliveries / planning_snapshots / planning_replies と終了時の SQL trigger を追加する。Run の状態画像と計画本文は別コメントに投稿する。Session の閲覧は従来どおり運用者だけに許可するが、返信本文は Issue の閲覧者に公開される。
+アプリは Turn ごとの状態画像だけを投稿し、計画の本文は Agent が gh で投稿する。Session の閲覧は従来どおり運用者だけに許可するが、Agent の返信は Issue の閲覧者に公開される。マイグレーション 0013 は、進行中の Run と未送信の planning_replies がない状態で適用する。
 
-受付後に停止しても、pending inbox の次 Run 作成、queued Run の起動、期限切れ通知リースの再取得を Cron が回収する。実行中の追記は捨てずに順次実行する。返信に失敗しても Agent を再実行しない。送信できない場合は planning_replies の state / attempts / error_category / next_attempt_at / lease_until と対応 Run を確認する。permission / permanent は自動再試行を停止して後続の返信を解放する。入力超過や取得失敗は Run の error_code と返信に残る。planning_snapshots から各 Run の Issue・SHA・対象入力を追える。会話全体が既存 Runner ジョブの 32 KiB 上限に収まらない場合は全文を保存したまま明示的に失敗する。
+受付後に停止しても、待っているメッセージの Turn 作成（session_inbox）、queued Run の起動、期限切れ通知リースの再取得を Cron が回収する。作業中に届いたコメントや label は捨てずに順に処理する。続ける Session がないコメントへの案内は issue_guidance に残り、送信の状態は state / attempts / error_category / next_attempt_at で確認する。ジョブの 32 KiB に収まらない長いコメントの Turn は `message_too_large` で失敗する。

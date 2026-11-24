@@ -412,6 +412,11 @@ export type CheckedPublication = v.InferOutput<typeof CheckedPublication>;
  */
 export const SessionPublication = v.strictObject({
   branch: workBranch,
+  /**
+   * The branch the pull request merges into, when the Agent started from
+   * one other than the default branch. `parentSha` must be on it.
+   */
+  base: v.optional(branch),
   parentSha: gitSha,
   tree: gitSha,
   headline: changeHeadline,
@@ -434,6 +439,7 @@ export const PublicationRefusal = v.union([
     error: v.picklist([
       "pull_request_merged",
       "branch_moved",
+      "invalid_base",
       "invalid_lease",
       "invalid_publication",
       "publication_unavailable",

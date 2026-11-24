@@ -9,7 +9,7 @@
 | [実行モデル](../pdr/records/PDR-20261123-execution-model.md) | Trigger・Routine・Session・Turn・Connector に分ける。出力は Connector、作業中のメッセージは順番待ち |
 | [Session 単位の隔離の境界](../pdr/records/PDR-20261123-repository-settings-session-boundary.md) | 隔離の境界を Session のコンテナとファイルシステムにする（PDR-20261114-009 の後継） |
 | [作業の引き継ぎ](../pdr/records/PDR-20261123-session-continuity.md) | Session の Durable Object がコンテナを持つ。スナップショットで速く戻し、正本は R2。待機時間は定数で既定 0 |
-| [公開ツール](../pdr/records/PDR-20261124-publication-tool.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す（PDR-20261123-publication-tool の後継） |
+| [公開ツール](../pdr/records/PDR-20261124-publication-base.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す。PR の base は公開ツールで指定する（PDR-20261124-publication-tool の後継） |
 | [計画会話の Routine](../pdr/records/PDR-20261124-planning-routine.md) | `@tailos plan` を Issue コメントで起動する読み取り専用の Routine にする。会話は Session の引き継ぎで続け、返信は Agent が gh で行い、状態コメントはアプリが続ける（PDR-20261113-012 の後継） |
 | [Routine の受付](../pdr/records/PDR-20261124-issue-routine-dispatch.md) | Session は Routine と Issue の組ごとに 1 つ。作業中の配送は捨てずに順番待ちにする（PDR-20261118-label-automation-dispatch の後継） |
 | [Issue の参照](../pdr/records/PDR-20261124-routine-github-context.md) / [Project の編集項目](../pdr/records/PDR-20261124-project-settings-routine-actors.md) | 計画も label と同じく受付時のイベントから内容ハッシュを作る。計画の許可ユーザーを plan Routine に移す |
@@ -37,7 +37,7 @@
 | 4b | `claude/session-snapshot` | スナップショットでの高速な復元 | 下記 |
 | 5 | `claude/publication-tool` | 公開ツールと Session ごとの PR | 下記 |
 | 5b | `claude/publication-after-merge` | マージ後の載せ直し | 下記 |
-| 5c | 未定 | 始点の検査 | 下記 |
+| 5c | `claude/start-point-check` | 始点の検査と PR の base | 下記 |
 | 6 | `claude/routine-triggers` | label と計画を Routine に統一し、専用の経路を廃止 | 下記 |
 
 Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR で行う。
@@ -110,10 +110,15 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 完了条件: マージ後の Turn で未公開の作業が載せ直され、競合しても失われない。
 
-## 5c. 始点の検査
+## 5c. 始点の検査と PR の base
 
-- 始点は既定であり、プロンプトで頼まれれば Agent が Turn の中で checkout などで動かしてよい。公開ツールの検査は、Turn の始めに checkout したコミットとの照合をやめ、公開するときの HEAD が対象リポジトリのコミットの上にあることを確かめる形にする。PR の基準もその始点に合わせる。
-- 始点のブランチを PR の base にどう選ぶかは未決。実装の前に人間と決める。
+判断: [公開ツールの判断](../pdr/records/PDR-20261124-publication-base.md)。
+
+- 始点は既定であり、プロンプトで頼まれれば Agent が Turn の中で checkout などで動かしてよい。
+- 公開ツールに任意の `base` を足す。省略すれば既定ブランチ。最初の公開では、Runner が `base` のブランチを取得して作業ツリーとの merge-base を親にし、API が GitHub の compare でその親が `base` の先頭から辿れることを確かめる。辿れなければ `invalid_base`。
+- PR の base は Session の公開の記録に残し、開いた後は変えない。マージ後の次のブランチは既定ブランチに戻る。マージの検知も記録した base の PR で行う。
+
+完了条件: 別ブランチから始めた作業を、そのブランチを base にした PR として公開できる。
 
 ## 6. label と計画を Routine に統一
 

@@ -117,7 +117,9 @@ export async function publishWork(
 
 function jobErrorCode(error: unknown) {
   if (error instanceof AgentSandboxUnavailable) return "sandbox_unavailable";
-  if (error instanceof PublicationFailed) return error.code;
+  // A base the Agent chose is refused to it; the job does not fail on it.
+  if (error instanceof PublicationFailed && error.code !== "invalid_base")
+    return error.code;
   return "agent_failed";
 }
 

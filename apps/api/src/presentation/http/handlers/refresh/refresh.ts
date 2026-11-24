@@ -85,6 +85,7 @@ export function createRefreshRoutes(
           invalid_publication: 400,
           pull_request_merged: 409,
           branch_moved: 409,
+          invalid_base: 409,
           parent_moved: 409,
           publication_unavailable: 503,
         } as const;

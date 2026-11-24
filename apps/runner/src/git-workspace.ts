@@ -413,7 +413,36 @@ export async function runInGitWorkspace(
    * Publishes the whole work tree on the Session's branch. Refusals that the
    * Agent can act on are outcomes; anything else throws.
    */
-  const publish: Publish = async (headline) => {
+  /**
+   * Where the work starts on `base`, which the Agent moved to: the newest
+   * commit of the branch that the work tree is on.
+   */
+  const startOn = async (base: string) => {
+    const valid = await git(["check-ref-format", "--branch", base]).then(
+      () => true,
+      () => false,
+    );
+    if (!valid) throw new PublicationFailed("invalid_base");
+    const ref = "refs/tailos/base";
+    try {
+      await git([
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--depth",
+        "200",
+        remote,
+        `+refs/heads/${base}:${ref}`,
+      ]);
+      return (await git(["merge-base", "HEAD", ref])).toString().trim();
+    } catch {
+      throw new PublicationFailed("invalid_base");
+    } finally {
+      await git(["update-ref", "-d", ref]).catch(() => {});
+    }
+  };
+
+  const publish: Publish = async (headline, base) => {
     if (!publisher || mode === "plan")
       throw new Error("This Turn cannot publish");
     if (publishing) return { published: false, reason: "in_progress" };
@@ -426,12 +455,16 @@ export async function runInGitWorkspace(
       if (!validated.success)
         return finish({ published: false, reason: "invalid_change_headline" });
       const submit = async () => {
-        const parent = published ?? checkout.baseSha;
+        // The first publication into another branch builds on where the
+        // work tree is on it.
+        const parent =
+          published ?? (base ? await startOn(base) : checkout.baseSha);
         await ensureCommit(parent);
         const work = await checkedChanges(parent);
         if (!work) return null;
         return publisher({
           branch: checkout.branch,
+          ...(base && { base }),
           parentSha: parent,
           tree: work.tree,
           headline: validated.output,

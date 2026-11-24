@@ -510,7 +510,11 @@ test("publishes the Agent's work on the Session's branch, once per checked work"
       return url;
     });
 
-  // Only this Turn, on this Session's branch and its head, may publish.
+  const startsOn = vi
+    .spyOn(GitHubApp.prototype, "startsOn")
+    .mockResolvedValue(false);
+  // Only this Turn, on this Session's branch, may publish, and only from a
+  // start on the base branch.
   expect(await runner.publishWork(runId, newRunLease(), work)).toEqual({
     error: "invalid_lease",
   });
@@ -525,7 +529,12 @@ test("publishes the Agent's work on the Session's branch, once per checked work"
       ...work,
       parentSha: "e".repeat(40),
     }),
-  ).toEqual({ error: "invalid_publication" });
+  ).toEqual({ error: "invalid_base" });
+  expect(startsOn).toHaveBeenCalledExactlyOnceWith(
+    repository,
+    repository.defaultBranch,
+    "e".repeat(40),
+  );
   expect(commit).not.toHaveBeenCalled();
 
   expect(await runner.publishWork(runId, bearer, work)).toEqual({
@@ -584,6 +593,64 @@ test("publishes the Agent's work on the Session's branch, once per checked work"
     error: "branch_moved",
   });
   expect(stored.get("sessionPublication")).toMatchObject({ sha: second });
+});
+
+test("publishes into the branch the Agent started from, and keeps that base", async (t) => {
+  const { runner, runId, bearer, stored, work, repository, trigger } =
+    await publishingRun(t);
+  const url = "https://github.com/owner/private/pull/2";
+  const feature = "e".repeat(40);
+  const first = "c".repeat(40);
+  const pulls = vi
+    .spyOn(GitHubApp.prototype, "sessionPullRequest")
+    .mockResolvedValue({ state: "none" });
+  const startsOn = vi
+    .spyOn(GitHubApp.prototype, "startsOn")
+    .mockImplementation(
+      async (_target, base, sha) => base === "feature" && sha === feature,
+    );
+  vi.spyOn(GitHubApp.prototype, "commitSessionWork").mockResolvedValue(first);
+  const open = vi
+    .spyOn(GitHubApp.prototype, "openPullRequest")
+    .mockResolvedValue(url);
+  const moved = { ...work, base: "feature", parentSha: feature };
+
+  // The base cannot be the Session's own branch, and must hold the start.
+  expect(
+    await runner.publishWork(runId, bearer, { ...moved, base: work.branch }),
+  ).toEqual({ error: "invalid_base" });
+  expect(
+    await runner.publishWork(runId, bearer, { ...moved, base: "other" }),
+  ).toEqual({ error: "invalid_base" });
+  expect(await runner.publishWork(runId, bearer, moved)).toEqual({
+    sha: first,
+    url,
+  });
+  expect(startsOn).toHaveBeenLastCalledWith(repository, "feature", feature);
+  expect(pulls).toHaveBeenCalledWith(repository, work.branch, "feature");
+  expect(open).toHaveBeenCalledExactlyOnceWith(repository, trigger, runId, {
+    branch: work.branch,
+    sha: first,
+    headline: work.headline,
+    base: "feature",
+  });
+  expect(stored.get("sessionPublication")).toMatchObject({
+    branch: work.branch,
+    base: "feature",
+    sha: first,
+  });
+  // The pull request keeps its base: another one is refused, and later
+  // publications without one stay on it.
+  const next = { ...work, parentSha: first, tree: "f".repeat(40) };
+  expect(
+    await runner.publishWork(runId, bearer, { ...next, base: "main" }),
+  ).toEqual({ error: "invalid_base" });
+  pulls.mockResolvedValue({ state: "open", url });
+  expect(await runner.publishWork(runId, bearer, next)).toEqual({
+    sha: first,
+    url,
+  });
+  expect(pulls).toHaveBeenLastCalledWith(repository, work.branch, "feature");
 });
 
 test("a Turn's result is the pull request it published, and the Session keeps its branch", async (t) => {

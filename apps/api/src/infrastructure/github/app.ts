@@ -736,6 +736,7 @@ export class GitHubApp {
   async sessionPullRequest(
     target: RepositoryTarget,
     branch: string,
+    base = target.defaultBranch,
   ): Promise<
     { state: "open"; url: string } | { state: "merged" | "closed" | "none" }
   > {
@@ -755,7 +756,7 @@ export class GitHubApp {
           (pull) =>
             pull.base.repo.id === target.repositoryId &&
             pull.head.repo?.id === target.repositoryId &&
-            pull.base.ref === target.defaultBranch &&
+            pull.base.ref === base &&
             pull.head.ref === branch,
         );
       const open = pulls.find((pull) => pull.state === "open");
@@ -767,15 +768,60 @@ export class GitHubApp {
     }
   }
 
+  /**
+   * Whether `sha` is on `base`: its head or one of its ancestors. False when
+   * the branch does not exist.
+   */
+  async startsOn(target: RepositoryTarget, base: string, sha: string) {
+    const repo = "/repos/" + target.repository;
+    const { token } = await this.token(target, { contents: "read" });
+    try {
+      const ref = await this.request(
+        `${repo}/git/ref/heads/${encodeURIComponent(base)}`,
+        token,
+      );
+      if (ref.status === 404) {
+        await ref.body?.cancel();
+        return false;
+      }
+      if (!ref.ok) throw await requestError(ref);
+      const head = v.parse(refSchema, await ref.json()).object.sha;
+      if (head === sha) return true;
+      const compare = await this.request(
+        `${repo}/compare/${head}...${sha}`,
+        token,
+      );
+      if (compare.status === 404) {
+        await compare.body?.cancel();
+        return false;
+      }
+      if (!compare.ok) throw await requestError(compare);
+      const { status } = v.parse(
+        v.object({ status: v.string() }),
+        await compare.json(),
+      );
+      // `sha` is behind the branch head: the head already contains it.
+      return status === "behind" || status === "identical";
+    } finally {
+      await this.revoke(token).catch(() => {});
+    }
+  }
+
   /** Opens a pull request for a Session's branch, which must be at `sha`. */
   async openPullRequest(
     target: RepositoryTarget,
     trigger: RunTrigger,
     runId: string,
-    publication: { branch: string; sha: string; headline: string },
+    publication: {
+      branch: string;
+      sha: string;
+      headline: string;
+      base?: string;
+    },
   ) {
     const { branch } = publication;
-    if (branch === target.defaultBranch)
+    const base = publication.base ?? target.defaultBranch;
+    if (branch === target.defaultBranch || branch === base)
       throw new Error("Unexpected work branch");
     const issue = triggerIssue(trigger);
     const repo = "/repos/" + target.repository;
@@ -787,14 +833,14 @@ export class GitHubApp {
       const response = await this.request(`${repo}/pulls`, token, "POST", {
         title: publication.headline,
         head: branch,
-        base: target.defaultBranch,
+        base,
         // Without an issue, the PR wording is left to the prompt.
         body: `${issue ? `Closes #${issue.issueNumber}\n\n` : ""}Created by Tailos run \`${runId}\`.`,
       });
       // A pull request from an earlier, unanswered request already exists.
       if (response.status === 422) {
         await response.body?.cancel();
-        const existing = await this.sessionPullRequest(target, branch);
+        const existing = await this.sessionPullRequest(target, branch, base);
         if (existing.state !== "open")
           throw new Error("GitHub pull request creation unavailable");
         return existing.url;
@@ -804,7 +850,7 @@ export class GitHubApp {
       if (
         pull.base.repo.id !== target.repositoryId ||
         pull.head.repo?.id !== target.repositoryId ||
-        pull.base.ref !== target.defaultBranch ||
+        pull.base.ref !== base ||
         pull.head.ref !== branch ||
         pull.head.sha !== publication.sha
       )

@@ -554,6 +554,42 @@ test("reads how a Session's pull request stands and opens one with the issue wor
   await expect(open()).resolves.toBe(pullUrl);
 });
 
+test("a start is on a base branch when the branch head contains it", async () => {
+  const head = "1".repeat(40);
+  let status = "behind";
+  const asked: string[] = [];
+  const github = new GitHubApp({ appId: "100", privateKey }, async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/access_tokens"))
+      return Response.json({
+        token: "grant",
+        expires_at: new Date(Date.now() + 300_000).toISOString(),
+      });
+    if (url.pathname === "/installation/token")
+      return new Response(null, { status: 204 });
+    asked.push(url.pathname);
+    if (url.pathname.endsWith("/git/ref/heads/feature%2Fone"))
+      return Response.json({ object: { sha: head } });
+    if (url.pathname.includes("/git/ref/heads/"))
+      return Response.json({ message: "Not Found" }, { status: 404 });
+    if (url.pathname.endsWith(`/compare/${head}...${sha}`))
+      return Response.json({ status });
+    throw new Error(`unexpected ${url.pathname}`);
+  });
+  await expect(github.startsOn(target, "feature/one", head)).resolves.toBe(
+    true,
+  );
+  await expect(github.startsOn(target, "feature/one", sha)).resolves.toBe(true);
+  for (status of ["ahead", "diverged"])
+    await expect(github.startsOn(target, "feature/one", sha)).resolves.toBe(
+      false,
+    );
+  await expect(github.startsOn(target, "missing", sha)).resolves.toBe(false);
+  expect(asked).toContain(
+    `/repos/${target.repository}/git/ref/heads/feature%2Fone`,
+  );
+});
+
 test.for([
   "<!-- tailos:run:run:v1 -->",
   "<!-- tailos:plan:run:input:1:reply:v1 -->",

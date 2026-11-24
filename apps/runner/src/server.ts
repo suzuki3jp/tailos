@@ -111,7 +111,7 @@ export async function publishWork(
   const result: unknown = await response.json().catch(() => null);
   if (response.ok) return v.parse(PublishedWork, result);
   const refusal = v.safeParse(PublicationRefusal, result);
-  if (refusal.success) throw new PublicationRefused(refusal.output.error);
+  if (refusal.success) throw new PublicationRefused(refusal.output);
   throw new Error("Publication unavailable");
 }
 

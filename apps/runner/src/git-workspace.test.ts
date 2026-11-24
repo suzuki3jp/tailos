@@ -18,6 +18,7 @@ import {
   type WorkspaceContinuity,
 } from "@/git-workspace.ts";
 import { decodeSavedWork } from "@/continuity.ts";
+import { PublicationRefused } from "@/agent.ts";
 import { access } from "node:fs/promises";
 import {
   parseDiagnosticBatch,
@@ -141,6 +142,8 @@ async function repository(t: TestContext) {
       );
     },
     git: (...args: string[]) => git(seed, ...args),
+    publish: (work: Parameters<Publisher>[0]) =>
+      publisher(signed(work) as unknown as SessionPublication),
   };
 }
 
@@ -338,6 +341,49 @@ test("publishes again on top of the last publication, in this Turn and the next"
     { publishedSha: published },
   );
   expect(repo.publisher.mock.calls[2]![0].parentSha).toBe(published);
+});
+
+test("builds on a publication whose answer was lost when it publishes newer work", async (t) => {
+  const repo = await repository(t);
+  let lost = "";
+  const sent: Parameters<Publisher>[0][] = [];
+  // Stands in for the controller, which remembers the lost publication.
+  const publisher: Publisher = async (work) => {
+    sent.push(work);
+    if (!lost) {
+      // GitHub has the commit, but its answer never reaches the Runner.
+      lost = (await repo.publish(work)).sha;
+      throw new Error("Publication unavailable");
+    }
+    if (work.parentSha !== lost)
+      throw new PublicationRefused({ error: "parent_moved", sha: lost });
+    return repo.publish(work);
+  };
+  await repo.run(
+    async (cwd, _conversation, publish) => {
+      await writeFile(join(cwd, "README.md"), "one\n");
+      await expect(publish!("docs: change the readme")).rejects.toThrow();
+      // The Agent fixes something, then publishes again.
+      await writeFile(join(cwd, "notes.txt"), "two\n");
+      expect(await publish!("docs: add notes")).toMatchObject({
+        published: true,
+      });
+      return result;
+    },
+    { publisher },
+  );
+  expect(sent.map((work) => work.parentSha)).toEqual([
+    repo.baseSha,
+    repo.baseSha,
+    lost,
+  ]);
+  // Only what changed since the lost publication is sent on top of it.
+  expect(sent[2]!.changes).toEqual({
+    additions: [
+      { path: "notes.txt", contents: Buffer.from("two\n").toString("base64") },
+    ],
+    deletions: [],
+  });
 });
 
 test("publishes an existing executable with a content-only edit", async (t) => {

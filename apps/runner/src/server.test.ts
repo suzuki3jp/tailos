@@ -600,7 +600,7 @@ test("asks the controller to publish and turns its refusals into outcomes", asyn
     );
     expect(await requests[0]!.json()).toEqual(work);
     await expect(publishWork(lease, work, signal)).rejects.toEqual(
-      new PublicationRefused("pull_request_merged"),
+      new PublicationRefused({ error: "pull_request_merged" }),
     );
     await expect(publishWork(lease, work, signal)).rejects.toThrow(
       "Publication unavailable",

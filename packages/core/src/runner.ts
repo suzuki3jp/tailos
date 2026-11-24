@@ -406,16 +406,23 @@ export const PublishedWork = v.strictObject({
   url: v.pipe(v.string(), v.url()),
 });
 export type PublishedWork = v.InferOutput<typeof PublishedWork>;
-/** Why a publication was refused, in words the Agent can act on. */
-export const PublicationRefusal = v.strictObject({
-  error: v.picklist([
-    "pull_request_merged",
-    "branch_moved",
-    "invalid_lease",
-    "invalid_publication",
-    "publication_unavailable",
-  ]),
-});
+/**
+ * Why a publication was refused, in words the Agent can act on. With
+ * `parent_moved`, an earlier publication whose answer was lost already moved
+ * the branch to `sha`: the Runner builds on it and publishes again.
+ */
+export const PublicationRefusal = v.union([
+  v.strictObject({
+    error: v.picklist([
+      "pull_request_merged",
+      "branch_moved",
+      "invalid_lease",
+      "invalid_publication",
+      "publication_unavailable",
+    ]),
+  }),
+  v.strictObject({ error: v.literal("parent_moved"), sha: gitSha }),
+]);
 export type PublicationRefusal = v.InferOutput<typeof PublicationRefusal>;
 
 export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;

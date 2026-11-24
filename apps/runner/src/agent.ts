@@ -23,7 +23,7 @@ export type PublishOutcome =
         | "in_progress"
         | "invalid_change_headline"
         | "unsupported_changes"
-        | PublicationRefusal["error"];
+        | Exclude<PublicationRefusal["error"], "parent_moved">;
     };
 /** Publishes the work tree with a Conventional Commits headline. */
 export type Publish = (headline: unknown) => Promise<PublishOutcome>;
@@ -62,8 +62,13 @@ export class PublicationFailed extends Error {
 
 /** The controller refused a publication for a reason the Agent can act on. */
 export class PublicationRefused extends Error {
-  constructor(readonly code: PublicationRefusal["error"]) {
-    super(code);
+  readonly code: PublicationRefusal["error"];
+  /** With `parent_moved`, where the Session's branch is now. */
+  readonly sha?: string;
+  constructor(refusal: PublicationRefusal) {
+    super(refusal.error);
+    this.code = refusal.error;
+    if ("sha" in refusal) this.sha = refusal.sha;
   }
 }
 

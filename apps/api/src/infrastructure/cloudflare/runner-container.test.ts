@@ -543,6 +543,12 @@ test("publishes the Agent's work on the Session's branch, once per checked work"
     url,
   });
   expect(commit).toHaveBeenCalledOnce();
+  // Changed work on the old parent, after the answer was lost, is told where
+  // the branch went instead.
+  expect(
+    await runner.publishWork(runId, bearer, { ...work, tree: "9".repeat(40) }),
+  ).toEqual({ error: "parent_moved", sha: first });
+  expect(commit).toHaveBeenCalledOnce();
 
   // The next publication builds on the last one and updates the open PR.
   const next = { ...work, parentSha: first, tree: "f".repeat(40) };

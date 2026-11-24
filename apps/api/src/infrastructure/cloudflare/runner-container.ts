@@ -937,8 +937,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
     // The Runner builds on what the Session last published.
     const head =
       record?.branch === work.branch ? record.sha : step.output.baseSha;
-    if (!sameWork && work.parentSha !== head)
+    if (!sameWork && work.parentSha !== head) {
+      // The Runner missed the answer to the publication that moved the
+      // branch from its parent: it builds on the new head instead.
+      if (record?.branch === work.branch && record.parentSha === work.parentSha)
+        return { error: "parent_moved", sha: record.sha };
       return { error: "invalid_publication" };
+    }
 
     try {
       if (!sameWork) {

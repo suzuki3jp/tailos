@@ -297,17 +297,34 @@ export async function runInGitWorkspace(
       const validated = v.safeParse(changeHeadline, headline);
       if (!validated.success)
         return finish({ published: false, reason: "invalid_change_headline" });
-      const parent = published ?? checkout.baseSha;
-      await ensureCommit(parent);
-      const work = await checkedChanges(parent);
-      if (!work) return finish({ published: false, reason: "no_changes" });
-      const result = await publisher({
-        branch: checkout.branch,
-        parentSha: parent,
-        tree: work.tree,
-        headline: validated.output,
-        changes: work.changes,
+      const submit = async () => {
+        const parent = published ?? checkout.baseSha;
+        await ensureCommit(parent);
+        const work = await checkedChanges(parent);
+        if (!work) return null;
+        return publisher({
+          branch: checkout.branch,
+          parentSha: parent,
+          tree: work.tree,
+          headline: validated.output,
+          changes: work.changes,
+        });
+      };
+      const result = await submit().catch(async (error: unknown) => {
+        // An earlier publication whose answer was lost moved the branch:
+        // build on it, once.
+        if (
+          !(error instanceof PublicationRefused) ||
+          error.code !== "parent_moved" ||
+          !error.sha
+        )
+          throw error;
+        published = error.sha;
+        await ensureCommit(error.sha);
+        await git(["reset", "--quiet", error.sha]);
+        return submit();
       });
+      if (!result) return finish({ published: false, reason: "no_changes" });
       published = result.sha;
       // The work tree now sits on the published commit, as on GitHub. The
       // files stay as they are.
@@ -318,7 +335,7 @@ export async function runInGitWorkspace(
     } catch (error) {
       if (error instanceof PublicationFailed)
         return finish({ published: false, reason: error.code });
-      if (error instanceof PublicationRefused)
+      if (error instanceof PublicationRefused && error.code !== "parent_moved")
         return finish({ published: false, reason: error.code });
       if (span)
         diagnostics?.end(

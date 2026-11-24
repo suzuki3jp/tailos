@@ -56,6 +56,7 @@ export async function forwardModelRequest(
   access: () => Promise<ModelAccess | null | undefined>,
   rejected: (accessVersion: string) => Promise<void>,
   upstream: typeof fetch = fetch,
+  runId?: string,
 ): Promise<Response> {
   const url = new URL(request.url);
   if (
@@ -65,9 +66,10 @@ export async function forwardModelRequest(
     !isCodexPath(url.pathname)
   ) {
     // A Codex update may need a path that is not allowed yet: name it in the
-    // logs. Only the path is recorded, never headers or the query.
+    // logs. Only the Run, host and path are recorded, never headers or the query.
     // oxlint-disable-next-line no-console -- Record denied paths without credentials.
     console.warn("Model egress denied a request", {
+      runId,
       host: url.hostname,
       path: url.pathname,
     });
@@ -108,6 +110,8 @@ export class ModelEgress extends WorkerEntrypoint<Bindings, ModelEgressProps> {
       async () => runner()?.modelAccess(runId),
       async (accessVersion) =>
         runner()?.rejectModelAccess(runId, accessVersion),
+      fetch,
+      runId,
     );
   }
 }

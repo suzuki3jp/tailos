@@ -4,8 +4,10 @@ import { d1Projects } from "./projects.ts";
 import { d1Routines } from "./routines.ts";
 import {
   admitIssueMessage,
+  admitSessionMessage,
   dispatchSessionInbox,
   latestCommentSession,
+  latestTurnContext,
 } from "./session-inbox.ts";
 import { listDueRunIds } from "./run-recovery.ts";
 import {
@@ -50,7 +52,11 @@ async function fixture(t: TestContext) {
     triggerMetadata: "{}",
     target: "{}",
     body,
-    executionContext: JSON.stringify({ version: 1, engine: "fake" }),
+    executionContext: JSON.stringify({
+      version: 1,
+      engine: "fake",
+      trigger: { kind: "github.issue-comment", issueNumber: 3 },
+    }),
     timeoutMs: 60_000,
   });
   return { db, project, routine, message };
@@ -222,4 +228,67 @@ test("migration gives each Project a plan Routine and keeps started planning con
       "SELECT count(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name = 'planning_terminal'",
     ).first("n"),
   ).toBe(0);
+});
+
+test("a message from the Session's page starts its next Turn only while the Session is idle", async (t) => {
+  const { db, project, message } = await fixture(t);
+  const first = await admitIssueMessage(db, message(100));
+  const sessionId = first!.sessionId;
+  const send = (requestId: string, revision = 1) =>
+    admitSessionMessage(db, {
+      ownerId: owner,
+      projectId: project.project.id,
+      projectRevision: revision,
+      sessionId,
+      requestId,
+      body: "Use option B",
+      executionContext: JSON.stringify({ version: 1, engine: "fake" }),
+      timeoutMs: 60_000,
+    });
+  const request = crypto.randomUUID();
+  // The Turn from the issue is still running.
+  expect(await send(request)).toBe("busy");
+  await db
+    .prepare(
+      "UPDATE runs SET status = 'succeeded', finished_at = 1 WHERE id = ?",
+    )
+    .bind(first!.runId)
+    .run();
+  await expect(send(request, 2)).rejects.toBeInstanceOf(ProjectChanged);
+  const started = await send(request);
+  expect(started).toEqual({ runId: expect.any(String) });
+  // A resend of the same request is the same Turn.
+  expect(await send(request)).toEqual(started);
+  const run = await db
+    .prepare(
+      `SELECT m.author_kind AS author, m.body FROM runs r JOIN session_messages m ON m.id = r.start_message_id WHERE r.id = ?`,
+    )
+    .bind(started !== "busy" && started !== "not_found" ? started.runId : "")
+    .first();
+  expect(run).toEqual({ author: "user", body: "Use option B" });
+  // Only Turns from the issue show on the issue.
+  expect(
+    await db
+      .prepare("SELECT count(*) AS n FROM issue_notifications")
+      .first("n"),
+  ).toBe(1);
+  expect(
+    await admitSessionMessage(db, {
+      ownerId: "other",
+      projectId: project.project.id,
+      projectRevision: 1,
+      sessionId,
+      requestId: crypto.randomUUID(),
+      body: "x",
+      executionContext: "{}",
+      timeoutMs: 60_000,
+    }),
+  ).toBe("not_found");
+  expect(
+    await latestTurnContext(db, {
+      ownerId: owner,
+      projectId: project.project.id,
+      sessionId,
+    }),
+  ).toBe(JSON.stringify({ version: 1, engine: "fake" }));
 });

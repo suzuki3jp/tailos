@@ -1,11 +1,17 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/button";
-import { LoopComposer } from "@/features/compose-loop";
+import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { RequestState } from "@/widgets/request-state";
-import { projectSessionQueryOptions, sessionErrorStatus } from "../api/queries";
+import {
+  isActiveRun,
+  projectSessionQueryOptions,
+  sessionErrorStatus,
+} from "../api/queries";
+import { sendMessage, SendMessageError } from "../api/send-message";
 import { SessionConversation } from "./session-conversation";
 import { useSessionTimeline } from "../api/use-session-timeline";
 
@@ -20,6 +26,87 @@ function olderLabel(loading: boolean, failed: boolean) {
   if (loading) return "Loading…";
   if (failed) return "Retry earlier activity";
   return "Load earlier activity";
+}
+
+function sendFailure(error: unknown) {
+  const status = error instanceof SendMessageError ? error.status : undefined;
+  const code = error instanceof SendMessageError ? error.code : undefined;
+  if (code === "codex_not_connected")
+    return (
+      <>
+        Connect Codex to continue.{" "}
+        <Link href="/connect" className="underline">
+          Connect
+        </Link>
+      </>
+    );
+  if (code === "session_busy")
+    return "The loop is still working. Send once it finishes.";
+  if (status === 401)
+    return (
+      <>
+        Your sign-in has expired.{" "}
+        <Link href="/login" className="underline">
+          Sign in
+        </Link>
+      </>
+    );
+  if (status === 404) return "This session can no longer take messages.";
+  if (status === 400) return "Check the message and model, then try again.";
+  return "Try again.";
+}
+
+function composerStatus(error: unknown, working: boolean) {
+  if (error) return <>Your message wasn’t sent. {sendFailure(error)}</>;
+  if (working) return "The loop is working. You can send once it finishes.";
+  return undefined;
+}
+
+/**
+ * Sends the next message of the Session, which continues with the settings
+ * of its latest Turn. A working Session takes none.
+ */
+function SessionComposer({
+  projectId,
+  sessionId,
+  working,
+}: Props & { working: boolean }) {
+  const queryClient = useQueryClient();
+  // One ID per draft, so resending the same message starts one Turn.
+  const draft = useRef<{ key: string; requestId: string } | null>(null);
+  const [sent, setSent] = useState(0);
+  const send = useMutation({
+    mutationFn: (input: Parameters<typeof sendMessage>[0]) =>
+      sendMessage(input),
+    onSuccess: async () => {
+      draft.current = null;
+      setSent((count) => count + 1);
+      await queryClient.invalidateQueries({
+        queryKey: projectSessionQueryOptions(projectId, sessionId).queryKey,
+      });
+    },
+  });
+  const submit = (input: LoopMessage) => {
+    const key = JSON.stringify(input);
+    if (draft.current?.key !== key)
+      draft.current = { key, requestId: crypto.randomUUID() };
+    send.mutate({
+      ...input,
+      projectId,
+      sessionId,
+      requestId: draft.current.requestId,
+    });
+  };
+  return (
+    <LoopComposer
+      key={sent}
+      mode="session"
+      onSubmit={submit}
+      pending={send.isPending}
+      disabled={working}
+      status={composerStatus(send.isError ? send.error : undefined, working)}
+    />
+  );
 }
 
 export function SessionProjectName({ projectId, sessionId }: Props) {
@@ -130,7 +217,11 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         </div>
       )}
       <div className="mx-auto w-full max-w-166 shrink-0 px-3 pb-3">
-        <LoopComposer mode="session" />
+        <SessionComposer
+          projectId={projectId}
+          sessionId={sessionId}
+          working={result.detail.runs.some(isActiveRun)}
+        />
       </div>
     </>
   );

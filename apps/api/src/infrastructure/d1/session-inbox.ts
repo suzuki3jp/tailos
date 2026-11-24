@@ -8,6 +8,7 @@ import {
   type IssueMessage,
   type IssueMessageReceipt,
 } from "@/application/triggers/admit-trigger.ts";
+import type { SessionMessage } from "@/application/sessions/continue-session.ts";
 
 /** A SQL expression for a Session ID, with its bindings. */
 type SessionExpression = { sql: string; bindings: unknown[] };
@@ -44,10 +45,14 @@ function startNext(
         `UPDATE session_inbox SET run_id = ? WHERE id = ${next} AND EXISTS (SELECT 1 FROM runs WHERE id = ?)`,
       )
       .bind(runId, ...session.bindings, runId),
-    // Every Turn from an issue shows its state on the issue.
+    // Every Turn from an issue shows its state on the issue; a message sent
+    // from the Session's page does not.
     db
       .prepare(
-        `INSERT INTO issue_notifications (run_id, next_attempt_at) SELECT id, ? FROM runs WHERE id = ?`,
+        `INSERT INTO issue_notifications (run_id, next_attempt_at)
+        SELECT r.id, ? FROM runs r JOIN session_inbox i ON i.run_id = r.id
+        WHERE r.id = ? AND i.source != 'web.message'
+          AND json_extract(r.execution_context, '$.trigger.issueNumber') IS NOT NULL`,
       )
       .bind(now, runId),
     db
@@ -267,4 +272,80 @@ export async function latestCommentSession(
     ORDER BY rs.last_message_at DESC LIMIT 1`)
     .bind(input.ownerId, input.projectId, input.repositoryId, input.issueNumber)
     .first<{ routineId: string }>();
+}
+
+/** The execution settings of a Session's latest Turn, for its next one. */
+export async function latestTurnContext(
+  db: D1Database,
+  input: { ownerId: string; projectId: string; sessionId: string },
+) {
+  return db
+    .prepare(`SELECT r.execution_context AS context FROM runs r JOIN sessions s ON s.id = r.session_id
+    WHERE s.id = ? AND s.owner_id = ? AND s.project_id = ?
+    ORDER BY r.created_at DESC, r.id DESC LIMIT 1`)
+    .bind(input.sessionId, input.ownerId, input.projectId)
+    .first<string>("context");
+}
+
+/**
+ * Adds the owner's message to a Session that is not working, and makes it
+ * the Session's next Turn at once. A resend of the same request returns the
+ * first result.
+ */
+export async function admitSessionMessage(
+  db: D1Database,
+  input: SessionMessage,
+): Promise<{ runId: string } | "busy" | "not_found"> {
+  const runId = crypto.randomUUID();
+  const now = Date.now();
+  const delivery = [
+    "web.message",
+    JSON.stringify([input.ownerId, input.sessionId, input.requestId]),
+  ];
+  const working = `(EXISTS (SELECT 1 FROM runs WHERE session_id = s.id AND status IN ('queued', 'running'))
+    OR EXISTS (SELECT 1 FROM session_inbox WHERE session_id = s.id AND run_id IS NULL))`;
+  const owned = `FROM sessions s JOIN projects p ON p.id = s.project_id
+    WHERE s.id = ? AND s.owner_id = ? AND p.id = ? AND p.owner_id = ? AND p.deleted_at IS NULL`;
+  const ownedBindings = [
+    input.sessionId,
+    input.ownerId,
+    input.projectId,
+    input.ownerId,
+  ];
+  const results = await db.batch<
+    { runId: string | null } | { current: number; working: number }
+  >([
+    db
+      .prepare(`INSERT INTO session_inbox (session_id, source, idempotency_key, delivery_id, author_kind, body,
+        execution_context, timeout_ms, received_at)
+      SELECT s.id, ?, ?, ?, 'user', ?, ?, ?, ? ${owned} AND p.revision = ? AND NOT ${working}
+      ON CONFLICT (source, idempotency_key) DO NOTHING`)
+      .bind(
+        ...delivery,
+        input.requestId,
+        input.body,
+        input.executionContext,
+        input.timeoutMs,
+        now,
+        ...ownedBindings,
+        input.projectRevision,
+      ),
+    ...startNext(db, { sql: "?", bindings: [input.sessionId] }, runId, now),
+    db
+      .prepare(`SELECT i.run_id AS runId FROM session_inbox i JOIN sessions s ON s.id = i.session_id
+      WHERE i.source = ? AND i.idempotency_key = ? AND s.owner_id = ?`)
+      .bind(...delivery, input.ownerId),
+    db
+      .prepare(
+        `SELECT p.revision = ? AS current, ${working} AS working ${owned}`,
+      )
+      .bind(input.projectRevision, ...ownedBindings),
+  ]);
+  const state = results.at(-1)?.results[0];
+  const row = results.at(-2)?.results[0];
+  if (row && "runId" in row) return row.runId ? { runId: row.runId } : "busy";
+  if (!state || !("current" in state)) return "not_found";
+  if (state.current === 0)
+    throw new ProjectChanged("Project changed before the message");
+  return "busy";
 }

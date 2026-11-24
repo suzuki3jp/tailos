@@ -4,7 +4,7 @@
 
 GitHub Issue に有効な Routine の起動ラベルを付けると、Tailos が設定されたプロンプトで Session と最初の依頼を作る。既存設定の移行では従来の `tailos:run` 等のラベルを引き継ぐ。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は D1 に保存し、運用者が Web の `/projects` で管理する。PR 作成後のレビューとマージは人が行う。
 
-GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。ホームの入力欄からは、選択した Project で新しい Session と Run を開始できる（[判断](pdr/records/PDR-20261122-home-message-start.md)）。Web チャットからの続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
+GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。ホームの入力欄からは、選択した Project で新しい Session と Run を開始できる（[判断](pdr/records/PDR-20261122-home-message-start.md)）。Session 画面の入力欄からは、作業中でない Session に続きのメッセージを送れる（[判断](pdr/records/PDR-20261124-session-message.md)）。実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 

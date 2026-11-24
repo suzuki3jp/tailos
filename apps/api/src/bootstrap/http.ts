@@ -6,7 +6,9 @@ import { createRoutineRoutes } from "@/presentation/http/handlers/routines/routi
 import { codexConnectionId } from "@/application/auth/device.ts";
 import {
   admitIssueMessage,
+  admitSessionMessage,
   latestCommentSession,
+  latestTurnContext,
 } from "@/infrastructure/d1/session-inbox.ts";
 import { queueIssueGuidance } from "@/infrastructure/d1/issue-guidance.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
@@ -86,6 +88,15 @@ const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
       admit: (input) => admitTrigger(env.DB, input),
     }),
     scheduleRun: runStarter,
+    continueDeps: (env) => ({
+      project: async (ownerId, projectId) =>
+        (await d1Projects(env.DB).settings(ownerId)).find(
+          (record) => record.project.id === projectId,
+        ) ?? null,
+      codexConnected: codexConnected(env),
+      latestTurn: (input) => latestTurnContext(env.DB, input),
+      admitMessage: (input) => admitSessionMessage(env.DB, input),
+    }),
   });
 
 const triggerRoutes = createTriggerRoutes(

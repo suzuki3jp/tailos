@@ -9,7 +9,7 @@
 | [実行モデル](../pdr/records/PDR-20261123-execution-model.md) | Trigger・Routine・Session・Turn・Connector に分ける。出力は Connector、作業中のメッセージは順番待ち |
 | [Session 単位の隔離の境界](../pdr/records/PDR-20261123-repository-settings-session-boundary.md) | 隔離の境界を Session のコンテナとファイルシステムにする（PDR-20261114-009 の後継） |
 | [作業の引き継ぎ](../pdr/records/PDR-20261123-session-continuity.md) | Session の Durable Object がコンテナを持つ。スナップショットで速く戻し、正本は R2。待機時間は定数で既定 0 |
-| [公開ツール](../pdr/records/PDR-20261123-publication-tool.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。PR は Session ごとに 1 つ |
+| [公開ツール](../pdr/records/PDR-20261124-publication-tool.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す（PDR-20261123-publication-tool の後継） |
 | PDR-20261122-agent-egress-credential-proxy | 外部通信は常に許可し、GitHub の認証情報はコンテナの外で差し込む（suzuki3jp/tailos#121、実装済み） |
 
 ## 現状（2026-11-23 の `main`）
@@ -85,11 +85,13 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 ## 5. 公開ツールと Session ごとの PR
 
 - Codex の dynamic tool（Claude は MCP）として公開ツールを追加する。Runner が今の検査を行って API に預け、API が署名付きコミットを作る。
-- 作業ブランチを Session ごと（例: `tailos/session/<sessionId>`）にし、2 回目以降は同じブランチにコミットを足して PR を更新する。PR がマージ済みなら次の Turn の始めに作業ツリーを既定ブランチの最新に合わせ、新しい作業ブランチで PR を作る。マージせずに閉じていれば同じブランチ（削除済みなら作業ツリーの先頭から作り直す）で新しい PR を作る。
+- 作業ブランチを Session ごと（`tailos/session/<sessionId>`）にし、2 回目以降は同じブランチにコミットを足して PR を更新する。マージせずに閉じていれば同じブランチ（削除済みなら作業ツリーの先頭から作り直す）で新しい PR を作る。
+- PR がマージ済みなら、次の Turn の始めに作業ツリーを既定ブランチの最新に合わせ、次の連番の作業ブランチ（`tailos/session/<sessionId>-2`、`-3`）で PR を作る。最後に公開したコミットより後の作業は既定ブランチの最新に載せ直す。競合したら既定ブランチの最新から始め、未公開の作業は作業ツリーの別の参照に残して Agent と利用者に知らせる。そのために、最後に公開したコミットを Session に記録する。
+- 始点は既定であり、プロンプトで頼まれれば Agent が Turn の中で checkout などで動かしてよい。公開ツールの検査は、Turn の始めに checkout したコミットとの照合をやめ、公開するときの HEAD が対象リポジトリのコミットの上にあることを確かめる形にする。PR の基準もその始点に合わせる。
 - Turn の終わりに必ず公開する作りをやめる。label 起動の既定のプロンプトに公開の指示を入れる。
 - 置き換える判断: Run の結果として PR を保存する既存の判断。
 
-完了条件: 公開ツールで PR を作成・更新できる。公開しない Turn が成功で終わる。既存の検査（tree・署名・既定ブランチの保護）が維持される。
+完了条件: 公開ツールで PR を作成・更新できる。公開しない Turn が成功で終わる。マージ後の Turn で未公開の作業が載せ直され、競合しても失われない。既存の検査（tree・署名・既定ブランチの保護）が維持される。
 
 ## 6. label と計画を Routine に統一
 

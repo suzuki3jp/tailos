@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-configurable-label-prompt
 key: runner.github-context-acquisition
-status: accepted
+status: superseded
 date: "2026-11-18"
 areas: [runner, planning, github, triggers]
 keywords: [設定可能プロンプト, 固定prompt, label, githubContext, contentHash, bodyOffset]

@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261122-project-settings-without-network
 key: project.configuration.editable-fields
-status: accepted
+status: superseded
 date: "2026-11-22"
 areas: [projects, triggers, api, database, web]
 keywords: [Routine, Project, triggerLabel, allowedActors, 許可ユーザー, 通信許可, agentNetworkAccess, 時間上限]

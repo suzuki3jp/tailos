@@ -39,8 +39,9 @@
 | 5b | `claude/publication-after-merge` | マージ後の載せ直し | 下記 |
 | 5c | `claude/start-point-check` | 始点の検査と PR の base | 下記 |
 | 6 | `claude/routine-triggers` | label と計画を Routine に統一し、専用の経路を廃止 | 下記 |
+| 7 | `claude/session-message` | Session 画面からの送信（suzuki3jp/tailos#124） | 下記 |
 
-Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR で行う。
+Session 画面からの送信（suzuki3jp/tailos#124）は段階 7 として 6 の後に積む。
 
 ## 2. 認証情報をコンテナに置かない（#131）
 
@@ -131,6 +132,17 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 - 移行: Project ごとに有効な plan Routine を作り、Project の plan の許可ユーザーをコピーして Project から外す。移行前の計画 Session には同じ Session で続け、Codex の会話は新しく始めて Agent に伝える。移行前の label の Session は引き継がない。`planning_*` には新しく書き込まず、既存の行は残す。移行は進行中の Run と未送信の計画の返信がない状態で行う。
 
 完了条件: `@tailos plan` と label 起動が Routine として動き、専用の経路を使わない。同じ Routine と Issue への作業中の配送が順番待ちになる。
+
+## 7. Session 画面からの送信
+
+判断: [Session 画面からの送信](../pdr/records/PDR-20261124-session-message.md)、[セッション画面の後継](../pdr/records/PDR-20261124-session-detail-send.md)。
+
+- `POST /v1/projects/:projectId/sessions/:id/messages`。送れるのは所有者だけで、Session が作業中（進行中の Turn か順番待ちのメッセージがある）なら 409 `session_busy`。
+- 次の Turn は直前の Turn の実行設定（モード、Routine の指示、リポジトリ、起動元）を引き継ぎ、モデルと effort だけ入力欄で変えられる。時間上限は Project の今の設定。
+- メッセージは利用者のメッセージとして `session_inbox` に入れ、同じ batch で Turn にする。`requestId` で重複を除く。Web からの Turn は Issue に状態コメントを付けない。
+- 入力欄は、Session に進行中の Turn があれば送信できない。
+
+完了条件: Session 画面から送ったメッセージが、同じ Session の次の Turn として動く。
 
 ## 検証
 

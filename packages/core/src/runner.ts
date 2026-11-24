@@ -50,10 +50,17 @@ const repositoryName = v.pipe(
 );
 export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
+// Earlier Runs had a branch each; a Session now publishes to its own, and to
+// a numbered one after its pull request is merged.
 export const workBranch = v.pipe(
   v.string(),
-  v.regex(/^tailos\/(?:issue-[1-9][0-9]*|run)\/[a-f0-9-]{36}$/),
+  v.regex(
+    /^tailos\/(?:(?:issue-[1-9][0-9]*|run)\/[a-f0-9-]{36}|session\/[a-f0-9-]{36}(?:-[2-9]|-[1-9][0-9]+)?)$/,
+  ),
 );
+/** The branch a Session publishes to; `n` counts its merged pull requests. */
+export const sessionBranch = (sessionId: string, n = 1) =>
+  `tailos/session/${sessionId}${n > 1 ? `-${n}` : ""}`;
 export const changeHeadline = v.pipe(
   v.string(),
   v.maxLength(100),
@@ -261,6 +268,8 @@ const repositoryJob = {
       repository: repositoryName,
       baseSha: gitSha,
       branch: workBranch,
+      // The commit the Session last published to its branch, if any.
+      publishedSha: v.optional(gitSha),
     }),
   ),
 };
@@ -378,6 +387,36 @@ export const CheckedPublication = v.strictObject({
   changes: FileChanges,
 });
 export type CheckedPublication = v.InferOutput<typeof CheckedPublication>;
+
+/**
+ * Work the Agent publishes with the publication tool during a Turn: the whole
+ * work tree, as changes from `parentSha`, the head of the Session's branch.
+ */
+export const SessionPublication = v.strictObject({
+  branch: workBranch,
+  parentSha: gitSha,
+  tree: gitSha,
+  headline: changeHeadline,
+  changes: FileChanges,
+});
+export type SessionPublication = v.InferOutput<typeof SessionPublication>;
+/** What a publication made: the signed commit and its pull request. */
+export const PublishedWork = v.strictObject({
+  sha: gitSha,
+  url: v.pipe(v.string(), v.url()),
+});
+export type PublishedWork = v.InferOutput<typeof PublishedWork>;
+/** Why a publication was refused, in words the Agent can act on. */
+export const PublicationRefusal = v.strictObject({
+  error: v.picklist([
+    "pull_request_merged",
+    "branch_moved",
+    "invalid_lease",
+    "invalid_publication",
+    "publication_unavailable",
+  ]),
+});
+export type PublicationRefusal = v.InferOutput<typeof PublicationRefusal>;
 
 export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;
 

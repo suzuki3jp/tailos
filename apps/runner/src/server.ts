@@ -2,12 +2,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
-  CheckedPublication,
   maxContinuityBytes,
   maxPublicationBytes,
   maxRunnerJobBytes,
+  PublicationRefusal,
+  PublishedWork,
   RunnerJob,
   RunnerStatus,
+  SessionPublication,
   type RunnerEvent,
 } from "@tailos/core/runner";
 import * as v from "valibot";
@@ -15,6 +17,7 @@ import {
   AgentSandboxUnavailable,
   fakeAgent,
   PublicationFailed,
+  PublicationRefused,
   type AgentAdapter,
 } from "@/agent.ts";
 import { claudeAgent } from "@/claude-agent.ts";
@@ -80,24 +83,19 @@ function json(response: ServerResponse, code: number, body: object) {
     .end(JSON.stringify(body));
 }
 
-async function stagePublication(
-  mode: RunnerJob["mode"],
+/**
+ * Asks the Run's controller to commit checked work and open or update the
+ * Session's pull request. It waits for GitHub, so it may take a while.
+ */
+export async function publishWork(
   lease: { url: string; bearer: string },
-  work: Omit<CheckedPublication, "kind" | "events">,
-  events: RunnerEvent[],
+  work: SessionPublication,
   signal: AbortSignal,
-) {
-  if (mode === "plan") throw new Error("Planning cannot publish");
-  const url = new URL("publication", lease.url);
+): Promise<PublishedWork> {
+  const url = new URL("publish", lease.url);
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("Invalid publication URL");
-  const body = JSON.stringify(
-    v.parse(CheckedPublication, {
-      kind: "checked",
-      ...work,
-      events: [...events, { type: "job_succeeded", at: Date.now() }],
-    }),
-  );
+  const body = JSON.stringify(v.parse(SessionPublication, work));
   if (Buffer.byteLength(body) > maxPublicationBytes)
     throw new PublicationFailed("unsupported_changes");
   const response = await fetch(url, {
@@ -108,11 +106,13 @@ async function stagePublication(
       "Content-Type": "application/json",
     },
     body,
-    signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]),
   });
-  await response.body?.cancel();
-  if (response.status !== 204)
-    throw new Error("Publication checkpoint unavailable");
+  const result: unknown = await response.json().catch(() => null);
+  if (response.ok) return v.parse(PublishedWork, result);
+  const refusal = v.safeParse(PublicationRefusal, result);
+  if (refusal.success) throw new PublicationRefused(refusal.output.error);
+  throw new Error("Publication unavailable");
 }
 
 function jobErrorCode(error: unknown) {
@@ -197,19 +197,11 @@ async function execute(
         ? await runInGitWorkspace(
             input.checkout,
             signal,
-            (cwd, conversation) =>
-              agent.run(input, signal, cwd, diagnostics, conversation),
-            async (work) => {
-              if (input.deadlineAt - Date.now() > 2_000)
-                await diagnostics.flush(1_000);
-              return stagePublication(
-                input.mode,
-                input.engine === "codex" ? input.refresh : input.lease,
-                work,
-                events,
-                signal,
-              );
-            },
+            (cwd, conversation, publish) =>
+              agent.run(input, signal, cwd, diagnostics, conversation, publish),
+            input.engine === "codex" && input.mode !== "plan"
+              ? (work) => publishWork(input.refresh, work, signal)
+              : undefined,
             undefined,
             diagnostics,
             input.mode,

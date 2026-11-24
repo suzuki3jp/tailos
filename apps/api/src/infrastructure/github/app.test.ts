@@ -10,8 +10,10 @@ import { assert, expect, test } from "vitest";
 import {
   GitHubApp,
   GitHubRequestError,
+  WorkBranchMoved,
   workBranchFor,
 } from "@/infrastructure/github/app.ts";
+import { sessionBranch } from "@tailos/core/runner";
 
 const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
   .privateKey.export({
@@ -131,8 +133,8 @@ test("scopes app grants to one repository and protects the default branch and gi
     },
   );
 
-  const runId = randomUUID();
-  await expect(github.checkout(target, trigger, runId)).rejects.toThrow(
+  const branch = sessionBranch(randomUUID());
+  await expect(github.checkout(target, trigger, branch)).rejects.toThrow(
     /active creation/,
   );
   expect(permissions).toStrictEqual([{ contents: "read", issues: "read" }]);
@@ -140,20 +142,20 @@ test("scopes app grants to one repository and protects the default branch and gi
   const { expiresAt, ...checkout } = await github.checkout(
     target,
     trigger,
-    runId,
+    branch,
   );
   assert(expiresAt > Date.now());
-  expect(checkout).toStrictEqual({
-    token: "test-grant",
-    baseSha: sha,
-    branch: workBranchFor(trigger, runId),
-  });
+  expect(checkout).toStrictEqual({ token: "test-grant", baseSha: sha, branch });
+  await expect(github.checkout(target, trigger, "main")).rejects.toThrow(
+    /cannot be the default branch/,
+  );
   // The Run's grant omits permissions: it gets what the App was granted,
   // still for the target repository only.
   expect(permissions).toStrictEqual([
     { contents: "read", issues: "read" },
     { contents: "read", issues: "read" },
     undefined,
+    { contents: "read", issues: "read" },
   ]);
 });
 
@@ -200,7 +202,7 @@ test("a Run without an issue checks out without reading an issue and opens a PR 
   const { branch: checkedOut } = await github.checkout(
     target,
     webTrigger,
-    runId,
+    branch,
   );
   expect(checkedOut).toBe(branch);
   expect(paths.some((path) => path.includes("/issues/"))).toBe(false);
@@ -401,6 +403,155 @@ test("reconciles a lost signing response only for the verified commit with the e
     "GitHub commit does not match checked work",
   );
   expect(mutations).toBe(1);
+});
+
+test("commits a Session's work on its last publication and refuses a branch that moved", async () => {
+  const runId = randomUUID();
+  const published = "e".repeat(40);
+  const work = {
+    branch: sessionBranch(randomUUID()),
+    parentSha: published,
+    tree: "b".repeat(40),
+    headline: "fix(api): handle the next case",
+    changes: {
+      additions: [{ path: "handler.ts", contents: "Cg==" }],
+      deletions: [],
+    },
+  };
+  const signedSha = "c".repeat(40);
+  let head: string | null = published;
+  const created: unknown[] = [];
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/access_tokens"))
+        return Response.json({
+          token: "write-grant",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      if (url.pathname.includes("/git/ref/heads/"))
+        return head
+          ? Response.json({ object: { sha: head } })
+          : new Response(null, { status: 404 });
+      if (url.pathname.endsWith("/git/refs")) {
+        created.push(JSON.parse(String(init?.body)));
+        head = published;
+        return Response.json({ object: { sha: head } }, { status: 201 });
+      }
+      if (url.pathname === "/graphql") {
+        expect(
+          JSON.parse(String(init?.body)).variables.input.expectedHeadOid,
+        ).toBe(published);
+        head = signedSha;
+        return Response.json({
+          data: { createCommitOnBranch: { commit: { oid: signedSha } } },
+        });
+      }
+      if (url.pathname.endsWith("/git/commits/" + signedSha))
+        return Response.json({
+          sha: signedSha,
+          tree: { sha: work.tree },
+          parents: [{ sha: published }],
+          message: work.headline + "\n\nTailos run: " + runId,
+          verification: { verified: true },
+        });
+      // Someone else pushed an unsigned commit to the branch.
+      if (url.pathname.endsWith("/git/commits/" + "f".repeat(40)))
+        return Response.json({
+          sha: "f".repeat(40),
+          tree: { sha: work.tree },
+          parents: [{ sha: published }],
+          message: "manual",
+          verification: { verified: false },
+        });
+      expect(url.pathname).toBe("/installation/token");
+      return new Response(null, { status: 204 });
+    },
+  );
+  const commit = () =>
+    github.commitSessionWork(target, runId, work, Date.now() + 10_000);
+  await expect(commit()).resolves.toBe(signedSha);
+
+  // A branch deleted with its closed pull request is recreated where the
+  // Session left it.
+  head = null;
+  await expect(commit()).resolves.toBe(signedSha);
+  expect(created).toEqual([
+    { ref: "refs/heads/" + work.branch, sha: published },
+  ]);
+
+  head = "f".repeat(40);
+  await expect(commit()).rejects.toBeInstanceOf(WorkBranchMoved);
+});
+
+test("reads how a Session's pull request stands and opens one with the issue wording", async () => {
+  const runId = randomUUID();
+  const branch = sessionBranch(randomUUID());
+  const repo = { id: 42, default_branch: "main" };
+  const pull = (state: string, merged = false, ref = branch) => ({
+    html_url: pullUrl,
+    base: { ref: "main", repo },
+    head: { ref, sha, repo },
+    state,
+    merged_at: merged ? new Date().toISOString() : null,
+  });
+  let pulls: unknown[] = [];
+  let posted: { title: string; body: string; head: string } | undefined;
+  let postStatus = 201;
+  const github = new GitHubApp(
+    { appId: "100", privateKey },
+    async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/access_tokens"))
+        return Response.json({
+          token: "grant",
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+        });
+      if (url.pathname.endsWith("/pulls") && init?.method === "POST") {
+        posted = JSON.parse(String(init.body));
+        if (postStatus === 422) {
+          pulls = [pull("open")];
+          return Response.json({ message: "exists" }, { status: 422 });
+        }
+        return Response.json(pull("open"), { status: 201 });
+      }
+      if (url.pathname.endsWith("/pulls")) {
+        expect(url.searchParams.get("head")).toBe("owner:" + branch);
+        return Response.json(pulls);
+      }
+      expect(url.pathname).toBe("/installation/token");
+      return new Response(null, { status: 204 });
+    },
+  );
+  const state = () => github.sessionPullRequest(target, branch);
+  await expect(state()).resolves.toEqual({ state: "none" });
+  pulls = [pull("closed")];
+  await expect(state()).resolves.toEqual({ state: "closed" });
+  pulls = [pull("closed"), pull("closed", true)];
+  await expect(state()).resolves.toEqual({ state: "merged" });
+  pulls = [pull("closed", true), pull("open")];
+  await expect(state()).resolves.toEqual({ state: "open", url: pullUrl });
+  // Pull requests of another branch never count.
+  pulls = [pull("open", false, "other")];
+  await expect(state()).resolves.toEqual({ state: "none" });
+
+  const open = () =>
+    github.openPullRequest(target, trigger, runId, {
+      branch,
+      sha,
+      headline: "feat: add the feature",
+    });
+  await expect(open()).resolves.toBe(pullUrl);
+  expect(posted).toEqual({
+    title: "feat: add the feature",
+    head: branch,
+    base: "main",
+    body: `Closes #8\n\nCreated by Tailos run \`${runId}\`.`,
+  });
+  // A pull request opened by an earlier, unanswered request is adopted.
+  postStatus = 422;
+  await expect(open()).resolves.toBe(pullUrl);
 });
 
 test.for([

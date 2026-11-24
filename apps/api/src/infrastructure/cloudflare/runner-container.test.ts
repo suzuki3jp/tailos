@@ -1507,6 +1507,64 @@ test("keeps the saved work when the Run's cleanup is retried", async (t) => {
   expect(memory.get("continuity")).toStrictEqual(saved);
 });
 
+test("keeps a waiting container when the Run's cleanup is retried", async (t) => {
+  const { DB } = await createTestBindings(t);
+  const { runId, sessionId } = await admitTrigger(DB, {
+    source: "test",
+    idempotencyKey: "retried-waiting-cleanup",
+    ownerId: "owner",
+    concurrencyKey: "target",
+    prompt: "test",
+    executionContext: '{"version":1,"engine":"fake"}',
+    timeoutMs: 60_000,
+  });
+  await DB.prepare(
+    "UPDATE runs SET status = 'failed', finished_at = ? WHERE id = ?",
+  )
+    .bind(Date.now(), runId)
+    .run();
+  const memory = new Map<string, unknown>([
+    ["runId", runId],
+    ["sessionId", sessionId],
+    ["continuityRun", { runId, baseSha: "b".repeat(40) }],
+    [
+      "repositoryGrant",
+      { value: {}, expiresAt: Date.now() + 60_000, attempts: 0 },
+    ],
+  ]);
+  const destroy = vi.fn(async () => {});
+  class WaitingRunner extends RunnerContainer {
+    protected override idleMs = 60_000;
+  }
+  // Without the GitHub App the revocation fails and the cleanup is retried.
+  const runner = new WaitingRunner(
+    {
+      storage: memoryStorage(memory),
+      container: {
+        running: true,
+        images: { runner: "image" },
+        snapshotContainer: async () => ({ id: "snapshot", size: 1 }),
+        getTcpPort: () => ({
+          fetch: async () =>
+            new Response("work", { headers: { "Content-Length": "4" } }),
+        }),
+        destroy,
+      },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      DB,
+      RUN_ARTIFACTS: memoryBucket(new Map()),
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[1],
+  );
+  await runner.alarm();
+  const idleUntil = memory.get("idleUntil") as number;
+  expect(idleUntil).toBeGreaterThan(Date.now());
+  expect(memory.get("runId")).toBe(runId);
+  await runner.alarm();
+  expect(destroy).not.toHaveBeenCalled();
+  expect(memory.get("idleUntil")).toBe(idleUntil);
+});
+
 /** A container that records how the Runner was started, and is always ready. */
 function startingContainer(inspected: string, idle = false) {
   const order: string[] = [];

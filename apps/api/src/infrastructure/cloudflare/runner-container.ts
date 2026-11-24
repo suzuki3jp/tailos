@@ -347,9 +347,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
           await this.ctx.storage.delete(continuityRunStorage);
         }
       // Its work is saved: the container may wait for the Session's next
-      // Turn, or go.
-      if (this.idleMs > 0 && continuing?.runId === runId && container?.running)
-        await this.ctx.storage.put(idleUntilStorage, Date.now() + this.idleMs);
+      // Turn, or go. A retried cleanup keeps the wait the first one chose.
+      const idleUntil =
+        continuing?.runId === runId
+          ? Date.now() + this.idleMs
+          : await this.ctx.storage.get<number>(idleUntilStorage);
+      if (this.idleMs > 0 && idleUntil && container?.running)
+        await this.ctx.storage.put(idleUntilStorage, idleUntil);
       else if (container?.running)
         await observeRun(this.env.DB, runId, "cleanup", () =>
           container.destroy(),
@@ -521,12 +525,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const container = this.ctx.container;
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
-    if (
-      this.idleMs > 0 &&
-      container.running &&
-      (await this.ctx.storage.get<number>(idleUntilStorage))
-    ) {
-      await this.ctx.storage.delete(idleUntilStorage);
+    // A wait from an earlier Turn ends here, whether or not its container is
+    // kept, so a later retried cleanup cannot mistake it for this Turn's.
+    const waited =
+      this.idleMs > 0
+        ? await this.ctx.storage.get<number>(idleUntilStorage)
+        : undefined;
+    if (waited) await this.ctx.storage.delete(idleUntilStorage);
+    if (waited && container.running) {
       // A Runner image deployed while it waited must not keep running. When
       // the image cannot be told, the container is started again.
       const kept = await container.inspect().catch(() => null);

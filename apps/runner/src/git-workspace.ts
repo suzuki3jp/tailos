@@ -208,8 +208,15 @@ export async function runInGitWorkspace(
       "--no-tags",
       bundle,
       `${continuityRef}:${continuityRef}`,
+      ...(saved.kept ? [`+${unpublishedRef}:${unpublishedRef}`] : []),
     ]);
     await rm(bundle, { force: true });
+    if (
+      saved.kept &&
+      (await git(["rev-parse", unpublishedRef])).toString().trim() !==
+        saved.kept
+    )
+      throw new Error("Kept work does not match");
     const parent = (await git(["rev-parse", `${saved.work}^`])).toString();
     if (parent.trim() !== saved.head)
       throw new Error("Saved work does not follow its HEAD");
@@ -248,7 +255,9 @@ export async function runInGitWorkspace(
    * Session's pull request was merged. What changed since `publishedSha`, in
    * commits or not, is applied on top as uncommitted changes. When it
    * conflicts, the work tree is the default branch as it is, and the work
-   * stays at `unpublishedRef` for the Agent.
+   * stays at `unpublishedRef` for the Agent, across Turns until it deletes
+   * it: a root commit with the published tree, and on it one with the work
+   * tree, so that it needs no other commit to be carried over.
    */
   const realign = async (publishedSha: string) => {
     const head = (await git(["rev-parse", "HEAD"])).toString().trim();
@@ -298,7 +307,31 @@ export async function runInGitWorkspace(
       }
       return { publishedSha };
     } catch {
-      await git(["update-ref", unpublishedRef, work]);
+      const commit = async (tree: string, parents: string[], message: string) =>
+        (
+          await git(
+            [
+              "commit-tree",
+              tree,
+              ...parents.flatMap((parent) => ["-p", parent]),
+              "-m",
+              message,
+            ],
+            { env: continuityIdentity },
+          )
+        )
+          .toString()
+          .trim();
+      const merged = await commit(
+        `${publishedSha}^{tree}`,
+        [],
+        `Tailos published work ${publishedSha}`,
+      );
+      await git([
+        "update-ref",
+        unpublishedRef,
+        await commit(`${work}^{tree}`, [merged], "Tailos unpublished work"),
+      ]);
       await start();
       return { publishedSha, kept: unpublishedRef };
     } finally {
@@ -462,9 +495,26 @@ export async function runInGitWorkspace(
         .toString()
         .trim();
       await git(["update-ref", continuityRef, work], { signal: saveSignal });
+      // Work kept aside after a merge goes along until the Agent deletes it.
+      const kept = await git(
+        ["rev-parse", "--verify", "--quiet", unpublishedRef],
+        {
+          signal: saveSignal,
+        },
+      ).then(
+        (sha) => sha.toString().trim(),
+        () => undefined,
+      );
       const bundle = join(metadata, "tailos-continuity.bundle");
       await git(
-        ["bundle", "create", bundle, continuityRef, `^${checkout.baseSha}`],
+        [
+          "bundle",
+          "create",
+          bundle,
+          continuityRef,
+          ...(kept ? [unpublishedRef] : []),
+          `^${checkout.baseSha}`,
+        ],
         { signal: saveSignal },
       );
       continuity.saved({
@@ -474,6 +524,7 @@ export async function runInGitWorkspace(
           work,
           config: digest(trustedConfig),
           bundle: await readFile(bundle),
+          ...(kept && { kept }),
           ...(savedConversation && { conversation: savedConversation }),
         }),
       });

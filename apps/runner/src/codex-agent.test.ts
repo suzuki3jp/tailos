@@ -1294,7 +1294,7 @@ test.for([
   { kept: undefined, text: "was re-applied on top as uncommitted changes" },
   {
     kept: "refs/tailos/unpublished",
-    text: `git diff ${"e".repeat(40)} refs/tailos/unpublished`,
+    text: "git diff refs/tailos/unpublished^ refs/tailos/unpublished",
   },
 ])(
   "tells the Agent that its work moved onto the default branch after a merge (kept: $kept)",

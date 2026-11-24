@@ -767,7 +767,7 @@ test("moves unpublished work onto the latest default branch after the merge", as
   expect(sent?.changes.deletions).toEqual([]);
 });
 
-test("keeps unpublished work aside when it conflicts with the latest default branch", async (t) => {
+test("keeps conflicting unpublished work aside, across Turns until the Agent deletes it", async (t) => {
   const repo = await repository(t);
   const { archive, published } = await publishedTurn(repo, async (cwd) => {
     await writeFile(join(cwd, "README.md"), "unpublished\n");
@@ -775,7 +775,31 @@ test("keeps unpublished work aside when it conflicts with the latest default bra
   const latest = await squashMerge(repo, published, {
     "README.md": "changed on main\n",
   });
+  const inRepo = async (cwd: string, ...args: string[]) => {
+    const pointer = await readFile(join(cwd, ".git"), "utf8");
+    return gitIn(
+      cwd,
+      {},
+      undefined,
+      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
+      ...args,
+    );
+  };
+  /** The unpublished change, as the Agent is told to look at it. */
+  const keptChange = (cwd: string) =>
+    inRepo(
+      cwd,
+      "diff",
+      "refs/tailos/unpublished^",
+      "refs/tailos/unpublished",
+      "--",
+      "README.md",
+    );
 
+  // Read through a holder: each Turn sets it from its callback.
+  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
+  const lastSaved = () => out.saved;
+  const next = { baseSha: latest, branch: `${repo.branch}-2` };
   await repo.run(
     async (cwd, conversation) => {
       expect(conversation?.realigned).toEqual({
@@ -787,25 +811,37 @@ test("keeps unpublished work aside when it conflicts with the latest default bra
       expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
         "changed on main\n",
       );
-      const pointer = await readFile(join(cwd, ".git"), "utf8");
-      const kept = gitIn(
-        cwd,
-        {},
-        undefined,
-        `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
-        "show",
-        "refs/tailos/unpublished:README.md",
-      );
-      expect(kept).toBe("unpublished");
+      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
       return result;
     },
     {
-      continuity: { restore: archive, saved: () => {} },
+      continuity: { restore: archive, saved: (result) => (out.saved = result) },
       checkout: {
-        baseSha: latest,
-        branch: `${repo.branch}-2`,
+        ...next,
         realign: { previousBase: repo.baseSha, publishedSha: published },
       },
     },
   );
+  const first = lastSaved();
+  if (!first || !("archive" in first)) throw new Error("not saved");
+  expect((await decodeSavedWork(first.archive)).kept).toMatch(/^[a-f0-9]{40}$/);
+
+  // A later Turn, in a new container, still has it; the Agent deletes it.
+  const later = first.archive;
+  delete out.saved;
+  await repo.run(
+    async (cwd, conversation) => {
+      expect(conversation?.realigned).toBeUndefined();
+      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
+      await inRepo(cwd, "update-ref", "-d", "refs/tailos/unpublished");
+      return result;
+    },
+    {
+      continuity: { restore: later, saved: (result) => (out.saved = result) },
+      checkout: next,
+    },
+  );
+  const second = lastSaved();
+  if (!second || !("archive" in second)) throw new Error("not saved");
+  expect((await decodeSavedWork(second.archive)).kept).toBeUndefined();
 });

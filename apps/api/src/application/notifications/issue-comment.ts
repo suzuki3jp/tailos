@@ -16,6 +16,7 @@ export type IssueNotification = {
   guidance_id?: string;
   reply_body?: string;
   session_id: string | null;
+  project_id: string | null;
   target: string;
   /** Absent for contexts stored before triggers, which kept the issue in target. */
   trigger?: string | null;
@@ -49,14 +50,18 @@ export function commentBody(
     IssueNotification,
     | "run_id"
     | "session_id"
+    | "project_id"
     | "desired_state"
     | "input_id"
     | "guidance_id"
     | "reply_body"
   >,
 ) {
+  const projectPath =
+    n.project_id === null ? "" : `/${encodeURIComponent(n.project_id)}`;
+  // A guidance reply has no Session to link to.
   const link = n.session_id
-    ? `[セッションを開く ↗](${new URL(`/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n`
+    ? `[セッションを開く ↗](${new URL(`${projectPath}/sessions/${encodeURIComponent(n.session_id)}`, origin)})\n\n`
     : "";
   if (n.reply_body !== undefined) {
     // Escape all mentions, including team mentions and copied command examples.

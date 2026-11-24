@@ -34,7 +34,7 @@ export function issueGuidanceStore(db: D1Database): NotificationStore {
         WHERE id IN (SELECT id FROM issue_guidance WHERE state = 'pending' AND next_attempt_at <= ?
           AND (lease_until IS NULL OR lease_until <= ?) ORDER BY next_attempt_at LIMIT 1)
         RETURNING *, id AS guidance_id, body AS reply_body, 'guidance/' || id AS run_id,
-          NULL AS session_id, 'succeeded' AS desired_state, 1 AS version`)
+          NULL AS session_id, NULL AS project_id, 'succeeded' AS desired_state, 1 AS version`)
         .bind(lease, now + 300_000, now, now)
         .all<IssueNotification>();
       return result.results;

@@ -74,12 +74,13 @@ Session 画面からの送信（suzuki3jp/tailos#124）は 6 の後に別の PR 
 
 ## 4b. スナップショットでの高速な復元
 
-- コンテナ内の作業領域と `CODEX_HOME` を固定の場所（例: `/work`）に移し、`CODEX_HOME` は `writableRoots` の外に保つ。
-- Turn の保存の後に `snapshotContainer()` を取り、ID と作成時のイメージの digest を Durable Object に保存する。待機時間は定数（既定 0）で決める。次の Turn は digest が一致すればスナップショットから起動し、使えなければ段階 4 の R2 から戻す。
-- git メタデータの改ざん検知の基準（今の `trustedConfig`）を Session 側に持ち、スナップショットから戻すたびに比べる。R2 から戻す場合は git メタデータを毎回作り直すので不要。
-- Codex の再開を本物の Codex CLI で確かめるテスト（別プロセスで threadId から再開できること。PoC の `codex-resume/probe.mjs` と同じ方法）を追加する。Codex を更新するたびに、古い rollout から再開できるかを確かめる。
+- 作業ツリーと git メタデータをコンテナ内の固定の場所（`TAILOS_WORK_DIR=/work` の `repo` と `git`）に置き、Turn の後も消さない。`CODEX_HOME` は今どおり Turn ごとに作り直し、会話は R2 の保存から戻す。
+- Turn の保存の後に `snapshotContainer()` を取り、ID と作成時のイメージを R2 の保存の記録と組にして Durable Object に置く。次の Turn はイメージが今と同じならスナップショットから起動し、復元後の `inspect()` でもイメージを確かめる。使えなければイメージから起動する。
+- R2 の保存は毎回 Runner に渡す。Runner は、その場の作業ツリーが保存とまったく同じ（基準のコミット、HEAD、ファイル、git の設定）ときだけそのまま使い、違えば R2 から戻す。git の設定を信頼する基準（ハッシュ）は R2 の保存に入れて Session 側に持つ。
+- 待機時間は `sessionIdleMs`（既定 0）で決める。0 より大きいと、Turn の後にコンテナを破棄せずに待たせ、次の Turn が同じコンテナで続く。待機中のコンテナを使う後の Turn のために、横取りの Worker は Session の今の Run の認証情報を問い合わせる。
+- 本物の Codex CLI（`@openai/codex` を Runner の devDependency にする）で、別のプロセス・別の作業ディレクトリから rollout だけで thread を再開できることを確かめるテストを追加する。
 
-完了条件: 同じイメージの間はスナップショットから戻り、イメージを更新した後は R2 から戻る。スナップショットから戻した後も git の設定の改ざんを検知できる。
+完了条件: 同じイメージの間はスナップショットから戻り、イメージを更新した後は R2 から戻る。その場の作業ツリーは git の設定が変わっていれば使わない。
 
 ## 5. 公開ツールと Session ごとの PR
 

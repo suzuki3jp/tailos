@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
 import type { RunnerJob } from "@tailos/core/runner";
@@ -260,7 +267,10 @@ async function saveConversation(
   path: string,
   conversation: Conversation,
 ) {
-  const saved = v.safeParse(rolloutPath, relative(directory, path));
+  // Codex reports the real path, which differs under a symbolic link.
+  const real = await realpath(path).catch(() => path);
+  const home = await realpath(directory).catch(() => directory);
+  const saved = v.safeParse(rolloutPath, relative(home, real));
   if (!saved.success) return;
   const content = await readFile(path).catch(() => undefined);
   if (content) conversation.save({ threadId, path: saved.output, content });

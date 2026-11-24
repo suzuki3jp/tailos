@@ -121,6 +121,11 @@ function jobErrorCode(error: unknown) {
   return "agent_failed";
 }
 
+/** A job is in progress until its status and saved work are final. */
+const busy = (job: CurrentJob | undefined) =>
+  job !== undefined &&
+  (job.state.status === "running" || job.saved?.state === "pending");
+
 function savedWorkState(
   result: Parameters<WorkspaceContinuity["saved"]>[0],
 ): SavedWorkState {
@@ -143,6 +148,10 @@ function workspaceContinuity(
     // Saved work that never arrived cannot be carried over.
     ...(restore && {
       restore: restore === "saved" ? (previous ?? "lost") : "lost",
+    }),
+    // Set in the container, so that the work outlives this process's job.
+    ...(process.env.TAILOS_WORK_DIR && {
+      workDir: process.env.TAILOS_WORK_DIR,
     }),
     saved(result) {
       job.saved = savedWorkState(result);
@@ -273,7 +282,7 @@ export function createRunnerServer(
           json(response, 401, { error: "unauthorized" });
           return;
         }
-        if (current) {
+        if (busy(current)) {
           request.resume();
           json(response, 409, { error: "runner_already_assigned" });
           return;
@@ -304,7 +313,11 @@ export function createRunnerServer(
           json(response, 400, { error: "invalid_job" });
           return;
         }
-        if (!current) {
+        const resent =
+          current &&
+          JSON.stringify(current.input) === JSON.stringify(parsed.output);
+        // A kept container takes the Session's next Turn once this one ends.
+        if (!resent && !busy(current)) {
           current = {
             input: parsed.output,
             state: { status: "running" },
@@ -317,13 +330,11 @@ export function createRunnerServer(
             previous,
           );
           previous = undefined;
-        } else if (
-          JSON.stringify(current.input) !== JSON.stringify(parsed.output)
-        ) {
+        } else if (!resent) {
           json(response, 409, { error: "runner_already_assigned" });
           return;
         }
-        json(response, 202, { runId: current.input.runId });
+        json(response, 202, { runId: current!.input.runId });
         return;
       }
       if (

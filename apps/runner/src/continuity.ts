@@ -23,6 +23,11 @@ export type SavedWork = {
   baseSha: string;
   head: string;
   work: string;
+  /**
+   * SHA-256 of the git configuration the Turn trusted. Kept with the Session,
+   * so that a work tree found in place is used only if nobody changed it.
+   */
+  config?: string;
   bundle: Buffer;
   conversation?: SavedConversation;
 };
@@ -39,6 +44,7 @@ const Header = v.strictObject({
   baseSha: sha,
   head: sha,
   work: sha,
+  config: v.optional(v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/))),
   bundle: size,
   conversation: v.optional(
     v.strictObject({
@@ -58,6 +64,7 @@ export async function encodeSavedWork(saved: SavedWork) {
     baseSha: saved.baseSha,
     head: saved.head,
     work: saved.work,
+    ...(saved.config && { config: saved.config }),
     bundle: saved.bundle.length,
     ...(saved.conversation && {
       conversation: {
@@ -97,6 +104,7 @@ export async function decodeSavedWork(archive: Buffer): Promise<SavedWork> {
     baseSha: header.baseSha,
     head: header.head,
     work: header.work,
+    ...(header.config && { config: header.config }),
     bundle: data.subarray(end + 1, bundleEnd),
     ...(header.conversation && {
       conversation: {

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
   rename,
@@ -295,11 +296,13 @@ async function turn(
   repo: Awaited<ReturnType<typeof repository>>,
   restore: WorkspaceContinuity["restore"],
   work: Parameters<typeof runInGitWorkspace>[2],
+  workDir?: string,
 ) {
   let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
   const result = await repo
     .run(work, async () => {}, undefined, undefined, {
       ...(restore && { restore }),
+      ...(workDir && { workDir }),
       saved: (result) => {
         saved = result;
       },
@@ -412,4 +415,53 @@ test("keeps the previous work when the Turn never reached it", async (t) => {
     { restore: "lost", saved: (result) => (saved = result) },
   ).catch(() => {});
   expect(saved).toStrictEqual({ skipped: true });
+});
+
+test("uses the work left in place when it is exactly the saved work", async (t) => {
+  const repo = await repository(t);
+  const kept = await mkdtemp(join(tmpdir(), "tailos-work-"));
+  t.onTestFinished(() => rm(kept, { recursive: true, force: true }));
+  const first = await turn(
+    repo,
+    undefined,
+    async (cwd) => {
+      await writeFile(join(cwd, ".gitignore"), "deps/\n");
+      await mkdir(join(cwd, "deps"));
+      // Ignored files are not saved, but survive in a kept container.
+      await writeFile(join(cwd, "deps", "installed"), "yes\n");
+      return { reply: "first" };
+    },
+    kept,
+  );
+  if (!first.saved || !("archive" in first.saved)) throw new Error("not saved");
+  const archive = first.saved.archive;
+
+  const seen = async (workDir: string) => {
+    let installed = false;
+    await turn(
+      repo,
+      archive,
+      async (cwd) => {
+        expect(await readFile(join(cwd, ".gitignore"), "utf8")).toBe("deps/\n");
+        installed = await exists(join(cwd, "deps", "installed"));
+        return { reply: "next" };
+      },
+      workDir,
+    );
+    return installed;
+  };
+  expect(await seen(kept)).toBe(true);
+
+  // A new container has nothing in place and restores the saved work.
+  const fresh = await mkdtemp(join(tmpdir(), "tailos-work-"));
+  t.onTestFinished(() => rm(fresh, { recursive: true, force: true }));
+  expect(await seen(fresh)).toBe(false);
+
+  // Work in place is not trusted once its git configuration changed.
+  await writeFile(
+    join(kept, "git", "config"),
+    (await readFile(join(kept, "git", "config"), "utf8")) +
+      "[core]\n\tpager = sh\n",
+  );
+  expect(await seen(kept)).toBe(false);
 });

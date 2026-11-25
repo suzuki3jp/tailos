@@ -15,7 +15,6 @@ export function SidebarAccount() {
     <div className="mt-auto shrink-0">
       <Link
         href="/login"
-        aria-label="Open account"
         className="flex h-15 min-w-0 items-center gap-2.5 px-3 hover:bg-sidebar-accent"
       >
         <Avatar className="size-9 after:hidden">

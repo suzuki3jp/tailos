@@ -12,6 +12,8 @@ paths:
   - apps/api/src/application/routines/**
   - apps/api/src/presentation/http/handlers/routines/**
   - apps/api/src/infrastructure/cloudflare/runner-container.ts
+  - apps/api/src/infrastructure/d1/sessions.ts
+  - apps/web/src/_pages/session-detail/**
   - packages/core/src/runner.ts
   - apps/runner/src/agent-turns.ts
   - apps/runner/src/github-tool.ts
@@ -27,6 +29,8 @@ decided_by: suzuki3jp
 Issue を起点にする Routine（label と計画）の開始プロンプトは、利用者が保存した指示とする。Issue のタイトル・本文をプロンプトへ自動展開しない。構造化した `githubContext: { kind: "issue", number, contentHash }` を Runner に渡し、対象リポジトリに限定した `tailos_github_get` で Agent が取得する方式を維持する。
 
 設定で変えられるのは依頼内容だけである。Issue の内容照合、ツールの対象、実行モード、資格情報、公開の制約はプロンプトから変更できない。
+
+Session 画面では、起動元から得た構造化ジョブコンテキストを初期プロンプトと一緒に表示する。初期入力の一部として、どの Issue と内容ハッシュが渡されたかを会話上で確認できるようにする。
 
 ## 理由
 
@@ -47,6 +51,7 @@ Issue を起点にする Routine（label と計画）の開始プロンプトは
 - 任意の GitHub コメントを指示に取り込まない。Issue のタイトル・本文を自動編集しない。
 - prompt の上限 4,000 UTF-16 コード単位と、最終ジョブの UTF-8 サイズの上限 32 KiB を維持する。計画の会話はジョブに埋め込まないので、`planning_input_too_large` は無くなる。
 - `githubContext` やハッシュを持たない旧ジョブも引き続き処理する。保存済みの依頼本文を移行で書き換えない。実行中の Run は新しいジョブとして再送せず、poll を続ける。
+- 画面表示には初期メッセージに紐づく Run の保存済みコンテキストを使う。構造化ジョブコンテキストを持たない入力ではプロンプトだけを表示する。
 - Worker と名前付きの不変な Runner イメージを同じリリースとして扱い、その Worker 版のイメージを起動する。GitHub 読み取りの宛先・資格情報・診断記録は従来の制約を維持する。
 
 PR 起動や cron 起動に Issue の全文取得を求める判断ではない。

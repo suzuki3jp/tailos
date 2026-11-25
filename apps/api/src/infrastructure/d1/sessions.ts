@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { ExecutionContext, githubJobContext } from "@tailos/core/runner";
 import { and, asc, desc, eq, exists, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { SessionStore } from "@/application/sessions/create-session.ts";
@@ -29,6 +30,19 @@ function readTrigger(json: string | null) {
     };
   } catch {
     return null;
+  }
+}
+
+function readJobContext(json: string | null) {
+  if (!json) return undefined;
+  try {
+    const context = v.safeParse(ExecutionContext, JSON.parse(json));
+    const github = context.success
+      ? githubJobContext(context.output)
+      : undefined;
+    return github ? { github } : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -114,8 +128,19 @@ export function d1Sessions(database: D1Database) {
       const [[session], messages, executions, timeline] = await db.batch([
         ownedSession,
         db
-          .select()
+          .select({
+            message: sessionMessages,
+            executionContext: runs.executionContext,
+          })
           .from(sessionMessages)
+          .leftJoin(
+            runs,
+            and(
+              eq(sessionMessages.seq, 1),
+              eq(runs.sessionId, sessionMessages.sessionId),
+              eq(runs.startMessageId, sessionMessages.id),
+            ),
+          )
           .where(and(eq(sessionMessages.sessionId, id), exists(ownedSession)))
           .orderBy(asc(sessionMessages.seq)),
         db
@@ -152,7 +177,10 @@ export function d1Sessions(database: D1Database) {
       if (!session) return null;
       return {
         session,
-        messages,
+        messages: messages.map(({ message, executionContext }) => {
+          const jobContext = readJobContext(executionContext);
+          return { ...message, ...(jobContext && { jobContext }) };
+        }),
         runs: executions,
         timeline: readTimelineSnapshot(timeline[0]),
       };

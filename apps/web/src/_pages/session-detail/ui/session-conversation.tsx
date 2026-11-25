@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type { TimelineSnapshot } from "@tailos/core/timeline";
 import type { ProjectSession } from "../api/queries";
+import { MessageJobContext } from "./message-job-context";
 import { RunActivity } from "./run-activity";
 
 const authorLabels = {
@@ -74,6 +75,7 @@ export function SessionConversation({
                   <p className="whitespace-pre-wrap wrap-anywhere leading-relaxed">
                     {message.body}
                   </p>
+                  <MessageJobContext context={message.jobContext} />
                 </div>
               </li>
               {pendingRun && (

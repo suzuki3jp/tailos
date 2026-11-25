@@ -51,6 +51,7 @@ test("renders prefetched session and execution history without waiting for the l
               id: "run",
               startMessageId: "prompt",
               status: "succeeded",
+              engine: "claude",
               agentDurationMs: 752_000,
               result: null,
               errorCode: null,
@@ -78,6 +79,9 @@ test("renders prefetched session and execution history without waiting for the l
     /\*\*Prompt\*\*<\/p>.*Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,
   );
   expect(html).toContain("&lt;b&gt;Reply&lt;/b&gt;");
+  // The reply is named after its Run's Model Provider, which the composer keeps.
+  expect(html).toContain('<span class="sr-only">Claude</span>');
+  expect(html).toContain("Claude / Default model / effort");
   expect(html).toContain("Worked for 12m 32s");
   expect(html).toContain("<summary");
   expect(html).not.toContain("Execution history could not be loaded.");

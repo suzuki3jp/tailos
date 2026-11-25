@@ -65,7 +65,7 @@ async function check(response: {
       : undefined;
   if (error === "configuration_unverified")
     throw new Error(
-      "Codex の接続、または既定モデルで effort を使えるかを確認できません。有効にするには接続を確認するか、モデルを指定してください。無効状態なら保存できます。",
+      "Model Provider の接続、または既定モデルで effort を使えるかを確認できません。有効にするには接続を確認するか、モデルを指定してください。無効状態なら保存できます。",
     );
   if (error === "unsupported_model" || error === "unsupported_effort")
     throw new Error(

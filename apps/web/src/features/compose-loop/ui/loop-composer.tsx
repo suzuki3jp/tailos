@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 import { IconSend } from "@tabler/icons-react";
+import type { AgentEngine } from "@tailos/core/models";
 import {
   InputGroup,
   InputGroupAddon,
@@ -26,6 +27,7 @@ export function LoopComposer({
   pending = false,
   disabled = false,
   status,
+  engine,
 }: {
   mode: "home" | "session";
   projectSelect?: ReactNode;
@@ -38,6 +40,8 @@ export function LoopComposer({
   disabled?: boolean;
   /** Feedback about the last send, shown below the input. */
   status?: ReactNode;
+  /** The only Model Provider offered, such as a Session's own. */
+  engine?: AgentEngine;
 }) {
   const [modelEffort, setModelEffort] = useState(defaultModelEffort);
   const statusId = useId();
@@ -75,6 +79,7 @@ export function LoopComposer({
               value={modelEffort}
               onValueChange={setModelEffort}
               disabled={pending}
+              engine={engine}
             />
             <InputGroupButton
               type="submit"

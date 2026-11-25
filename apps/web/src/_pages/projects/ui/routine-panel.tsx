@@ -2,7 +2,12 @@
 import { RequestState } from "@/widgets/request-state";
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { codexModels, type AgentModel } from "@tailos/core/models";
+import {
+  agentEngineLabels,
+  agentEngines,
+  agentModels,
+  type AgentModel,
+} from "@tailos/core/models";
 import {
   RoutineRequestError,
   routinesQueryOptions,
@@ -82,8 +87,8 @@ function Snapshot({ settings }: { settings: RoutineSettings | null }) {
       <TriggerSummary trigger={settings.trigger} />
       <p>許可ユーザー: {settings.allowedActors.join(", ")}</p>
       <p>
-        {settings.engine} · model: {settings.model ?? "既定"} · effort:{" "}
-        {settings.effort ?? "既定"}
+        {agentEngineLabels[settings.engine]} · model: {settings.model ?? "既定"}{" "}
+        · effort: {settings.effort ?? "既定"}
       </p>
       <p className="whitespace-pre-wrap">{settings.prompt}</p>
     </div>
@@ -97,7 +102,7 @@ function RoutineEditor({ projectId }: { projectId: string }) {
   const [editing, setEditing] = useState<Routine>();
   const [settings, setSettings] = useState<RoutineSettings>(empty);
   const [actors, setActors] = useState("");
-  const models = codexModels;
+  const models = agentModels(settings.engine);
   const modelIds = models.map(({ model }) => model);
   const efforts = availableEfforts(models, settings.model);
   const reset = () => {
@@ -352,8 +357,35 @@ function RoutineEditor({ projectId }: { projectId: string }) {
             }
           />
         </label>
+        <label className="block">
+          Model Provider
+          <select
+            className={field}
+            value={settings.engine}
+            onChange={(e) => {
+              const engine = agentEngines.find(
+                (item) => item === e.target.value,
+              );
+              // Each provider has its own models: start from its defaults.
+              if (engine && engine !== settings.engine)
+                setSettings({
+                  ...settings,
+                  engine,
+                  model: undefined,
+                  effort: undefined,
+                });
+            }}
+          >
+            {agentEngines.map((engine) => (
+              <option key={engine} value={engine}>
+                {agentEngineLabels[engine]}
+              </option>
+            ))}
+          </select>
+        </label>
         <p className="text-sm text-muted-foreground">
-          Agent は Codex。変更がある場合は既存の検証・PR 公開経路で処理します。
+          変更がある場合は既存の検証・PR 公開経路で処理します。Provider
+          の接続がないと有効にできません。
         </p>
         <label className="block">
           モデル

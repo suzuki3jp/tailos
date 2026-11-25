@@ -1,4 +1,9 @@
-import { codexModels } from "@tailos/core/models";
+import {
+  agentEngineLabels,
+  agentEngines,
+  agentModels,
+  type AgentEngine,
+} from "@tailos/core/models";
 import {
   Select,
   SelectContent,
@@ -10,10 +15,6 @@ import {
 } from "@/shared/ui/select";
 import { defaultModelEffort, modelEffortValue } from "../model/model-effort";
 
-const defaultOption = {
-  value: defaultModelEffort,
-  label: "Default model / effort",
-};
 const effortLabels: Record<string, string> = {
   none: "None",
   minimal: "Minimal",
@@ -24,24 +25,58 @@ const effortLabels: Record<string, string> = {
   max: "Max",
   ultra: "Ultra",
 };
-const groups = codexModels.map(({ model, efforts }) => ({
-  model,
-  options: [undefined, ...efforts].map((effort) => ({
-    value: modelEffortValue(model, effort),
-    label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
-  })),
-}));
-const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
 
+type Option = { value: string; label: string };
+type Group = { key: string; label: string; options: Option[] };
+
+/** The choices of one Model Provider: its default, then each model. */
+function providerGroups(engine: AgentEngine): Group[] {
+  const provider = agentEngineLabels[engine];
+  return [
+    {
+      key: engine,
+      label: provider,
+      options: [
+        {
+          value: modelEffortValue(engine),
+          label: `${provider} / Default model`,
+        },
+      ],
+    },
+    ...agentModels(engine).map(({ model, efforts }) => ({
+      key: `${engine}/${model}`,
+      label: `${provider} · ${model}`,
+      options: [undefined, ...efforts].map((effort) => ({
+        value: modelEffortValue(engine, model, effort),
+        label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
+      })),
+    })),
+  ];
+}
+
+/**
+ * Chooses the Model Provider, model and effort. With `engine`, only that
+ * provider's models are offered: a Session keeps its provider.
+ */
 export function ModelEffortSelect({
   value,
   onValueChange,
   disabled,
+  engine,
 }: {
   value?: string;
   onValueChange?: (value: string) => void;
   disabled?: boolean;
+  engine?: AgentEngine;
 }) {
+  const defaultOption = {
+    value: defaultModelEffort,
+    label: engine
+      ? `${agentEngineLabels[engine]} / Default model / effort`
+      : "Default model / effort",
+  };
+  const groups = (engine ? [engine] : agentEngines).flatMap(providerGroups);
+  const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
   return (
     <Select
       items={items}
@@ -54,7 +89,7 @@ export function ModelEffortSelect({
       disabled={disabled}
     >
       <SelectTrigger
-        aria-label="Model and effort"
+        aria-label="Model provider, model and effort"
         variant="ghost"
         size="xs"
         className="min-w-0 max-w-48"
@@ -70,9 +105,9 @@ export function ModelEffortSelect({
         <SelectItem value={defaultOption.value}>
           {defaultOption.label}
         </SelectItem>
-        {groups.map(({ model, options }) => (
-          <SelectGroup key={model}>
-            <SelectLabel>{model}</SelectLabel>
+        {groups.map(({ key, label, options }) => (
+          <SelectGroup key={key}>
+            <SelectLabel>{label}</SelectLabel>
             {options.map(({ value, label }) => (
               <SelectItem key={value} value={value}>
                 {label}

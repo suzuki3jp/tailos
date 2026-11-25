@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import type { AgentEngine } from "@tailos/core/models";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/button";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
@@ -14,6 +15,7 @@ import {
 import { sendMessage, SendMessageError } from "../api/send-message";
 import { SessionConversation } from "./session-conversation";
 import { useSessionTimeline } from "../api/use-session-timeline";
+import { sessionEngine } from "../model/agent-engine";
 
 type Props = { projectId: string; sessionId: string };
 const connectionLabels = {
@@ -30,15 +32,18 @@ function olderLabel(loading: boolean, failed: boolean) {
 function sendFailure(error: unknown) {
   const status = error instanceof SendMessageError ? error.status : undefined;
   const code = error instanceof SendMessageError ? error.code : undefined;
-  if (code === "codex_not_connected")
+  if (code === "codex_not_connected" || code === "claude_not_connected")
     return (
       <>
-        Connect Codex to continue.{" "}
+        Connect {code === "claude_not_connected" ? "Claude" : "Codex"} to
+        continue.{" "}
         <Link href="/connect" className="underline">
           Connect
         </Link>
       </>
     );
+  if (code === "session_provider_fixed")
+    return "This session keeps its model provider. Start a new loop to use another one.";
   if (code === "session_busy")
     return "The loop is still working. Send once it finishes.";
   if (status === 401)
@@ -69,7 +74,8 @@ function SessionComposer({
   projectId,
   sessionId,
   working,
-}: Props & { working: boolean }) {
+  engine,
+}: Props & { working: boolean; engine?: AgentEngine }) {
   const queryClient = useQueryClient();
   // One ID per draft, so resending the same message starts one Turn.
   const draft = useRef<{ key: string; requestId: string } | null>(null);
@@ -104,6 +110,7 @@ function SessionComposer({
       onSubmit={submit}
       pending={send.isPending}
       disabled={working}
+      engine={engine}
       status={composerStatus(send.isError ? send.error : undefined, working)}
     />
   );
@@ -225,6 +232,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
           projectId={projectId}
           sessionId={sessionId}
           working={result.detail.runs.some(isActiveRun)}
+          engine={sessionEngine(result.detail.runs)}
         />
       </div>
     </>

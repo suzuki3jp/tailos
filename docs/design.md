@@ -8,7 +8,7 @@ GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。�
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 
-[トリガーと実行設定の抽象化計画](plans/trigger-run-abstraction.md) に従い、トリガー条件・許可ユーザー・prompt・model・effort を束ねる `Routine` を D1 に保存し、label 起動から共通の Run 受付へ接続する。初回デプロイは Run のない状態を運用で作って行う。Routine は現在 Codex に対応し、Claude・PR イベント・cron は後続とする。
+[トリガーと実行設定の抽象化計画](plans/trigger-run-abstraction.md) に従い、トリガー条件・許可ユーザー・prompt・model・effort を束ねる `Routine` を D1 に保存し、label 起動から共通の Run 受付へ接続する。初回デプロイは Run のない状態を運用で作って行う。Routine は Model Provider として Codex と Claude を選べる（[判断](pdr/records/PDR-20261126-agent-selection-claude.md)）。PR イベント・cron は後続とする。
 
 ## 構成と依存の境界
 
@@ -16,7 +16,7 @@ GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。�
 | --- | --- | --- |
 | `apps/web` | vinext、React、Tailwind CSS、TanStack Query | ログイン、ChatGPT 接続、Project 設定、Session 詳細の画面 |
 | `apps/api` | Hono、Cloudflare Workers、Wrangler、Drizzle ORM | トリガーの受付、Session と会話履歴の管理、Run の進行、コンテナ制御、プロバイダ認証、PR 作成 |
-| `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。MVP の実装は Codex app-server |
+| `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。Codex は app-server、Claude は Agent SDK で実行する |
 | `packages/core` | TypeScript、Valibot | ジョブ、イベント、結果など API と Runner の共有契約 |
 
 API の HTTP ハンドラーとテストは `presentation/http/handlers/<機能名>/`、認証や Origin 検証のミドルウェアは `presentation/http/middlewares/`、ユースケースとその契約は `application`、D1・R2・外部 API の実装は `infrastructure` に置く。`bootstrap` と `worker.ts` が依存を組み立て、Oxlint がレイヤーをまたぐ import を検査する。
@@ -90,7 +90,7 @@ erDiagram
 
 | テーブル | 保存する情報 |
 | --- | --- |
-| `routines` | Project に属する起動条件・許可ユーザー・prompt・Codex の model / effort・有効状態・revision・削除時刻を保存する |
+| `routines` | Project に属する起動条件・許可ユーザー・prompt・Model Provider（engine）と model / effort・有効状態・revision・削除時刻を保存する |
 | `routine_changes` | 設定の保存・変更・削除と同じトランザクションで操作者・時刻・変更前後を保存する |
 | `sessions` | 所有者は Tailos 上の ID で識別する。`project_id` は Project の安定した UUID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
 | `session_messages` | 自動化が生成した依頼、ユーザーの発言、Agent の確定した返答を `(session_id, seq)` の順に保存する。起点は `runs.start_message_id` で参照し、返答や将来の追加指示はメッセージの `run_id` で関連づける |
@@ -118,7 +118,7 @@ label Webhook は D1 の Project と Routine を読み、Project のリポジト
 
 単発チャットは引き続き Project やリポジトリを指定せずに作成できる。label 起動の model・effort は Routine で指定し、未指定なら provider の既定を使う。リポジトリ・時間上限は Project の正式な設定とする。Agent の通信は常に許可し、設定項目にしない（[判断](pdr/records/PDR-20261122-agent-egress-credential-proxy.md)）。`Project.triggerLabel` は現行設定から削除し、過去の変更履歴にだけ残す。未移行の plan は従来の Project の許可ユーザー設定と会話経路を維持する。
 
-Routine は `/projects` の「Routine を管理」から追加・編集・削除する。新規作成は無効であり、接続やモデル情報を検証できなくても無効状態なら保存できる。有効化時に所有者の Codex 接続とモデル・effort の対応を確認する。変更は新規受付に適用し、受付済み Run のプロンプトや実行設定を変更しない。本番の設定 API は `/api/v1/projects/:projectId/routines` に置き、履歴は `/history` で取得する。
+Routine は `/projects` の「Routine を管理」から追加・編集・削除する。新規作成は無効であり、接続やモデル情報を検証できなくても無効状態なら保存できる。有効化時に、Routine の Provider についての所有者の接続とモデル・effort の対応を確認する。変更は新規受付に適用し、受付済み Run のプロンプトや実行設定を変更しない。本番の設定 API は `/api/v1/projects/:projectId/routines` に置き、履歴は `/history` で取得する。
 
 ## 実行と復旧
 
@@ -132,9 +132,9 @@ Run 完了時は、確定した Agent の返答と Run の結果を一緒に保�
 
 ## 認証と GitHub の権限
 
-ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Tailos が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には置き換え用のトークンだけを渡す。Codex がモデル API（`chatgpt.com`）へ送る通信は Workers 側で横取りし、Run の接続の現在のアクセストークンを差し込む。モデル API がトークンを拒否したら、次の通信で更新してから差し込む（[判断](pdr/records/PDR-20261124-model-credentials-workspace-check.md)）。
+ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Tailos が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には置き換え用のトークンだけを渡す。Codex がモデル API（`chatgpt.com`）へ送る通信は Workers 側で横取りし、Run の接続の現在のアクセストークンを差し込む。モデル API がトークンを拒否したら、次の通信で更新してから差し込む（[判断](pdr/records/PDR-20261126-model-credentials-claude.md)）。
 
-Claude 接続は、利用者が手元で `claude setup-token` を実行して得た長期トークンを Web の接続画面に貼り付けて保存する。保存時は形式だけを確かめ、ChatGPT 接続と同じ方式で暗号化して保持する。保存した値は応答やログに出さない。トークンは更新できないので、接続画面は保存日と有効期限の目安を示し、期限の 30 日前から発行し直しを案内する。
+Claude 接続は、利用者が手元で `claude setup-token` を実行して得た長期トークンを Web の接続画面に貼り付けて保存する。保存時は形式だけを確かめ、ChatGPT 接続と同じ方式で暗号化して保持する。保存した値は応答やログに出さない。トークンは更新できないので、接続画面は保存日と有効期限の目安を示し、期限の 30 日前から発行し直しを案内する。Runner には置き換え用のトークンだけを渡し、Claude Code がモデル API（`api.anthropic.com` の `/v1/messages`）へ送る通信を Workers 側で横取りして、Run の接続のトークンを差し込む。
 
 GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命の読み取りトークンを渡す。Agent はリポジトリの指示と CI 設定に沿って整形・lint・テストなどのコマンドを作業ディレクトリで実行し、結果を返答に記載する。Runner は差分が公開可能な形式かを確認して API に預ける。API は GitHub App で署名付きコミットを作り、署名・親・tree を照合してから PR を作る。公開されたコミットの検証は対象リポジトリの CI が担う。英語の Conventional Commits の見出しをコミットと PR で共有する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 

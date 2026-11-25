@@ -1,56 +1,38 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
+import { ProjectPageShell, PageContent } from "@/widgets/page-shell";
+import { prefetchNavigation } from "./home-data";
+import { QueryHydration } from "./providers";
 
-export function LegacyLayout({ children }: { children: ReactNode }) {
+export async function LegacyLayout({ children }: { children: ReactNode }) {
+  const state = await prefetchNavigation((await headers()).get("Cookie") ?? "");
   return (
-    <div className="min-h-dvh bg-paper text-ink">
-      <header className="h-11 border-b border-rule">
-        <div className="mx-auto flex h-full max-w-5xl items-center justify-between gap-x-6 px-5 sm:px-8">
-          <Link href="/" className="inline-flex min-h-11 items-center">
-            <Image
-              src="/tailos-wordmark.png"
-              alt="Tailos"
-              width={88}
-              height={53}
-              loading="eager"
-              className="h-9 w-auto"
-            />
-          </Link>
+    <QueryHydration state={state}>
+      <ProjectPageShell>
+        <PageContent>
           <nav
-            aria-label="メインメニュー"
-            className="flex min-w-0 gap-3 overflow-x-auto whitespace-nowrap text-sm text-muted-foreground sm:gap-5"
+            aria-label="設定・接続"
+            className="flex flex-wrap gap-x-5 gap-y-3 text-sm text-muted-foreground"
           >
-            <Link
-              href="/projects"
-              className="inline-flex min-h-11 items-center hover:text-ink"
-            >
+            <Link href="/projects" className="hover:text-foreground">
               Project
             </Link>
-            <Link
-              href="/connect"
-              className="inline-flex min-h-11 items-center hover:text-ink"
-            >
+            <Link href="/connect" className="hover:text-foreground">
               Agent 接続
             </Link>
-            <Link
-              href="/mcp"
-              className="inline-flex min-h-11 items-center hover:text-ink"
-            >
+            <Link href="/mcp" className="hover:text-foreground">
               MCP 接続
             </Link>
-            <Link
-              href="/login"
-              className="inline-flex min-h-11 items-center hover:text-ink"
-            >
+            <Link href="/login" className="hover:text-foreground">
               アカウント
             </Link>
           </nav>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
-        {children}
-      </main>
-    </div>
+          <div className="min-w-0" lang="ja">
+            {children}
+          </div>
+        </PageContent>
+      </ProjectPageShell>
+    </QueryHydration>
   );
 }

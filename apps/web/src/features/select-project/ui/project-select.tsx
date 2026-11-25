@@ -10,7 +10,11 @@ import {
 import type { ProjectSelection } from "../model/project-selection";
 import { useProjectSelection } from "./project-selection";
 
-export function HomeProjectSelect({ compact = false }: { compact?: boolean }) {
+export function CurrentProjectSelect({
+  compact = false,
+}: {
+  compact?: boolean;
+}) {
   const { selection } = useProjectSelection();
   return <ProjectSelect compact={compact} {...selection} />;
 }
@@ -39,7 +43,7 @@ export function ProjectSelect({
         aria-label={label}
         size={compact ? "xs" : "default"}
         variant={compact ? "ghost" : "outline"}
-        className={compact ? "w-35" : "min-w-0 flex-1"}
+        className={compact ? "w-35" : "min-w-0 flex-1 rounded-lg"}
       >
         <SelectValue placeholder="No projects" />
       </SelectTrigger>

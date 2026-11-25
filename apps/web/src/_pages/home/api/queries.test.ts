@@ -1,10 +1,7 @@
+import { projectsQueryOptions } from "@/features/select-project";
 import { InfiniteQueryObserver, QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import {
-  HomeRequestError,
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "./queries";
+import { HomeRequestError, homeSessionsQueryOptions } from "./queries";
 
 afterEach(() => vi.unstubAllGlobals());
 function queryClient() {
@@ -31,7 +28,7 @@ test("project choices follow every cursor and retain IDs, names, and repositorie
   vi.stubGlobal("fetch", http);
   const client = queryClient();
   try {
-    expect(await client.fetchQuery(homeProjectsQueryOptions())).toEqual([
+    expect(await client.fetchQuery(projectsQueryOptions())).toEqual([
       first,
       second,
     ]);
@@ -56,12 +53,12 @@ test.each([
   vi.stubGlobal("fetch", http);
   const client = queryClient();
   try {
-    await expect(client.fetchQuery(homeProjectsQueryOptions())).rejects.toThrow(
+    await expect(client.fetchQuery(projectsQueryOptions())).rejects.toThrow(
       "Invalid projects pagination",
     );
     expect(http).toHaveBeenCalledTimes(cursors.length);
     expect(
-      client.getQueryData(homeProjectsQueryOptions().queryKey),
+      client.getQueryData(projectsQueryOptions().queryKey),
     ).toBeUndefined();
   } finally {
     client.clear();
@@ -124,7 +121,7 @@ test.each([401, 403, 503])(
     const client = queryClient();
     try {
       await expect(
-        client.fetchQuery(homeProjectsQueryOptions()),
+        client.fetchQuery(projectsQueryOptions()),
       ).rejects.toMatchObject({ status });
       await expect(
         client.fetchInfiniteQuery(homeSessionsQueryOptions()),
@@ -148,7 +145,7 @@ test("cancelling project loading aborts the credentialed request", async () => {
   vi.stubGlobal("fetch", http);
   const client = queryClient();
   try {
-    const pending = client.fetchQuery(homeProjectsQueryOptions());
+    const pending = client.fetchQuery(projectsQueryOptions());
     const rejected = expect(pending).rejects.toThrow();
     await vi.waitFor(() => expect(http).toHaveBeenCalledTimes(1));
     await client.cancelQueries({ queryKey: ["projects", "account-list"] });

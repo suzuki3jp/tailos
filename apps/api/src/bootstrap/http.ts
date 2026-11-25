@@ -58,6 +58,8 @@ import { d1Projects } from "@/infrastructure/d1/projects.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { createProjectRoutes } from "@/presentation/http/handlers/projects/projects.ts";
 import { directBrowserApiPath, webBrowserApiPath } from "@tailos/core/auth";
+import { createAccountProfileRoutes } from "@/presentation/http/handlers/account/profile.ts";
+import { readAccountProfile } from "@/infrastructure/d1/account.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -162,6 +164,13 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
         c.env.CREDENTIALS && c.env.CREDENTIAL_ENCRYPTION_KEY,
       ),
     }),
+  )
+  .route(
+    "/account",
+    createAccountProfileRoutes(
+      (env, id) => readAccountProfile(env.DB, id),
+      operatorAuth,
+    ),
   )
   .route("/connect", connectRoutes)
   .route("/projects/:projectId/sessions", projectSessionRoutes)

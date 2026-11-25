@@ -9,7 +9,7 @@ import {
 } from "../api/queries";
 import { DataRequestState } from "./data-request-state";
 import { SessionRow } from "./session-row";
-import { useProjectSelection } from "./project-selection";
+import { useProjectSelection } from "@/features/select-project";
 
 const RECENT_SESSION_LIMIT = 5;
 

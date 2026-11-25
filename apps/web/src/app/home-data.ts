@@ -1,12 +1,22 @@
+import { projectsQueryOptions } from "@/features/select-project";
 import { QueryClient, dehydrate } from "@tanstack/react-query";
-import {
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "@/_pages/home/index.server";
+import { homeSessionsQueryOptions } from "@/_pages/home/index.server";
 import { createServerApi } from "@/shared/api/index.server";
+import { accountProfileQueryOptions } from "@/entities/account";
 
 // Each invocation belongs to one request; neither cookies nor cache are shared.
-export async function prefetchHome(cookieHeader: string) {
+export function prefetchHome(cookieHeader: string) {
+  return prefetchPageNavigation(cookieHeader, true);
+}
+
+export function prefetchNavigation(cookieHeader: string) {
+  return prefetchPageNavigation(cookieHeader, false);
+}
+
+async function prefetchPageNavigation(
+  cookieHeader: string,
+  includeSessions: boolean,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -21,8 +31,11 @@ export async function prefetchHome(cookieHeader: string) {
   try {
     const api = createServerApi(cookieHeader, deadline.signal);
     await Promise.all([
-      client.prefetchQuery(homeProjectsQueryOptions(api)),
-      client.prefetchInfiniteQuery(homeSessionsQueryOptions(api)),
+      client.prefetchQuery(accountProfileQueryOptions(api)),
+      client.prefetchQuery(projectsQueryOptions(api)),
+      ...(includeSessions
+        ? [client.prefetchInfiniteQuery(homeSessionsQueryOptions(api))]
+        : []),
     ]);
     const state = dehydrate(client, {
       shouldDehydrateQuery: (query) => query.state.status !== "pending",

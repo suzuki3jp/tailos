@@ -1,15 +1,18 @@
 # Tailos design system
 
-The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=21-10905) and [Design Systems page](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=6-2). Treat Figma as read-only. Home is a Server Component. Projects and Sessions are prefetched in parallel for each request and hydrated into TanStack Query before the initial render. The composer does not start a Run. See [the server prefetch decision](../pdr/records/PDR-20261117-home-server-prefetch.md).
+The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=21-10905) and [Design Systems page](https://www.figma.com/design/8xCaWOhzVybu2PXiJ3Hrij/tailos?node-id=6-2). Treat Figma as read-only. Home is a Server Component. Profile, Projects and Sessions are prefetched in parallel for each home request and hydrated into TanStack Query before the initial render. The composer does not start a Run. See [the server prefetch decision](../pdr/records/PDR-20261117-home-server-prefetch.md).
 
 ## Ownership
 
 - `apps/web/src/shared/styles/tokens.css`: semantic colors, typography and radii. `index.css` is the stylesheet's public entry.
 - `apps/web/src/shared/ui`: shadcn Base UI / Nova components, adapted in place for Tailos. Import each component's public module, such as `@/shared/ui/button`.
 - `apps/web/src/shared/lib/cn.ts`: class merging, including Tailos's semantic font-size names. Adding a typography utility also requires registering its name here so it does not conflict with text colors.
-- `apps/web/src/_pages/home`: server layout, query options and presentation, with small Client boundaries for Project selection, input, mobile navigation, pagination and retry. The server layout is passed as children through the selection provider.
+- `apps/web/src/_pages/home`: home presentation and Session queries, with small Client boundaries for the personalized greeting, input, pagination and retry.
+- `apps/web/src/widgets/page-shell`: the shared Page, Sidebar and account footer for Home, Session and management screens. The server composition is passed through the Project selection and mobile Sheet boundaries.
+- `apps/web/src/features/select-project`: Project list queries, in-page selection state and the shared Project picker.
+- `apps/web/src/entities/account`: the authenticated profile query shared by the sidebar and greeting.
 - `apps/web/src/app/home-data.ts`: request-scoped parallel prefetch and safe dehydration, including serializable failure states. `shared/api/index.server.ts` exposes the server client that forwards only the session cookie, disables caching, and does not follow redirects. Query keys and conditions match the browser client; mounting the hydrated consumers does not repeat the initial requests.
-- `apps/web/src/app/(management)`: existing public management routes, currently composed with the prototype layout. These screens may adopt new styles, fonts and icons freely; preserving their previous appearance is not a requirement. Root login errors continue to render the account screen. See [the prototype styling decision](../pdr/records/PDR-20261116-web-prototype-styles.md).
+- `apps/web/src/app/(management)`: existing public management routes, composed with the shared Page shell and a settings/connection navigation inside its content. These screens may adopt new styles, fonts and icons freely; preserving their previous appearance is not a requirement. Root login errors continue to render the account screen. See [the prototype styling decision](../pdr/records/PDR-20261116-web-prototype-styles.md).
 
 ## Tokens
 
@@ -35,13 +38,13 @@ Geist is self-hosted through the pinned Fontsource package. Font sizes / line he
 - **Button**: `default` for primary actions, `outline` for bordered alternatives, `ghost` for unobtrusive controls. Icon buttons need an accessible name.
 - **Select**: `default` 32px, `sm` 28px, `xs` 22px, `lg` 36px. The `ghost` variant is used in the composer; the sidebar uses the bordered variant. Both controls share a selection, initially the first Project returned by the API. Choices show Project names and repositories, including later API pages. The initial choices are server-prefetched; failures and empty lists disable the controls. Selection is not persisted across reloads. It remains a non-editable Select; a searchable Combobox can be added when required.
 - **InputGroup**: shared focus boundary around a textarea and a `block-end` action area. Clicking the action area must not steal focus from its Select or buttons. The composer preserves the draft and reports that preview submission did not send it.
-- **Avatar**: a generic account icon until the API supplies user identity. Sample imagery is not presented as the authenticated user.
+- **Avatar**: the account footer shows the authenticated profile’s 36px avatar, name and email. Missing or failed images fall back to a generic account icon. Missing authentication offers Sign in; profile failures offer a local retry. Sample imagery is not presented as the authenticated user.
 - **Dialog / Sheet**: shared dialog primitives and mobile navigation. Escape and focus restoration remain provided by Base UI.
 - **Recent Sessions**: the server renders the section and its prefetched first page; the Client list handles additional pages and retry. Rows link to actual Session details and show the API's trigger, timestamp and latest Run status. Initial timestamps use the hydrated query's update time to avoid hydration differences. Empty, login and failure states are also present on initial render. Project selection does not filter the account-wide list, and unread marks are not inferred from Run state.
 
-The static desktop sidebar is page composition; it does not add shadcn's optional cookie-backed collapsing behavior. Mobile uses Sheet for focus containment and dismissal.
+The shared desktop sidebar is 240px wide, with a 60px head, 36px navigation rows, 12px icon gaps, 24px between navigation groups and a 60px account footer pinned to the viewport bottom. There is no desktop main header or border below the sidebar head. It is page composition; it does not add shadcn's optional cookie-backed collapsing behavior. Mobile uses Sheet for focus containment and dismissal.
 
-The Web CSP permits `style` attributes through `style-src-attr 'unsafe-inline'`. JavaScript restrictions and the nonce requirement for `<style>` elements remain in place. The root layout passes the Worker's per-response CSP nonce to Base UI's `CSPProvider`, so library-generated style elements use that nonce. Select renders directly in server HTML; there is no hydration fallback or duplicate scrollbar stylesheet. See [the CSP decision](../pdr/records/PDR-20261116-csp-style-attributes.md).
+The Web CSP permits `style` attributes through `style-src-attr 'unsafe-inline'`. JavaScript restrictions and the nonce requirement for `<style>` elements remain in place. The root layout passes the Worker's per-response CSP nonce to Base UI's `CSPProvider`, so library-generated style elements use that nonce. Select renders directly in server HTML; there is no hydration fallback or duplicate scrollbar stylesheet. Images permit only the same origin and `https://avatars.githubusercontent.com`. See [the shared Page decision](../pdr/records/PDR-20261125-shared-page-shell.md) and [the CSP decision](../pdr/records/PDR-20261125-csp-github-avatars.md).
 
 ## Updating shadcn
 
@@ -73,12 +76,12 @@ Project-specific Figma imagery and decorations are downloaded under `apps/web/pu
 | Asset | Figma node / slot |
 | --- | --- |
 | tailos-symbol.png | Page / Sidebar Head / Logo |
-| demo-avatar.png | Page / Main Head / アイコン 1 |
+| demo-avatar.png | Historical preview asset; not used as the authenticated account |
 | unread.svg | Card Item / Unread |
 | separator.svg | Card Item / Line |
 
 ## Verification
 
-Compare the home at 1320 × 832 with the reference: sidebar 240px, header 60px, content 640px inside 24px gutters, 48px top padding, 140px initial composer and 60px between sections. Use minimum heights rather than clipping long content. Verify initial data without JavaScript, parallel server requests, per-request cache isolation, and no duplicate list requests on hydration, including failure cases. Check narrow screens, synchronized Project selection, Sheet dismissal and focus restoration, draft retention, Session pagination and error recovery. Home only reads the two list APIs; composer submission must not create a Session or Run. Verify built Worker output under the existing CSP; external fonts and images are not needed.
+Compare the home at 1320 × 832 with the reference: sidebar 240px with a 60px head, no desktop main header, 240px right Slot, content 640px inside 24px gutters, 72px home top padding (48px for the base Page), 140px initial composer and 60px between sections. Use minimum heights rather than clipping long content. Verify initial data without JavaScript, parallel server requests, per-request cache isolation, and no duplicate list requests on hydration, including failure cases. Check narrow screens, synchronized Project selection, Sheet dismissal and focus restoration, draft retention, Session pagination and error recovery. Home initially reads profile, Projects and Sessions in parallel. Verify account success, missing avatars, unauthorized and failed profile requests without fabricated user information. Verify built Worker output under the CSP, including GitHub avatar loading. See [the shared Page decision](../pdr/records/PDR-20261125-shared-page-shell.md).
 
 Run the same checks as CI: `pnpm format:check`, `pnpm lint`, `pnpm test`, `pnpm typecheck`, and `pnpm --filter @tailos/web run build`.

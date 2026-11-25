@@ -8,8 +8,10 @@ import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { sessionPath } from "@/shared/lib/session-path";
 import { homeSessionsQueryOptions } from "../api/queries";
 import { startSession, StartSessionError } from "../api/start-session";
-import { HomeProjectSelect } from "./project-select";
-import { useProjectSelection } from "./project-selection";
+import {
+  CurrentProjectSelect,
+  useProjectSelection,
+} from "@/features/select-project";
 
 function failureMessage(error: unknown) {
   const status = error instanceof StartSessionError ? error.status : undefined;
@@ -68,7 +70,7 @@ export function HomeComposer() {
       mode="home"
       message={message}
       onMessageChange={setMessage}
-      projectSelect={<HomeProjectSelect compact />}
+      projectSelect={<CurrentProjectSelect compact />}
       onSubmit={submit}
       pending={start.isPending || start.isSuccess}
       disabled={!selection.value}

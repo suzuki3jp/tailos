@@ -118,7 +118,7 @@ export function SessionProjectName({ projectId, sessionId }: Props) {
   return (
     <span
       title={name}
-      className="min-w-0 flex-1 truncate rounded-lg border px-2.5 py-1.5 text-control"
+      className="flex h-8 min-w-0 flex-1 items-center truncate rounded-lg border px-2.5 text-control"
     >
       {name}
     </span>

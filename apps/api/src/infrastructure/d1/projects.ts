@@ -322,17 +322,6 @@ export function d1Projects(db: D1Database): ProjectStore {
           AND EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
             .bind(project.id, legacyIds[index], changeId),
         );
-        // Planning scope is a JSON tuple containing the Project ID. Defer
-        // its inbox foreign key only within this atomic migration transaction.
-        for (const table of ["planning_inbox", "planning_issues"]) {
-          statements.push(
-            db
-              .prepare(`UPDATE ${table} SET scope = json_set(scope, '$[1]', ?)
-            WHERE json_extract(scope, '$[1]') = ?
-            AND EXISTS (SELECT 1 FROM project_imports WHERE change_id = ?)`)
-              .bind(project.id, legacyIds[index], changeId),
-          );
-        }
       }
       try {
         const results = await db.batch(statements);

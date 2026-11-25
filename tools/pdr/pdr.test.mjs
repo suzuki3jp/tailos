@@ -104,7 +104,7 @@ test("real questions find this session's decisions and keep unknown rationale no
     ["長文 要約", "PDR-20261113-003"],
     ["8,000 根拠", "PDR-20261113-004"],
     ["通知 障害 Run", "PDR-20261113-006"],
-    ["@tailos plan inbox", "PDR-20261124-planning-routine"],
+    ["@tailos plan inbox", "PDR-20261125-planning-tables-dropped"],
     ["kind", "PDR-20261113-007"],
     ["未適用 migration", "PDR-20261113-008"],
     ["GIF 背景", "PDR-20261113-009"],

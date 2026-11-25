@@ -172,7 +172,7 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 
 ### Issue コメントによる計画会話
 
-計画会話は Project の plan Routine として動く（[計画会話の判断](pdr/records/PDR-20261124-planning-routine.md)）。Routine の許可ユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、その Routine と Issue の Session にメッセージが届く。同じ Issue のコマンド語のない `@tailos <回答・修正依頼>` は、その Issue で最後に使われたコメント起動の Session に続く。続ける Session がなければ、アプリが開始方法を一度だけ返信する（`issue_guidance`）。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。plan Routine は読み取り専用で、公開ツールを持たない。
+計画会話は Project の plan Routine として動く（[計画会話の判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。Routine の許可ユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、その Routine と Issue の Session にメッセージが届く。同じ Issue のコマンド語のない `@tailos <回答・修正依頼>` は、その Issue で最後に使われたコメント起動の Session に続く。続ける Session がなければ、アプリが開始方法を一度だけ返信する（`issue_guidance`）。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。plan Routine は読み取り専用で、公開ツールを持たない。
 
 Issue を起点にする Routine（label と計画）は、Routine と Issue の組ごとに 1 つの Session を持つ（`routine_sessions`、[Routine の受付の判断](pdr/records/PDR-20261124-issue-routine-dispatch.md)）。届いたメッセージは `session_inbox` に届いた順に保存し、Session に進行中の Turn がなければその場で Turn（Run）にする。進行中なら待ち、Turn の終わり（Durable Object）と Cron が次のメッセージを Turn にする。Turn の時間上限は Turn を作った時点から数える。label は delivery、コメントはコメント ID で重複を除く。受付と最初の Turn の作成は一つの D1 batch で行い、Session 単位の active Run 一意制約を維持する。
 
@@ -182,4 +182,4 @@ Agent は対象リポジトリに限定された `tailos_github_get` を呼び�
 
 Tailos は `wrangler.jsonc` の `scheduling_policy: durable_object` と名前付きイメージを使う。この方式では `ctx.container.images` は DO を実行する Worker バージョンの不変なイメージ参照を持つ。[Cloudflare の Image Management](https://developers.cloudflare.com/containers/guides/image-management/) を根拠に、Worker と Runner イメージを同じリリースとして扱う。コード上も `runStarter` は Run ID ごとの DO を選び、`startRunner` はその DO の `images.runner` を明示して新しいジョブのコンテナを起動するため、新ジョブを application-wide rollout 中の任意の旧コンテナへ送る構成ではない。既存の実行中 Run は同じコンテナを poll し、更新時にジョブを再送・強制再起動しない。Worker 更新全般が無停止であることを保証するものではなく、イメージを削除すると旧版の起動もできなくなるため、ロールバックに必要なイメージは保持する。
 
-結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。計画の返信は Agent が gh で Issue にコメントし、アプリは本文を投稿しない。アプリは他の Issue 起点の Turn と同じく、Turn ごとの状態コメント（`issue_notifications`）だけを付ける。移行前の `planning_*` の行は残すが、新しくは書き込まない。
+結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。計画の返信は Agent が gh で Issue にコメントし、アプリは本文を投稿しない。アプリは他の Issue 起点の Turn と同じく、Turn ごとの状態コメント（`issue_notifications`）だけを付ける。計画会話専用だった `planning_*` のテーブルは、移行後のマイグレーション 0014 で DROP した。

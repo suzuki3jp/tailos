@@ -46,7 +46,7 @@ function d1RunStore(db: D1Database): RunStore {
             `UPDATE runs SET status = 'running', next_action_at = ?
      WHERE id = ? AND status = 'queued'
      RETURNING start_message_id AS messageId, execution_context AS executionContext,
-               deadline_at AS deadlineAt, step_state AS stepState`,
+               deadline_at AS deadlineAt`,
           )
           .bind(now, runId),
       ]);
@@ -56,7 +56,7 @@ function d1RunStore(db: D1Database): RunStore {
       return db
         .prepare(
           `SELECT start_message_id AS messageId, execution_context AS executionContext,
-            deadline_at AS deadlineAt, step_state AS stepState FROM runs WHERE id = ? AND status = 'running'`,
+            deadline_at AS deadlineAt FROM runs WHERE id = ? AND status = 'running'`,
         )
         .bind(runId)
         .first<RunInput>();
@@ -118,7 +118,7 @@ function d1RunStore(db: D1Database): RunStore {
         sessionTitleStatement(db, runId, metadata.sessionTitle),
         db
           .prepare(
-            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING id",
+            "UPDATE runs SET status = 'succeeded', result = ?, finished_at = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING id",
           )
           .bind(result, finishedAt, runId),
       ]);
@@ -160,7 +160,7 @@ function d1RunStore(db: D1Database): RunStore {
         timelineNotification(db, runId),
         db
           .prepare(
-            "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL, step_state = json_remove(step_state, '$.pendingPublication') WHERE id = ? AND status = 'running' RETURNING status",
+            "UPDATE runs SET status = 'failed', error_code = ?, finished_at = ?, result = ?, next_action_at = NULL WHERE id = ? AND status = 'running' RETURNING status",
           )
           .bind(code, finishedAt, result, runId),
       ]);

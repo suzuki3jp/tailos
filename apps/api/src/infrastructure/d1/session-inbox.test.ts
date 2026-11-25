@@ -292,3 +292,19 @@ test("a message from the Session's page starts its next Turn only while the Sess
     }),
   ).toBe(JSON.stringify({ version: 1, engine: "fake" }));
 });
+
+test("a Turn and its status comment are saved together", async (t) => {
+  const { db, message } = await fixture(t);
+  await db
+    .prepare(
+      "CREATE TRIGGER reject_notification BEFORE INSERT ON issue_notifications BEGIN SELECT RAISE(ABORT, 'notification failure'); END",
+    )
+    .run();
+  await expect(admitIssueMessage(db, message(100))).rejects.toThrow(
+    "notification failure",
+  );
+  for (const table of ["runs", "sessions", "session_inbox"])
+    expect(
+      await db.prepare(`SELECT count(*) AS n FROM ${table}`).first("n"),
+    ).toBe(0);
+});

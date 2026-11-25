@@ -1,5 +1,8 @@
 import { expect, test, vi } from "vitest";
-import { forwardModelRequest } from "@/infrastructure/cloudflare/model-egress.ts";
+import {
+  forwardClaudeRequest,
+  forwardModelRequest,
+} from "@/infrastructure/cloudflare/model-egress.ts";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
 
@@ -160,4 +163,66 @@ test("logs only the Run, host and path of a refused request", async () => {
   } finally {
     warn.mockRestore();
   }
+});
+
+test("adds the Run's Claude token in place of the container's placeholder", async () => {
+  const { sent, upstream } = capture(401);
+  const response = await forwardClaudeRequest(
+    new Request("https://api.anthropic.com/v1/messages?beta=true", {
+      method: "POST",
+      body: '{"messages":[]}',
+      headers: {
+        Authorization: "Bearer sk-ant-oat01-tailos-placeholder",
+        "X-Api-Key": "someone-else",
+        Cookie: "session=1",
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+    }),
+    async () => "sk-ant-oat01-real",
+    upstream,
+  );
+  // A pasted token cannot be refreshed: a 401 goes back to Claude Code as is.
+  expect(response.status).toBe(401);
+  const [request] = sent;
+  expect(request!.url).toBe("https://api.anthropic.com/v1/messages?beta=true");
+  expect(request!.headers.get("Authorization")).toBe(
+    "Bearer sk-ant-oat01-real",
+  );
+  expect(request!.headers.get("X-Api-Key")).toBeNull();
+  expect(request!.headers.get("Cookie")).toBeNull();
+  expect(request!.headers.get("anthropic-beta")).toBe("oauth-2025-04-20");
+  expect(await request!.text()).toBe('{"messages":[]}');
+});
+
+test.for([
+  "https://api.anthropic.com/v1/organizations",
+  "https://api.anthropic.com/api/oauth/profile",
+  "https://api.anthropic.com/v1/messages/batches",
+  "https://api.anthropic.com/v1/messages%2Fbatches",
+  "https://api.anthropic.com:8443/v1/messages",
+  "https://chatgpt.com/v1/messages",
+])("adds the Claude token to no other request (%s)", async (url) => {
+  const { sent, upstream } = capture();
+  const token = vi.fn(async () => "sk-ant-oat01-real");
+  const response = await forwardClaudeRequest(
+    new Request(url, { method: "POST" }),
+    token,
+    upstream,
+  );
+  expect(response.status).toBe(403);
+  expect(token).not.toHaveBeenCalled();
+  expect(sent).toEqual([]);
+});
+
+test("refuses a Claude request once the Run's token is unavailable", async () => {
+  const { sent, upstream } = capture();
+  const response = await forwardClaudeRequest(
+    new Request("https://api.anthropic.com/v1/messages/count_tokens", {
+      method: "POST",
+    }),
+    async () => null,
+    upstream,
+  );
+  expect(response.status).toBe(401);
+  expect(sent).toEqual([]);
 });

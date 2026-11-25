@@ -1,5 +1,9 @@
+import type { AgentEngine } from "@tailos/core/models";
 import type { ExecutionContext } from "@tailos/core/runner";
-import { codexConnectionId } from "@/application/auth/device.ts";
+import {
+  agentConnectionId,
+  type AgentConnected,
+} from "@/application/auth/agent-connection.ts";
 import type { ProjectRecord } from "@/application/projects/store.ts";
 import {
   ProjectChanged,
@@ -12,6 +16,8 @@ export type StartSessionInput = {
   /** Issued by the client per message so a resend returns the first result. */
   requestId: string;
   message: string;
+  /** The Model Provider; Codex when none is chosen. */
+  engine?: AgentEngine;
   model?: string;
   effort?: string;
   diagnostics?: { traceId: string; requestId: string };
@@ -20,12 +26,12 @@ export type StartSessionInput = {
 export type StartSessionResult =
   | { status: "started"; sessionId: string; runId: string }
   | { status: "project_not_found" }
-  | { status: "codex_not_connected" };
+  | { status: "not_connected"; engine: AgentEngine };
 
 export type StartSessionDeps = {
   /** The owner's undeleted Project, or null. */
   project(ownerId: string, projectId: string): Promise<ProjectRecord | null>;
-  codexConnected(ownerId: string): Promise<boolean>;
+  connected: AgentConnected;
   defaultBranch(project: ProjectRecord["project"]): Promise<string>;
   admit: AdmitTrigger;
 };
@@ -55,13 +61,14 @@ export async function startSessionFromMessage(
   for (let attempt = 0; ; attempt++) {
     const record = await deps.project(input.ownerId, input.projectId);
     if (!record) return { status: "project_not_found" };
-    if (!(await deps.codexConnected(input.ownerId)))
-      return { status: "codex_not_connected" };
+    const engine = input.engine ?? "codex";
+    if (!(await deps.connected(input.ownerId, engine)))
+      return { status: "not_connected", engine };
     const { project } = record;
     const executionContext: ExecutionContext = {
       version: 1,
-      engine: "codex",
-      connectionId: codexConnectionId(input.ownerId),
+      engine,
+      connectionId: agentConnectionId(engine, input.ownerId),
       ...(input.model && { model: input.model }),
       ...(input.effort && { effort: input.effort }),
       repository: {

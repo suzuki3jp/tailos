@@ -1,3 +1,4 @@
+import type { AgentConnected } from "@/application/auth/agent-connection.ts";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
@@ -7,7 +8,6 @@ import {
   routineSettings,
   validateRoutine,
   type RoutineStore,
-  type CodexConnection,
 } from "@/application/routines/routines.ts";
 import type { Bindings } from "@/bindings.ts";
 import type {
@@ -26,7 +26,7 @@ function input<T extends v.GenericSchema>(schema: T) {
 }
 export function createRoutineRoutes(
   store: (env: Bindings) => RoutineStore,
-  connection: (env: Bindings) => CodexConnection,
+  connection: (env: Bindings) => AgentConnected,
   auth: ReturnType<typeof createOperatorAuth>,
 ) {
   return new Hono<OperatorEnv>()

@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createSdkMcpServer,
   type Options,
@@ -19,7 +28,9 @@ import {
 
 type ClaudeJob = Extract<RunnerJob, { engine: "claude" }>;
 type Call = { prompt: string; options: Options };
-type GitHubRead = Parameters<ClaudeRuntime["githubServer"]>[0];
+type TailosTools = Parameters<ClaudeRuntime["tailosServer"]>[0];
+type GitHubRead = NonNullable<TailosTools["read"]>;
+type PublicationCall = NonNullable<TailosTools["publish"]>;
 
 const token = "claude-oauth-token";
 const bearer = "b".repeat(64);
@@ -54,13 +65,19 @@ const success = (structured: unknown, sessionId = "session-1") => ({
 // Replays one fixed message sequence per turn and records what was asked.
 function runtime(
   turns: Array<
-    unknown[] | ((call: Call, read?: GitHubRead) => Promise<unknown[]>)
+    | unknown[]
+    | ((
+        call: Call,
+        read?: GitHubRead,
+        publish?: PublicationCall,
+      ) => Promise<unknown[]>)
   >,
   sandboxAvailable = true,
 ) {
   const calls: Call[] = [];
   const proxies = { started: 0, closed: 0 };
   let read: GitHubRead | undefined;
+  let publish: PublicationCall | undefined;
   const fake: ClaudeRuntime = {
     async startProxy() {
       proxies.started++;
@@ -76,12 +93,15 @@ function runtime(
       const turn = turns[calls.length - 1];
       return (async function* () {
         if (!turn) throw new Error("Unexpected turn");
-        yield* typeof turn === "function" ? await turn(call, read) : turn;
+        yield* typeof turn === "function"
+          ? await turn(call, read, publish)
+          : turn;
       })();
     },
     sandboxAvailable: async () => sandboxAvailable,
-    githubServer(handler) {
-      read = handler;
+    tailosServer(tools) {
+      read = tools.read;
+      publish = tools.publish;
       return createSdkMcpServer({ name: "tailos" });
     },
   };
@@ -550,9 +570,216 @@ test("keeps file tools inside the workspace", async (t) => {
   expect(await decide("Read", "not an object")).toBe("deny");
 });
 
-test("builds the GitHub tool server with the installed Agent SDK", async () => {
+test("builds the Tailos tool server with the installed Agent SDK", async () => {
   const read = vi.fn<GitHubRead>();
-  const server = (await loadClaudeRuntime()).githubServer(read);
+  const publish = vi.fn<PublicationCall>();
+  const server = (await loadClaudeRuntime()).tailosServer({ read, publish });
 
   expect(server).toMatchObject({ type: "sdk", name: "tailos" });
+});
+
+const sessionId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const transcript = `projects/-work-repo/${sessionId}.jsonl`;
+
+// Writes the transcript where Claude Code keeps it, as Claude Code does.
+async function keepTranscript(call: Call, id: string, content: string) {
+  const path = join(
+    call.options.env!.CLAUDE_CONFIG_DIR!,
+    `projects/-work-repo/${id}.jsonl`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content);
+}
+
+test("gives an implementation turn the publication tool, run by the Runner", async (t) => {
+  const cwd = await workspace(t);
+  const publish = vi.fn(async () => ({
+    published: true as const,
+    sha: "c".repeat(40),
+    url: "https://github.com/acme/widgets/pull/1",
+  }));
+  let toolResult: unknown;
+  const { calls, agent } = runtime([
+    async (_call, _read, publication) => {
+      toolResult = await publication!({ headline: "fix: repair the widget" });
+      return [success({ reply: "Published" })];
+    },
+  ]);
+
+  const result = await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    undefined,
+    publish,
+  );
+
+  expect(result.reply).toBe("Published");
+  expect(publish).toHaveBeenCalledWith("fix: repair the widget", undefined);
+  expect(toolResult).toMatchObject({ success: true });
+  const { prompt, options } = calls[0]!;
+  expect(options.allowedTools).toContain("mcp__tailos__publish");
+  expect(prompt).toContain("mcp__tailos__publish");
+});
+
+test("keeps the conversation for the next Turn and resumes it there", async (t) => {
+  const cwd = await workspace(t);
+  const save = vi.fn();
+  const first = runtime([
+    async (call) => {
+      await keepTranscript(call, sessionId, "first turn\n");
+      return [
+        { type: "system", subtype: "init", session_id: sessionId },
+        success({ reply: "Started" }, sessionId),
+      ];
+    },
+  ]);
+  await first
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      save,
+    });
+  expect(save).toHaveBeenCalledOnce();
+  const [saved] = save.mock.calls[0]!;
+  expect(saved).toMatchObject({ threadId: sessionId, path: transcript });
+  expect(saved.content.toString()).toBe("first turn\n");
+
+  let restored: string | undefined;
+  const next = runtime([
+    async (call) => {
+      restored = await readFile(
+        join(call.options.env!.CLAUDE_CONFIG_DIR!, transcript),
+        "utf8",
+      );
+      await keepTranscript(call, sessionId, "first turn\nsecond turn\n");
+      return [success({ reply: "Continued" }, sessionId)];
+    },
+  ]);
+  const resave = vi.fn();
+  await next
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      resume: saved,
+      save: resave,
+    });
+  expect(restored).toBe("first turn\n");
+  expect(next.calls[0]!.options.resume).toBe(sessionId);
+  expect(next.calls[0]!.prompt).not.toContain("could not be restored");
+  expect(resave.mock.calls[0]![0].content.toString()).toBe(
+    "first turn\nsecond turn\n",
+  );
+});
+
+test("starts a new conversation and says so when the transcript cannot be resumed", async (t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([
+    [
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        session_id: sessionId,
+        errors: [`No conversation found with session ID: ${sessionId}`],
+      },
+    ],
+    [success({ reply: "Fresh" }, "1b4e28ba-2fa1-41d2-883f-0016d3cca427")],
+  ]);
+
+  const result = await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    {
+      resume: {
+        threadId: sessionId,
+        path: transcript,
+        content: Buffer.from("broken"),
+      },
+      save: () => {},
+    },
+  );
+
+  expect(result.reply).toBe("Fresh");
+  expect(calls[0]!.options.resume).toBe(sessionId);
+  expect(calls[1]!.options.resume).toBeUndefined();
+  expect(calls[1]!.prompt).toMatch(
+    /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+  );
+});
+
+test.for([
+  {
+    name: "another Model Provider's conversation",
+    path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread.jsonl",
+  },
+  { name: "a path outside its sessions", path: "../settings.json" },
+])("does not restore $name", async ({ path }, t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([[success({ reply: "Fresh" })]]);
+
+  await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    {
+      resume: { threadId: sessionId, path, content: Buffer.from("{}") },
+      save: () => {},
+    },
+  );
+
+  expect(calls[0]!.options.resume).toBeUndefined();
+  expect(calls[0]!.prompt).toMatch(
+    /^Note: the conversation from this Session's previous turn could not be restored/,
+  );
+});
+
+test("tells the Agent when the previous work is lost or moved after a merge", async (t) => {
+  const cwd = await workspace(t);
+  const lost = runtime([[success({ reply: "Done" })]]);
+  await lost
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      lost: true,
+      save: () => {},
+    });
+  expect(lost.calls[0]!.prompt).toMatch(
+    /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
+  );
+
+  const merged = runtime([[success({ reply: "Done" })]]);
+  await merged
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      realigned: { publishedSha: "d".repeat(40) },
+      save: () => {},
+    });
+  expect(merged.calls[0]!.prompt).toMatch(
+    /^Note: this Session's pull request has been merged\./,
+  );
+});
+
+test("runs the chosen model and effort, and refuses ones Claude does not offer", async (t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([[success({ reply: "Done" })]]);
+
+  await agent().run(
+    job({ checkout, model: "claude-opus-5-5", effort: "xhigh" }),
+    new AbortController().signal,
+    cwd,
+  );
+  expect(calls[0]!.options).toMatchObject({
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+  });
+
+  await expect(
+    agent().run(
+      job({ checkout, model: "gpt-5.5" }),
+      new AbortController().signal,
+      cwd,
+    ),
+  ).rejects.toThrow("Requested model or effort is unavailable");
 });

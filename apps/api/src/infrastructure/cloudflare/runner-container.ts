@@ -51,7 +51,7 @@ import { deliverTimelineNotifications } from "./session-stream.ts";
 import { runStarter } from "./run-start.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
 import {
-  codexEgressHosts,
+  modelEgressHosts,
   type ModelAccess,
   type ModelEgressProps,
 } from "./model-egress.ts";
@@ -68,6 +68,8 @@ type RepositoryGrant = {
 type RefreshLease = {
   digest: string;
   runId: string;
+  /** The Model Provider of the connection; leases without it are Codex's. */
+  engine?: "codex" | "claude";
   connectionId: string;
   connectionVersion: string;
   expiresAt: number;
@@ -123,6 +125,12 @@ export function placeholderAccessToken(
     "tailos-placeholder",
   ].join(".");
 }
+
+/**
+ * Stands in for the Claude OAuth token inside the container. It has the
+ * token's shape and nothing of the user's: the model egress Worker replaces it.
+ */
+export const placeholderClaudeToken = "sk-ant-oat01-tailos-placeholder";
 
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
@@ -523,11 +531,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
   private async startRunner(
     deadlineAt: number,
     instance: "lite" | "standard-3",
-    egress?: {
-      sessionId: string;
-      github: boolean;
-      codex: boolean;
-    },
+    egress?: { sessionId: string; github: boolean },
     snapshot?: ContainerSnapshotRecord,
   ) {
     const container = this.ctx.container;
@@ -583,7 +587,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
    */
   private async intercept(
     container: Container,
-    egress?: { sessionId: string; github: boolean; codex: boolean },
+    egress?: { sessionId: string; github: boolean },
   ) {
     if (!egress) return;
     const exports = this.ctx.exports as unknown as RunnerExports;
@@ -596,12 +600,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
           host,
           exports.GitHubEgress(props),
         );
-    if (egress.codex)
-      for (const host of codexEgressHosts)
-        await container.interceptOutboundHttps(
-          host,
-          exports.ModelEgress(props),
-        );
+    // Both providers' hosts: the egress Worker adds credentials only for the
+    // provider of the Run that is current then.
+    for (const host of modelEgressHosts)
+      await container.interceptOutboundHttps(host, exports.ModelEgress(props));
   }
 
   /**
@@ -739,16 +741,39 @@ export class RunnerContainer extends DurableObject<Bindings> {
     await this.ctx.storage.put(agentEgressClosed, true);
   }
 
-  /** The Run's Codex access, for the egress Worker that adds it to requests. */
-  async modelAccess(runId?: string): Promise<ModelAccess | null> {
+  /** The lease of the current Run on a Model Provider, while its Agent works. */
+  private async agentLease(
+    engine: "codex" | "claude",
+    runId?: string,
+  ): Promise<RefreshLease | null> {
     if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
     if (
       !lease ||
+      (lease.engine ?? "codex") !== engine ||
       (runId !== undefined && lease.runId !== runId) ||
       lease.expiresAt <= Date.now()
     )
       return null;
+    return lease;
+  }
+
+  /** The Run's Claude token, for the egress Worker that adds it to requests. */
+  async claudeAccess(runId?: string): Promise<string | null> {
+    const lease = await this.agentLease("claude", runId);
+    if (!lease) return null;
+    const access = await this.env.CREDENTIALS?.getByName(
+      lease.connectionId,
+    ).issueClaudeAccess();
+    if (!access || access.connectionVersion !== lease.connectionVersion)
+      return null;
+    return access.token;
+  }
+
+  /** The Run's Codex access, for the egress Worker that adds it to requests. */
+  async modelAccess(runId?: string): Promise<ModelAccess | null> {
+    const lease = await this.agentLease("codex", runId);
+    if (!lease) return null;
     const rejected = await this.ctx.storage.get<string>(rejectedModelAccess);
     const access = await this.env.CREDENTIALS?.getByName(
       lease.connectionId,
@@ -838,7 +863,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       JSON.parse(run.step_state ?? "null"),
     );
     if (
-      context.engine !== "codex" ||
+      context.engine === "fake" ||
       context.mode === "plan" ||
       !context.repository ||
       !context.trigger ||
@@ -978,7 +1003,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     );
     // A Routine's message is what someone wrote; its prompt says what to do.
     const instructions =
-      context.engine === "codex" ? context.instructions : undefined;
+      context.engine === "fake" ? undefined : context.instructions;
     const base = {
       version: 1 as const,
       ...(context.mode === "plan" && { mode: "plan" as const }),
@@ -989,33 +1014,55 @@ export class RunnerContainer extends DurableObject<Bindings> {
       ...(diagnostics && { diagnostics }),
     };
     if (context.engine === "fake") return { ...base, engine: "fake" };
-    // Claude connections cannot start a Run yet: there is nothing to issue.
-    if (context.engine !== "codex") return null;
 
     const origin = this.env.TAILOS_PUBLIC_ORIGIN;
     if (!origin || !this.env.CREDENTIALS) return null;
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin) return null;
+    const connection = this.env.CREDENTIALS.getByName(context.connectionId);
+    const lease = async (connectionVersion: string) => {
+      const bearer = newRunLease();
+      await this.ctx.storage.put("refreshLease", {
+        digest: await hashRunLease(bearer),
+        runId,
+        engine: context.engine,
+        connectionId: context.connectionId,
+        connectionVersion,
+        expiresAt: deadlineAt,
+        lastRefreshAt: 0,
+      } satisfies RefreshLease);
+      // Base URL of the publication checkpoint.
+      return { url: origin + `/_runner/runs/${runId}/`, bearer };
+    };
+    const selection = {
+      ...(context.model && { model: context.model }),
+      ...(context.effort && { effort: context.effort }),
+    };
 
-    const access = await this.env.CREDENTIALS.getByName(
-      context.connectionId,
-    ).issueAccess();
+    if (context.engine === "claude") {
+      const access = await connection.issueClaudeAccess();
+      if (!access) return null;
+      return {
+        ...base,
+        engine: "claude",
+        ...selection,
+        // The container never receives the token: the model egress Worker
+        // adds it to Claude Code's requests.
+        access: {
+          token: placeholderClaudeToken,
+          connectionVersion: access.connectionVersion,
+        },
+        lease: await lease(access.connectionVersion),
+      };
+    }
+
+    const access = await connection.issueAccess();
     if (!access) return null;
-    const bearer = newRunLease();
-    await this.ctx.storage.put("refreshLease", {
-      digest: await hashRunLease(bearer),
-      runId,
-      connectionId: context.connectionId,
-      connectionVersion: access.connectionVersion,
-      expiresAt: deadlineAt,
-      lastRefreshAt: 0,
-    } satisfies RefreshLease);
-
+    const refresh = await lease(access.connectionVersion);
     return {
       ...base,
       engine: "codex",
-      ...(context.model && { model: context.model }),
-      ...(context.effort && { effort: context.effort }),
+      ...selection,
       // The container never receives the token: the model egress Worker adds
       // it to Codex's requests.
       access: {
@@ -1026,8 +1073,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
           deadlineAt,
         ),
       },
-      // Base URL of the publication checkpoint.
-      refresh: { url: origin + `/_runner/runs/${runId}/`, bearer },
+      refresh,
     };
   }
 
@@ -1122,23 +1168,23 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { status: "failed", errorCode: "provider_unavailable" } as const;
 
     const target =
-      request.context.engine === "codex"
-        ? request.context.repository
-        : undefined;
+      request.context.engine === "fake"
+        ? undefined
+        : request.context.repository;
     const trigger =
-      request.context.engine === "codex" ? request.context.trigger : undefined;
+      request.context.engine === "fake" ? undefined : request.context.trigger;
     const previous =
-      target && trigger && job.engine === "codex"
+      target && trigger && job.engine !== "fake"
         ? await this.previousWork(request.runId)
         : undefined;
     if (previous === null)
       return { status: "failed", errorCode: "runner_unavailable" } as const;
-    if (previous && job.engine === "codex")
+    if (previous && job.engine !== "fake")
       job.continuity = previous.restore ? { restore: previous.restore } : {};
     let publishedSha: string | undefined;
     let realignFrom: string | undefined;
     let realign: { previousBase: string; publishedSha: string } | undefined;
-    if (target && trigger && job.engine === "codex") {
+    if (target && trigger && job.engine !== "fake") {
       const githubContext = githubJobContext(request.context);
       if (githubContext) job.githubContext = githubContext;
       const github = this.github;
@@ -1250,11 +1296,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
         job.engine === "fake" ? "lite" : "standard-3",
         job.engine === "fake"
           ? undefined
-          : {
-              sessionId,
-              github: !!job.checkout,
-              codex: job.engine === "codex",
-            },
+          : { sessionId, github: !!job.checkout },
         previous?.snapshot,
       ),
     );
@@ -1263,7 +1305,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
       key = newRunLease();
       await this.ctx.storage.put(runnerKeyStorage, key);
     }
-    const continuing = job.engine === "codex" && job.continuity && job.checkout;
+    const continuing = job.engine !== "fake" && job.continuity && job.checkout;
     if (continuing) {
       if (previous?.archive?.body) {
         const upload = await port.fetch("http://runner/continuity", {
@@ -1308,8 +1350,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
 
   private async pollJob(runId: string, context: ExecutionContext) {
     const repository =
-      context.engine === "codex" ? context.repository : undefined;
-    const trigger = context.engine === "codex" ? context.trigger : undefined;
+      context.engine === "fake" ? undefined : context.repository;
+    const trigger = context.engine === "fake" ? undefined : context.trigger;
     const status = await this.readRunnerStatus(runId);
     if (status.status !== "running") await this.closeGitHubEgress();
     if (status.status !== "succeeded") return status;

@@ -187,6 +187,7 @@ test("scopes project session pages by owner and project, including histories of 
         {
           id: "run",
           startMessageId: "prompt",
+          engine: null,
           agentDurationMs: 752_000,
         },
       ],

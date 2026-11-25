@@ -1,5 +1,6 @@
 import * as v from "valibot";
-import { supportsCodexSelection } from "@tailos/core/models";
+import { agentEngines, supportsSelection } from "@tailos/core/models";
+import type { AgentConnected } from "@/application/auth/agent-connection.ts";
 import { promptText } from "@tailos/core/runner";
 import { allowedActors, projectName } from "@/application/triggers/projects.ts";
 
@@ -34,7 +35,7 @@ export const routineSettings = v.strictObject({
   trigger: v.variant("type", [labelTrigger, commentTrigger]),
   allowedActors,
   prompt: promptText,
-  engine: v.literal("codex"),
+  engine: v.picklist(agentEngines),
   model: v.optional(option),
   effort: v.optional(option),
 });
@@ -76,20 +77,23 @@ export type RoutineStore = {
   ): Promise<{ changes: RoutineChange[]; nextCursor: number | null } | null>;
   candidates(projectId: string): Promise<Routine[]>;
 };
-export type CodexConnection = (ownerId: string) => Promise<boolean>;
 export async function validateRoutine(
   settings: RoutineSettings,
-  connected: CodexConnection,
+  connected: AgentConnected,
   ownerId: string,
 ) {
-  const selection = supportsCodexSelection(settings.model, settings.effort);
+  const selection = supportsSelection(
+    settings.engine,
+    settings.model,
+    settings.effort,
+  );
   if (selection === "unsupported_model" || selection === "unsupported_effort")
     return selection;
   if (!settings.enabled) return null;
-  // Without an explicit model, Codex may select any catalog default. A mixed
+  // Without an explicit model, the provider may select any catalog default. A mixed
   // catalog cannot verify this combination; disabled saves still work.
   if (selection === "ambiguous_effort") return "configuration_unverified";
-  return (await connected(ownerId).catch(() => false))
+  return (await connected(ownerId, settings.engine).catch(() => false))
     ? null
     : "configuration_unverified";
 }

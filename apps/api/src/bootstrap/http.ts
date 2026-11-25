@@ -3,7 +3,10 @@ import {
   replayIssueDelivery,
 } from "@/infrastructure/d1/routines.ts";
 import { createRoutineRoutes } from "@/presentation/http/handlers/routines/routines.ts";
-import { codexConnectionId } from "@/application/auth/device.ts";
+import {
+  agentConnectionId,
+  type AgentConnected,
+} from "@/application/auth/agent-connection.ts";
 import {
   admitIssueMessage,
   admitSessionMessage,
@@ -70,11 +73,19 @@ function githubApp(env: Bindings) {
   });
 }
 
-const codexConnected = (env: Bindings) => async (ownerId: string) =>
-  !!env.CREDENTIALS &&
-  !!env.CREDENTIAL_ENCRYPTION_KEY &&
-  (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
-    .state === "connected";
+const agentConnected =
+  (env: Bindings): AgentConnected =>
+  async (ownerId, engine) => {
+    if (!env.CREDENTIALS || !env.CREDENTIAL_ENCRYPTION_KEY) return false;
+    const connection = env.CREDENTIALS.getByName(
+      agentConnectionId(engine, ownerId),
+    );
+    const status =
+      engine === "claude"
+        ? await connection.claudeStatus()
+        : await connection.status();
+    return status.state === "connected";
+  };
 
 const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
   createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth, {
@@ -83,7 +94,7 @@ const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
         (await d1Projects(env.DB).settings(ownerId)).find(
           (record) => record.project.id === projectId,
         ) ?? null,
-      codexConnected: codexConnected(env),
+      connected: agentConnected(env),
       defaultBranch: (project) => githubApp(env).defaultBranch(project),
       admit: (input) => admitTrigger(env.DB, input),
     }),
@@ -93,7 +104,7 @@ const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
         (await d1Projects(env.DB).settings(ownerId)).find(
           (record) => record.project.id === projectId,
         ) ?? null,
-      codexConnected: codexConnected(env),
+      connected: agentConnected(env),
       latestTurn: (input) => latestTurnContext(env.DB, input),
       admitMessage: (input) => admitSessionMessage(env.DB, input),
     }),
@@ -177,7 +188,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects/:projectId/routines",
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
-      codexConnected,
+      agentConnected,
       operatorAuth,
     ),
   )

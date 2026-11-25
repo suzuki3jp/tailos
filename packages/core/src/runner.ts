@@ -155,7 +155,7 @@ export const PlanResult = v.strictObject({
 });
 export type PlanResult = v.InferOutput<typeof PlanResult>;
 
-export const codexOptions = {
+export const agentOptions = {
   model: v.optional(v.pipe(v.string(), v.minLength(1))),
   effort: v.optional(v.pipe(v.string(), v.minLength(1))),
 };
@@ -192,6 +192,22 @@ const repositoryRun = {
   trigger: v.optional(RunTrigger),
 };
 
+/** What a Turn on a Model Provider keeps, apart from its connection. */
+const agentContext = {
+  ...agentOptions,
+  routine: v.optional(
+    v.strictObject({
+      id: v.pipe(v.string(), v.uuid()),
+      revision: positiveId,
+      projectRevision: positiveId,
+    }),
+  ),
+  // The Routine's prompt, when its message is what the user wrote.
+  instructions: v.optional(promptText),
+  mode: v.optional(ExecutionMode),
+  ...repositoryRun,
+};
+
 export const ExecutionContext = v.pipe(
   v.unknown(),
   v.transform(upgradeStoredContext),
@@ -204,32 +220,20 @@ export const ExecutionContext = v.pipe(
     v.strictObject({
       version: v.literal(1),
       engine: v.literal("codex"),
-      ...codexOptions,
-      routine: v.optional(
-        v.strictObject({
-          id: v.pipe(v.string(), v.uuid()),
-          revision: positiveId,
-          projectRevision: positiveId,
-        }),
-      ),
-      // The Routine's prompt, when its message is what the user wrote.
-      instructions: v.optional(promptText),
-      mode: v.optional(ExecutionMode),
+      ...agentContext,
       connectionId: v.pipe(
         v.string(),
         v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
       ),
-      ...repositoryRun,
     }),
     v.strictObject({
       version: v.literal(1),
       engine: v.literal("claude"),
-      mode: v.optional(ExecutionMode),
+      ...agentContext,
       connectionId: v.pipe(
         v.string(),
         v.regex(/^claude\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
       ),
-      ...repositoryRun,
     }),
   ]),
   // A repository Run must say what started it; that decides issue handling.
@@ -242,9 +246,15 @@ export const ExecutionContext = v.pipe(
 
 export const maxRunnerJobBytes = 32 * 1024;
 
-/** The structured GitHub input sent to Codex for a repository Run. */
+/** A Turn's settings on a Model Provider. */
+export type AgentExecutionContext = Exclude<
+  ExecutionContext,
+  { engine: "fake" }
+>;
+
+/** The structured GitHub input sent to the Agent for a repository Run. */
 export function githubJobContext(context: ExecutionContext) {
-  if (context.engine !== "codex" || !context.repository) return undefined;
+  if (context.engine === "fake" || !context.repository) return undefined;
   const issue = triggerIssue(context.trigger);
   if (!issue) return undefined;
   return {
@@ -335,7 +345,7 @@ export const RunnerJob = v.variant("engine", [
     ...job,
     ...repositoryJob,
     engine: v.literal("codex"),
-    ...codexOptions,
+    ...agentOptions,
     continuity: v.optional(RunnerContinuity),
     access: CodexAccess,
     // Also the base URL of the publication checkpoint.
@@ -345,7 +355,11 @@ export const RunnerJob = v.variant("engine", [
     ...job,
     ...repositoryJob,
     engine: v.literal("claude"),
+    ...agentOptions,
+    continuity: v.optional(RunnerContinuity),
+    // The token is a placeholder: the model egress Worker adds the real one.
     access: ClaudeAccess,
+    // Base URL of the publication checkpoint.
     lease,
   }),
 ]);

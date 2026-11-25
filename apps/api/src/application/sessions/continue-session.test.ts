@@ -55,7 +55,7 @@ function deps(overrides: Partial<ContinueSessionDeps> = {}) {
     sent,
     deps: {
       project: async () => project,
-      codexConnected: async () => true,
+      connected: async () => true,
       latestTurn: async () => JSON.stringify(previous),
       admitMessage: vi.fn(async (message: SessionMessage) => {
         sent.push(message);
@@ -80,13 +80,56 @@ test("the next Turn keeps the latest Turn's settings, with only the model and ef
   expect(JSON.parse(kept.sent[0]!.executionContext)).toEqual(previous);
 
   const chosen = deps();
-  await continueSession({ ...input, model: "new-model" }, chosen.deps);
+  await continueSession({ ...input, model: "gpt-5.5" }, chosen.deps);
   const { model: _model, effort: _effort, ...settings } = previous;
   // Planning stays read-only with its instructions.
   expect(JSON.parse(chosen.sent[0]!.executionContext)).toEqual({
     ...settings,
-    model: "new-model",
+    model: "gpt-5.5",
   });
+});
+
+test("the Session keeps its Model Provider, whose models and connection it checks", async () => {
+  const claude = {
+    ...previous,
+    engine: "claude",
+    connectionId: "claude/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
+    model: "claude-sonnet-5-5",
+  };
+  const connected = vi.fn<ContinueSessionDeps["connected"]>(async () => true);
+  const session = deps({
+    latestTurn: async () => JSON.stringify(claude),
+    connected,
+  });
+  await continueSession(
+    { ...input, engine: "claude", model: "claude-opus-5-5", effort: "max" },
+    session.deps,
+  );
+  expect(connected).toHaveBeenCalledWith("owner", "claude");
+  expect(JSON.parse(session.sent[0]!.executionContext)).toMatchObject({
+    engine: "claude",
+    connectionId: claude.connectionId,
+    model: "claude-opus-5-5",
+    effort: "max",
+  });
+
+  const switched = deps({ latestTurn: async () => JSON.stringify(claude) });
+  expect(
+    await continueSession({ ...input, engine: "codex" }, switched.deps),
+  ).toEqual({ status: "provider_fixed", engine: "claude" });
+  expect(
+    await continueSession({ ...input, model: "gpt-5.5" }, switched.deps),
+  ).toEqual({ status: "unsupported_selection", error: "unsupported_model" });
+  expect(
+    await continueSession(
+      input,
+      deps({
+        latestTurn: async () => JSON.stringify(claude),
+        connected: async () => false,
+      }).deps,
+    ),
+  ).toEqual({ status: "not_connected", engine: "claude" });
+  expect(switched.sent).toEqual([]);
 });
 
 test("a Session that cannot continue says why, and a Project change is read again once", async () => {
@@ -97,11 +140,8 @@ test("a Session that cannot continue says why, and a Project change is read agai
     await continueSession(input, deps({ latestTurn: async () => null }).deps),
   ).toEqual({ status: "not_found" });
   expect(
-    await continueSession(
-      input,
-      deps({ codexConnected: async () => false }).deps,
-    ),
-  ).toEqual({ status: "codex_not_connected" });
+    await continueSession(input, deps({ connected: async () => false }).deps),
+  ).toEqual({ status: "not_connected", engine: "codex" });
   expect(
     await continueSession(
       input,

@@ -1,14 +1,4 @@
 import { dispatchSessionInbox } from "@/infrastructure/d1/session-inbox.ts";
-import {
-  beginPublicationReconciliation,
-  stageRunPublication,
-} from "@/infrastructure/d1/run-publication.ts";
-import {
-  pendingPublication,
-  publicationDeadline,
-  type LegacyPublication,
-  type PendingPublication,
-} from "@/application/runs/publication.ts";
 import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
 import {
   seal,
@@ -24,19 +14,15 @@ import { DurableObject } from "cloudflare:workers";
 import {
   continuitySaveMs,
   ExecutionContext,
-  FileChanges,
   maxContinuityBytes,
   maxRunnerJobBytes,
   nextSessionBranch,
   RunnerStatus,
   sessionBranch,
-  type CheckedPublication,
   type PublicationRefusal,
   type PublishedWork,
   type SessionPublication,
   type RunnerJob,
-  type RepositoryTarget,
-  type RunTrigger,
   triggerIssue,
 } from "@tailos/core/runner";
 import * as v from "valibot";
@@ -206,7 +192,6 @@ const diagnosticLeaseKey = (runId: string) => diagnosticLeasePrefix + runId;
 const runStorage = [
   "runId",
   "refreshLease",
-  "publicationDigest",
   rejectedModelAccess,
   agentEgressClosed,
   continuityRunStorage,
@@ -214,17 +199,6 @@ const runStorage = [
 ] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
-
-const publicationKey = (runId: string, digest: string) =>
-  `tailos-api/v1/runs/${runId}/publication-${digest}.json`;
-
-async function publicationDigest(content: string) {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(content),
-  );
-  return Buffer.from(bytes).toString("hex");
-}
 
 /**
  * Processes the Turns of one Session, one at a time, in a container of its
@@ -299,9 +273,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
           () => this.submitJob(job),
           (result) => (result.status === "failed" ? "failed" : "succeeded"),
         ),
-      poll: async (id, context, deadlineAt, stepState) => {
+      poll: async (id, context) => {
         try {
-          const result = await this.pollJob(id, context, deadlineAt, stepState);
+          const result = await this.pollJob(id, context);
           if (this.pollUnavailable) {
             this.pollUnavailable = false;
             await recordRunDiagnostic(
@@ -344,19 +318,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
     // cleanup, including revocation retries, is still pending.
     await this.closeGitHubEgress();
     await this.ctx.storage.delete(["refreshLease", rejectedModelAccess]);
-    const digest = await this.ctx.storage.get<string>("publicationDigest");
-    if (digest && this.env.RUN_ARTIFACTS?.delete) {
-      try {
-        await this.env.RUN_ARTIFACTS.delete(publicationKey(runId, digest));
-        await this.ctx.storage.delete("publicationDigest");
-      } catch {
-        // oxlint-disable-next-line no-console -- Record cleanup failures without artifact data.
-        console.warn("Checked publication cleanup failed", {
-          runId,
-          key: publicationKey(runId, digest),
-        });
-      }
-    }
     try {
       const container = this.ctx.container;
       // Keep the Turn's work for the Session before the container goes.
@@ -827,66 +788,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await storage.put("refreshLease", { ...lease, lastRefreshAt: now });
       await storage.put(rejectedModelAccess, accessVersion);
     });
-  }
-
-  async stagePublication(
-    runId: string,
-    bearer: string,
-    work: CheckedPublication | LegacyPublication,
-  ) {
-    const execution = await this.env.DB.prepare(
-      "SELECT execution_context FROM runs WHERE id = ?",
-    )
-      .bind(runId)
-      .first<{ execution_context: string }>();
-    if (!execution || JSON.parse(execution.execution_context).mode === "plan")
-      return false;
-    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
-    if (
-      !lease ||
-      lease.runId !== runId ||
-      lease.expiresAt <= Date.now() ||
-      !matchRunLease(await hashRunLease(bearer), lease.digest)
-    )
-      return false;
-    if (work.kind !== "checked")
-      return stageRunPublication(this.env.DB, runId, work);
-    const assigned = await this.env.DB.prepare(
-      `SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?
-       AND json_extract(step_state, '$.branch') = ?
-       AND json_extract(step_state, '$.baseSha') = ?`,
-    )
-      .bind(runId, Date.now(), work.branch, work.baseSha)
-      .first();
-    if (!assigned) return false;
-    const bucket = this.env.RUN_ARTIFACTS;
-    if (!bucket) throw new Error("Checked publication storage unavailable");
-    const { changes, ...checkpoint } = work;
-    const content = JSON.stringify(changes);
-    const digest = await publicationDigest(content);
-    const reserved = await this.ctx.storage.transaction(async (storage) => {
-      const current = await storage.get<string>("publicationDigest");
-      if (current) return current === digest;
-      await storage.put("publicationDigest", digest);
-      return true;
-    });
-    if (!reserved) return false;
-    await bucket.put(publicationKey(runId, digest), content);
-    // The Agent is done once its work is checked: nothing may add to it.
-    await this.closeGitHubEgress();
-    const staged = await stageRunPublication(this.env.DB, runId, {
-      ...checkpoint,
-      digest,
-    });
-    if (!staged) {
-      const running = await this.env.DB.prepare(
-        "SELECT 1 FROM runs WHERE id = ? AND status = 'running'",
-      )
-        .bind(runId)
-        .first();
-      if (!running) await bucket.delete?.(publicationKey(runId, digest));
-    }
-    return staged;
   }
 
   /** Publications of the Session, one at a time. */
@@ -1412,169 +1313,33 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return { status: "running" } as const;
   }
 
-  private async pollJob(
-    runId: string,
-    context: ExecutionContext,
-    deadlineAt: number,
-    stepState: string | null,
-  ) {
+  private async pollJob(runId: string, context: ExecutionContext) {
     const repository =
       context.engine === "codex" ? context.repository : undefined;
     const trigger = context.engine === "codex" ? context.trigger : undefined;
-    const target = repository && trigger ? { repository, trigger } : undefined;
-    if (context.mode === "plan") {
-      const status = await this.readRunnerStatus(runId);
-      if (status.status !== "running") await this.closeGitHubEgress();
-      if (status.status !== "succeeded") return status;
-      if (!status.plan || status.publication)
-        return {
-          status: "failed",
-          errorCode: "agent_failed",
-          events: status.events,
-        } as const;
-      return status;
-    }
-    const pending = target ? pendingPublication(stepState) : null;
-    if (pending) await this.closeGitHubEgress();
-    if (target && pending?.kind === "checked") {
-      const recoveryDeadline = publicationDeadline(stepState, deadlineAt);
-      const github = this.github;
-      if (!github) throw new Error("GitHub verification unavailable");
-      const object = await this.env.RUN_ARTIFACTS?.get(
-        publicationKey(runId, pending.digest),
-      );
-      const content = await object?.text();
-      if (!content || (await publicationDigest(content)) !== pending.digest)
-        throw new Error("Checked publication unavailable");
-      const changes = v.parse(FileChanges, JSON.parse(content));
-      const sha = await observeRun(
-        this.env.DB,
-        runId,
-        "commit",
-        () =>
-          github.commitCheckedWork(
-            target.repository,
-            target.trigger,
-            runId,
-            { ...pending, changes },
-            recoveryDeadline,
-          ),
-        (result) => (result ? "succeeded" : "unknown"),
-      );
-      if (!sha)
-        return {
-          status: "failed",
-          errorCode: "publication_unconfirmed",
-          events: pending.events,
-        } as const;
-      return this.publish(runId, target, recoveryDeadline, pending, sha);
-    }
-    if (target && pending?.kind === "pushed")
-      return this.publish(
-        runId,
-        target,
-        publicationDeadline(stepState, deadlineAt),
-        pending,
-      );
-
-    const status = await this.readRunnerStatus(runId).catch(
-      (error: unknown) => {
-        if (!pending || Date.now() < deadlineAt) throw error;
-        // Once Agent time is over, a failed status request must not skip the
-        // remote-ref check for a push whose response may have been lost.
-        return { status: "failed", errorCode: "runner_lost" } as const;
-      },
-    );
+    const status = await this.readRunnerStatus(runId);
     if (status.status !== "running") await this.closeGitHubEgress();
-    if (target && pending && pending.kind !== "checked") {
-      if (status.status === "running" && Date.now() < deadlineAt) return status;
-      if (
-        !(await beginPublicationReconciliation(
-          this.env.DB,
-          runId,
-          pending,
-          false,
-        ))
-      )
-        throw new Error("Publication checkpoint changed");
-
-      const pushed =
-        status.status === "succeeded" &&
-        status.publication?.kind === "pushed" &&
-        status.publication.branch === pending.branch &&
-        status.publication.sha === pending.sha;
-      if (!pushed) {
-        const github = this.github;
-        if (!github) throw new Error("GitHub verification unavailable");
-        if (
-          !(await github.hasCommit(
-            target.repository,
-            target.trigger,
-            runId,
-            pending,
-          ))
-        ) {
-          return status.status === "failed"
-            ? status
-            : ({
-                status: "failed",
-                errorCode: "repository_unavailable",
-              } as const);
-        }
-      }
-      if (
-        !(await beginPublicationReconciliation(
-          this.env.DB,
-          runId,
-          pending,
-          true,
-        ))
-      )
-        throw new Error("Publication checkpoint changed");
-      return { status: "running" } as const;
-    }
-    if (status.status !== "succeeded" || !target) return status;
+    if (status.status !== "succeeded") return status;
+    if (context.mode === "plan")
+      return status.plan
+        ? status
+        : ({
+            status: "failed",
+            errorCode: "agent_failed",
+            events: status.events,
+          } as const);
+    if (!repository || !trigger) return status;
     // The Agent publishes with the publication tool: the Run's result is what
     // it published last, if anything.
-    if (!status.publication) {
-      const published = await this.ctx.storage.get<RunPublication>(
-        runPublicationStorage,
-      );
-      return {
-        ...status,
-        publicationResult: published
-          ? { kind: "pull_request" as const, ...published }
-          : { kind: "no_changes" as const },
-      };
-    }
-    if (status.publication.kind === "no_changes") {
-      return { ...status, publicationResult: { kind: "no_changes" as const } };
-    }
-
-    if (status.publication.kind !== "pushed")
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-      } as const;
-
-    const pendingWork = {
-      reply: status.reply,
-      ...(status.sessionTitle && { sessionTitle: status.sessionTitle }),
-      events: status.events,
-      ...status.publication,
+    const published = await this.ctx.storage.get<RunPublication>(
+      runPublicationStorage,
+    );
+    return {
+      ...status,
+      publicationResult: published
+        ? { kind: "pull_request" as const, ...published }
+        : { kind: "no_changes" as const },
     };
-    // An older Runner may report a pushed commit without a checkpoint.
-    if (
-      !(await stageRunPublication(this.env.DB, runId, pendingWork)) ||
-      !(await beginPublicationReconciliation(
-        this.env.DB,
-        runId,
-        pendingWork,
-        true,
-      ))
-    )
-      return { status: "failed", errorCode: "repository_unavailable" } as const;
-    return { status: "running" } as const;
   }
 
   private async readRunnerStatus(runId: string) {
@@ -1597,56 +1362,5 @@ export class RunnerContainer extends DurableObject<Bindings> {
       throw new Error("Runner status unavailable");
     }
     return v.parse(RunnerStatus, await reply.json());
-  }
-
-  private async publish(
-    runId: string,
-    target: { repository: RepositoryTarget; trigger: RunTrigger },
-    deadlineAt: number,
-    work: PendingPublication,
-    sha = work.kind === "checked" ? undefined : work.sha,
-  ) {
-    const github = this.github;
-    if (!github || !sha)
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-      } as const;
-    const publication =
-      work.kind === "checked"
-        ? { branch: work.branch, sha, headline: work.headline }
-        : work;
-    const url = await observeRun(
-      this.env.DB,
-      runId,
-      "pull_request",
-      () =>
-        github.publish(
-          target.repository,
-          target.trigger,
-          runId,
-          publication,
-          deadlineAt,
-        ),
-      (result) => (result ? "succeeded" : "unknown"),
-    );
-    if (!url)
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-        events: work.events,
-      } as const;
-    return {
-      status: "succeeded" as const,
-      reply: work.reply,
-      ...(work.sessionTitle && { sessionTitle: work.sessionTitle }),
-      events: work.events,
-      publicationResult: {
-        kind: "pull_request" as const,
-        url,
-        branch: work.branch,
-        sha,
-      },
-    };
   }
 }

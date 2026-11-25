@@ -50,13 +50,11 @@ const repositoryName = v.pipe(
 );
 export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
-// Earlier Runs had a branch each; a Session now publishes to its own, and to
-// a numbered one after its pull request is merged.
+// A Session publishes to its own branch, and to a numbered one after its
+// pull request is merged.
 export const workBranch = v.pipe(
   v.string(),
-  v.regex(
-    /^tailos\/(?:(?:issue-[1-9][0-9]*|run)\/[a-f0-9-]{36}|session\/[a-f0-9-]{36}(?:-[2-9]|-[1-9][0-9]+)?)$/,
-  ),
+  v.regex(/^tailos\/session\/[a-f0-9-]{36}(?:-[2-9]|-[1-9][0-9]+)?$/),
 );
 /** The branch a Session publishes to; `n` counts its merged pull requests. */
 export const sessionBranch = (sessionId: string, n = 1) =>
@@ -351,23 +349,12 @@ export const RunnerEvent = v.strictObject({
 
 const events = v.pipe(v.array(RunnerEvent), v.maxLength(20));
 
-export const RunnerPublication = v.variant("kind", [
-  v.strictObject({ kind: v.literal("no_changes") }),
-  v.strictObject({ kind: v.literal("checked") }),
-  v.strictObject({
-    kind: v.literal("pushed"),
-    branch: workBranch,
-    sha: gitSha,
-  }),
-]);
-
 export const RunnerStatus = v.variant("status", [
   v.strictObject({ status: v.literal("running") }),
   v.strictObject({
     status: v.literal("succeeded"),
     reply: replyText,
     sessionTitle: optionalSessionTitle,
-    publication: v.optional(RunnerPublication),
     plan: v.optional(PlanResult),
     events,
   }),
@@ -377,9 +364,6 @@ export const RunnerStatus = v.variant("status", [
       "agent_failed",
       "deadline_exceeded",
       "sandbox_unavailable",
-      // Accept outcomes from Runner images that ran fixed publication checks.
-      "format_check_failed",
-      "lint_failed",
       "invalid_change_headline",
       "unsupported_changes",
     ]),
@@ -389,22 +373,6 @@ export const RunnerStatus = v.variant("status", [
 
 export type RunnerJob = v.InferOutput<typeof RunnerJob>;
 export type RunnerStatus = v.InferOutput<typeof RunnerStatus>;
-
-export const checkedPublicationFields = {
-  kind: v.literal("checked"),
-  branch: workBranch,
-  baseSha: gitSha,
-  tree: gitSha,
-  headline: changeHeadline,
-  reply: replyText,
-  sessionTitle: optionalSessionTitle,
-  events,
-};
-export const CheckedPublication = v.strictObject({
-  ...checkedPublicationFields,
-  changes: FileChanges,
-});
-export type CheckedPublication = v.InferOutput<typeof CheckedPublication>;
 
 /**
  * Work the Agent publishes with the publication tool during a Turn: the whole
@@ -452,4 +420,3 @@ export type PublicationRefusal = v.InferOutput<typeof PublicationRefusal>;
 export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;
 
 export type RepositoryTarget = v.InferOutput<typeof RepositoryTarget>;
-export type RunnerPublication = v.InferOutput<typeof RunnerPublication>;

@@ -54,31 +54,3 @@ export function executionTransition(
       from,
     );
 }
-
-export function publicationEvent(
-  db: D1Database,
-  runId: string,
-  eventId: string,
-  name: string,
-  at: number,
-  attributes: object,
-  predicate: string,
-  bindings: (string | number)[],
-) {
-  return db
-    .prepare(`INSERT INTO diagnostic_events
-    (event_id, trace_id, span_id, producer_id, occurred_at, received_at, name, attributes)
-    SELECT ?, ?, ?, 'database', ?, ?, ?, ? FROM runs WHERE id = ? AND status = 'running' AND ${predicate}
-    ON CONFLICT(event_id) DO NOTHING`)
-    .bind(
-      eventId,
-      runTraceId(runId),
-      runTraceId(runId),
-      at,
-      at,
-      name,
-      JSON.stringify(attributes),
-      runId,
-      ...bindings,
-    );
-}

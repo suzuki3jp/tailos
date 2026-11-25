@@ -11,7 +11,6 @@ import {
   GitHubApp,
   GitHubRequestError,
   WorkBranchMoved,
-  workBranchFor,
 } from "@/infrastructure/github/app.ts";
 import { sessionBranch } from "@tailos/core/runner";
 
@@ -162,8 +161,7 @@ test("scopes app grants to one repository and protects the default branch and gi
 test("a Run without an issue checks out without reading an issue and opens a PR without issue wording", async () => {
   const runId = randomUUID();
   const webTrigger = { kind: "web.message" } as const;
-  const branch = workBranchFor(webTrigger, runId);
-  expect(branch).toBe(`tailos/run/${runId}`);
+  const branch = sessionBranch(randomUUID());
   const paths: string[] = [];
   let pullBody: { title: string; body: string } | undefined;
   const repo = { id: 42, default_branch: "main" };
@@ -207,7 +205,7 @@ test("a Run without an issue checks out without reading an issue and opens a PR 
   expect(checkedOut).toBe(branch);
   expect(paths.some((path) => path.includes("/issues/"))).toBe(false);
   expect(
-    await github.publish(target, webTrigger, runId, {
+    await github.openPullRequest(target, webTrigger, runId, {
       branch,
       sha,
       headline: "feat: add health check",
@@ -217,192 +215,6 @@ test("a Run without an issue checks out without reading an issue and opens a PR 
     title: "feat: add health check",
     body: `Created by Tailos run \`${runId}\`.`,
   });
-  await expect(
-    github.publish(target, trigger, runId, { branch, sha }),
-  ).rejects.toThrow(/Unexpected work branch/);
-});
-
-test("reuses the pull request after a lost response and never publishes a different ref", async () => {
-  const runId = randomUUID();
-  const branch = workBranchFor(trigger, runId);
-  const headline = "fix(api): handle refresh";
-  const repo = { id: 42, default_branch: "main" };
-  const pull = {
-    html_url: pullUrl,
-    base: { ref: "main", repo },
-    head: { ref: branch, sha, repo },
-  };
-  let created = 0;
-  const github = new GitHubApp(
-    { appId: "100", privateKey },
-    async (input, init) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/access_tokens")) {
-        const body = JSON.parse(String(init?.body));
-        expect(body).toStrictEqual({
-          repository_ids: [42],
-          permissions: { contents: "read", pull_requests: "write" },
-        });
-        return Response.json({
-          token: "test-pr-grant",
-          expires_at: new Date(Date.now() + 300_000).toISOString(),
-        });
-      }
-      if (url.pathname.includes("/git/ref/heads/"))
-        return Response.json({ object: { sha } });
-      if (url.pathname.endsWith("/pulls")) {
-        if (init?.method === "POST") {
-          const body = JSON.parse(String(init.body));
-          expect(body.head).toBe(branch);
-          expect(body.base).toBe("main");
-          expect(body.title).toBe(headline);
-          created++;
-          throw new Error("Response lost after creation");
-        }
-        expect(url.searchParams.get("head")).toBe("owner:" + branch);
-        return Response.json(created ? [pull] : []);
-      }
-      expect(url.pathname).toBe("/installation/token");
-      return new Response(null, { status: 204 });
-    },
-  );
-
-  await expect(
-    github.publish(target, trigger, runId, { branch: "main", sha }),
-  ).rejects.toThrow(/Unexpected work branch/);
-  await expect(
-    github.publish(target, trigger, runId, { branch, sha, headline }),
-  ).rejects.toThrow(/Response lost/);
-  expect(
-    await github.publish(target, trigger, runId, { branch, sha, headline }),
-  ).toBe(pullUrl);
-  expect(created).toBe(1);
-});
-
-test("checks a lost push using a read-only grant and treats absent or different refs as unpushed", async () => {
-  const runId = randomUUID();
-  const work = { branch: workBranchFor(trigger, runId), sha };
-  let remote: string | null = null;
-  let revocations = 0;
-  const github = new GitHubApp(
-    { appId: "100", privateKey },
-    async (input, init) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/access_tokens")) {
-        expect(JSON.parse(String(init?.body))).toStrictEqual({
-          repository_ids: [42],
-          permissions: { contents: "read" },
-        });
-        return Response.json({
-          token: "read-only-grant",
-          expires_at: new Date(Date.now() + 300_000).toISOString(),
-        });
-      }
-      if (url.pathname.includes("/git/ref/heads/")) {
-        return remote
-          ? Response.json({ object: { sha: remote } })
-          : new Response(null, { status: 404 });
-      }
-      expect(url.pathname).toBe("/installation/token");
-      expect(init?.method).toBe("DELETE");
-      revocations++;
-      return new Response(null, { status: 204 });
-    },
-  );
-  expect(await github.hasCommit(target, trigger, runId, work)).toBe(false);
-  remote = "b".repeat(40);
-  expect(await github.hasCommit(target, trigger, runId, work)).toBe(false);
-  remote = sha;
-  expect(await github.hasCommit(target, trigger, runId, work)).toBe(true);
-  expect(revocations).toBe(3);
-});
-
-test("reconciles a lost signing response only for the verified commit with the expected tree", async () => {
-  const runId = randomUUID();
-  const work = {
-    branch: workBranchFor(trigger, runId),
-    baseSha: sha,
-    tree: "b".repeat(40),
-    headline: "refactor(api): organize handlers",
-    changes: {
-      additions: [{ path: "handler.ts", contents: "Cg==" }],
-      deletions: [],
-    },
-  };
-  const signedSha = "c".repeat(40);
-  let head: string | null = null;
-  let verified = true;
-  let tree = work.tree;
-  let mutations = 0;
-  const github = new GitHubApp(
-    { appId: "100", privateKey },
-    async (input, init) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith("/access_tokens")) {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          repository_ids: [42],
-          permissions: { contents: "write" },
-        });
-        return Response.json({
-          token: "write-grant",
-          expires_at: new Date(Date.now() + 300_000).toISOString(),
-        });
-      }
-      if (url.pathname.includes("/git/ref/heads/")) {
-        expect(decodeURIComponent(url.pathname)).toBe(
-          "/repos/owner/private/git/ref/heads/" + work.branch,
-        );
-        return head
-          ? Response.json({ object: { sha: head } })
-          : new Response(null, { status: 404 });
-      }
-      if (url.pathname.endsWith("/git/refs")) {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          ref: "refs/heads/" + work.branch,
-          sha: work.baseSha,
-        });
-        head = work.baseSha;
-        return Response.json({ object: { sha: head } }, { status: 201 });
-      }
-      if (url.pathname === "/graphql") {
-        expect(JSON.parse(String(init?.body)).variables.input).toEqual({
-          branch: {
-            repositoryNameWithOwner: "owner/private",
-            branchName: work.branch,
-          },
-          expectedHeadOid: work.baseSha,
-          message: { headline: work.headline, body: "Tailos run: " + runId },
-          fileChanges: work.changes,
-        });
-        mutations++;
-        head = signedSha;
-        throw new Error("Response lost after signing");
-      }
-      if (url.pathname.endsWith("/git/commits/" + signedSha))
-        return Response.json({
-          sha: signedSha,
-          tree: { sha: tree },
-          parents: [{ sha: work.baseSha }],
-          message: work.headline + "\n\nTailos run: " + runId,
-          verification: { verified },
-        });
-      expect(url.pathname).toBe("/installation/token");
-      return new Response(null, { status: 204 });
-    },
-  );
-
-  const sign = () =>
-    github.commitCheckedWork(target, trigger, runId, work, Date.now() + 10_000);
-  await expect(sign()).rejects.toThrow("Response lost");
-  await expect(sign()).resolves.toBe(signedSha);
-  verified = false;
-  await expect(sign()).rejects.toThrow();
-  verified = true;
-  tree = "d".repeat(40);
-  await expect(sign()).rejects.toThrow(
-    "GitHub commit does not match checked work",
-  );
-  expect(mutations).toBe(1);
 });
 
 test("commits a Session's work on its last publication and refuses a branch that moved", async () => {

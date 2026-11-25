@@ -7,7 +7,6 @@ import { importPKCS8, SignJWT } from "jose";
 import {
   gitSha,
   triggerIssue,
-  type CheckedPublication,
   type RepositoryTarget,
   type RunTrigger,
   type SessionPublication,
@@ -113,13 +112,6 @@ export type GitHubCheckout = {
   expiresAt: number;
   baseSha: string;
   branch: string;
-};
-
-export const workBranchFor = (trigger: RunTrigger, runId: string) => {
-  const issue = triggerIssue(trigger);
-  return issue
-    ? `tailos/issue-${issue.issueNumber}/${runId}`
-    : `tailos/run/${runId}`;
 };
 
 export class GitHubApp {
@@ -505,48 +497,6 @@ export class GitHubApp {
       throw new Error("GitHub token revocation failed");
   }
 
-  async hasCommit(
-    target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    work: { branch: string; sha: string },
-  ) {
-    if (work.branch !== workBranchFor(trigger, runId))
-      throw new Error("Unexpected work branch");
-    const { token } = await this.token(target, { contents: "read" });
-    try {
-      const response = await this.request(
-        `/repos/${target.repository}/git/ref/heads/${encodeURIComponent(work.branch)}`,
-        token,
-      );
-      if (response.status === 404) return false;
-      if (!response.ok) throw new Error("GitHub ref verification unavailable");
-      return v.parse(refSchema, await response.json()).object.sha === work.sha;
-    } finally {
-      await this.revoke(token).catch(() => {});
-    }
-  }
-
-  async commitCheckedWork(
-    target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    work: Pick<
-      CheckedPublication,
-      "branch" | "baseSha" | "tree" | "headline" | "changes"
-    >,
-    deadlineAt: number,
-  ): Promise<string | null> {
-    const branch = workBranchFor(trigger, runId);
-    if (work.branch !== branch) throw new Error("Unexpected work branch");
-    return this.commitOnBranch(
-      target,
-      runId,
-      { ...work, parentSha: work.baseSha },
-      deadlineAt,
-    );
-  }
-
   /**
    * Commits a Session's checked work on its branch, on top of `parentSha`,
    * which the branch must still point at. Null once `deadlineAt` passed
@@ -645,85 +595,6 @@ export class GitHubApp {
       )
         throw new WorkBranchMoved("GitHub commit does not match checked work");
       return sha;
-    } finally {
-      await this.revoke(token).catch(() => {});
-    }
-  }
-
-  async publish(
-    target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    publication: { branch: string; sha: string; headline?: string },
-    deadlineAt = Infinity,
-  ) {
-    const branch = workBranchFor(trigger, runId);
-    const issue = triggerIssue(trigger);
-    if (publication.branch !== branch)
-      throw new Error("Unexpected work branch");
-
-    const repo = "/repos/" + target.repository;
-    const owner = target.repository.split("/")[0];
-    const { token } = await this.token(target, {
-      contents: "read",
-      pull_requests: "write",
-    });
-    try {
-      const existing = v.parse(
-        v.array(pullSchema),
-        await this.json(
-          `${repo}/pulls?state=all&head=${encodeURIComponent(owner + ":" + branch)}`,
-          token,
-        ),
-      );
-      const previous = existing.find(
-        (pull) =>
-          pull.base.repo.id === target.repositoryId &&
-          pull.head.repo?.id === target.repositoryId &&
-          pull.base.ref === target.defaultBranch &&
-          pull.head.ref === branch &&
-          pull.head.sha === publication.sha,
-      );
-      if (previous) return previous.html_url;
-      if (Date.now() >= deadlineAt) return null;
-      if (existing.length)
-        throw new Error(
-          "Work branch is already associated with another pull request",
-        );
-
-      const head = v.parse(
-        refSchema,
-        await this.json(
-          `${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
-          token,
-        ),
-      );
-      if (head.object.sha !== publication.sha)
-        throw new Error("Work branch changed before publication");
-      if (Date.now() >= deadlineAt) return null;
-      const pull = v.parse(
-        pullSchema,
-        await this.json(`${repo}/pulls`, token, "POST", {
-          title:
-            publication.headline ??
-            (issue
-              ? `Implement issue #${issue.issueNumber}`
-              : `Tailos run ${runId}`),
-          head: branch,
-          base: target.defaultBranch,
-          // Without an issue, the PR wording is left to the prompt.
-          body: `${issue ? `Closes #${issue.issueNumber}\n\n` : ""}Created by Tailos run \`${runId}\`.`,
-        }),
-      );
-      if (
-        pull.base.repo.id !== target.repositoryId ||
-        pull.head.repo?.id !== target.repositoryId ||
-        pull.base.ref !== target.defaultBranch ||
-        pull.head.ref !== branch ||
-        pull.head.sha !== publication.sha
-      )
-        throw new Error("Published pull request does not match the run");
-      return pull.html_url;
     } finally {
       await this.revoke(token).catch(() => {});
     }

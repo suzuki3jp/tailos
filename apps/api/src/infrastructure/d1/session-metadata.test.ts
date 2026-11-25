@@ -2,7 +2,6 @@ import { expect, test, vi } from "vitest";
 import { createTestBindings, createTestDb } from "./testing.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 import { advanceRun } from "./run-execution.ts";
-import { stageRunPublication } from "./run-publication.ts";
 
 const input = {
   ownerId: "operator",
@@ -190,68 +189,6 @@ test("activity follows messages and Run transitions while retries and title conf
     title: "Conversation title",
     title_generated: 1,
   });
-});
-
-test("only an accepted publication checkpoint confirms a title, which survives a publication failure", async (t) => {
-  const db = await createTestDb(t);
-  const admitted = await admitTrigger(db, input);
-  const branch = `tailos/issue-3/${crypto.randomUUID()}`;
-  const sha = "a".repeat(40);
-  await db
-    .prepare("UPDATE runs SET status = 'running', step_state = ? WHERE id = ?")
-    .bind(JSON.stringify({ version: 2, branch, baseSha: sha }), admitted.runId)
-    .run();
-  const checkpoint = {
-    kind: "checked" as const,
-    branch,
-    baseSha: sha,
-    tree: sha,
-    digest: "b".repeat(64),
-    headline: "feat: work",
-    reply: "Done",
-    sessionTitle: "Work summary",
-    events: [],
-  };
-  expect(
-    await stageRunPublication(db, admitted.runId, {
-      ...checkpoint,
-      branch: "other",
-    }),
-  ).toBe(false);
-  expect(
-    await db
-      .prepare("SELECT title_generated FROM sessions WHERE id = ?")
-      .bind(admitted.sessionId)
-      .first("title_generated"),
-  ).toBe(0);
-  expect(await stageRunPublication(db, admitted.runId, checkpoint)).toBe(true);
-  expect(await stageRunPublication(db, admitted.runId, checkpoint)).toBe(true);
-  expect(
-    await stageRunPublication(db, admitted.runId, {
-      ...checkpoint,
-      sessionTitle: "Other title",
-    }),
-  ).toBe(false);
-  await advanceRun(db, admitted.runId, {
-    start: async () => ({ status: "running" }),
-    poll: async () => ({
-      status: "failed",
-      errorCode: "agent_failed",
-      events: [],
-    }),
-  });
-  expect(
-    await db
-      .prepare("SELECT title, title_generated FROM sessions WHERE id = ?")
-      .bind(admitted.sessionId)
-      .first(),
-  ).toEqual({ title: "Work summary", title_generated: 1 });
-  expect(
-    await db
-      .prepare("SELECT status FROM runs WHERE id = ?")
-      .bind(admitted.runId)
-      .first("status"),
-  ).toBe("failed");
 });
 
 test("migration backfills only persisted evidence and leaves unknown origins unset", async (t) => {

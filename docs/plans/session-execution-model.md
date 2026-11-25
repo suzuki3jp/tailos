@@ -10,7 +10,7 @@
 | [Session 単位の隔離の境界](../pdr/records/PDR-20261123-repository-settings-session-boundary.md) | 隔離の境界を Session のコンテナとファイルシステムにする（PDR-20261114-009 の後継） |
 | [作業の引き継ぎ](../pdr/records/PDR-20261123-session-continuity.md) | Session の Durable Object がコンテナを持つ。スナップショットで速く戻し、正本は R2。待機時間は定数で既定 0 |
 | [公開ツール](../pdr/records/PDR-20261124-publication-base.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す。PR の base は公開ツールで指定する（PDR-20261124-publication-tool の後継） |
-| [計画会話の Routine](../pdr/records/PDR-20261124-planning-routine.md) | `@tailos plan` を Issue コメントで起動する読み取り専用の Routine にする。会話は Session の引き継ぎで続け、返信は Agent が gh で行い、状態コメントはアプリが続ける（PDR-20261113-012 の後継） |
+| [計画会話の Routine](../pdr/records/PDR-20261125-planning-tables-dropped.md) | `@tailos plan` を Issue コメントで起動する読み取り専用の Routine にする。会話は Session の引き継ぎで続け、返信は Agent が gh で行い、状態コメントはアプリが続ける（PDR-20261113-012 の後継） |
 | [Routine の受付](../pdr/records/PDR-20261124-issue-routine-dispatch.md) | Session は Routine と Issue の組ごとに 1 つ。作業中の配送は捨てずに順番待ちにする（PDR-20261118-label-automation-dispatch の後継） |
 | [Issue の参照](../pdr/records/PDR-20261124-routine-github-context.md) / [Project の編集項目](../pdr/records/PDR-20261124-project-settings-routine-actors.md) | 計画も label と同じく受付時のイベントから内容ハッシュを作る。計画の許可ユーザーを plan Routine に移す |
 | PDR-20261122-agent-egress-credential-proxy | 外部通信は常に許可し、GitHub の認証情報はコンテナの外で差し込む（suzuki3jp/tailos#121、実装済み） |
@@ -123,13 +123,13 @@ Session 画面からの送信（suzuki3jp/tailos#124）は段階 7 として 6 �
 
 ## 6. label と計画を Routine に統一
 
-判断: [計画会話の Routine](../pdr/records/PDR-20261124-planning-routine.md)、[Routine の受付](../pdr/records/PDR-20261124-issue-routine-dispatch.md)、[Issue の参照](../pdr/records/PDR-20261124-routine-github-context.md)、[Project の編集項目](../pdr/records/PDR-20261124-project-settings-routine-actors.md)。Issue 通知の永続送信（PDR-20261113-006）は維持し、計画の Turn にも同じ状態コメントを付ける。
+判断: [計画会話の Routine](../pdr/records/PDR-20261125-planning-tables-dropped.md)、[Routine の受付](../pdr/records/PDR-20261124-issue-routine-dispatch.md)、[Issue の参照](../pdr/records/PDR-20261124-routine-github-context.md)、[Project の編集項目](../pdr/records/PDR-20261124-project-settings-routine-actors.md)。Issue 通知の永続送信（PDR-20261113-006）は維持し、計画の Turn にも同じ状態コメントを付ける。
 
 - Session 共通のメッセージの順番待ち（`session_inbox`）を入れる。Trigger は Routine と Issue の組の Session にメッセージを足し、進行中の Turn がなければ Turn を作る。Turn が終わったら次のメッセージで Turn を作る。label の `coalesced` をやめる。
 - 計画会話を「`issue_comment` の Trigger（コマンド語 `plan`）、読み取り専用、計画を返すプロンプト」の plan Routine に移す。コマンド語のない `@tailos` は、その Issue で最後に使われたコメント起動の Session に続け、無ければ案内を返す。
 - 会話はジョブに埋め込まず Session の引き継ぎで続ける。`planning_input_too_large` を無くす。計画の Issue は `issue_comment` のイベントから内容ハッシュを作り、スナップショットを保存しない。
 - 計画の返信は Agent が gh で Issue にコメントする。アプリは本文を投稿せず、状態コメントだけを続ける。
-- 移行: Project ごとに有効な plan Routine を作り、Project の plan の許可ユーザーをコピーして Project から外す。移行前の計画 Session には同じ Session で続け、Codex の会話は新しく始めて Agent に伝える。移行前の label の Session は引き継がない。`planning_*` には新しく書き込まず、既存の行は残す。移行は進行中の Run と未送信の計画の返信がない状態で行う。
+- 移行: Project ごとに有効な plan Routine を作り、Project の plan の許可ユーザーをコピーして Project から外す。移行前の計画 Session には同じ Session で続け、Codex の会話は新しく始めて Agent に伝える。移行前の label の Session は引き継がない。`planning_*` には新しく書き込まない。テーブルは本番での確認の後、マイグレーション 0014 で DROP した（suzuki3jp/tailos#164）。移行は進行中の Run と未送信の計画の返信がない状態で行う。
 
 完了条件: `@tailos plan` と label 起動が Routine として動き、専用の経路を使わない。同じ Routine と Issue への作業中の配送が順番待ちになる。
 
@@ -143,6 +143,15 @@ Session 画面からの送信（suzuki3jp/tailos#124）は段階 7 として 6 �
 - 入力欄は、Session に進行中の Turn があれば送信できない。
 
 完了条件: Session 画面から送ったメッセージが、同じ Session の次の Turn として動く。
+
+## 旧経路の掃除
+
+suzuki3jp/tailos#164。本番での確認の後、移行のために残していた経路を外す。
+
+- Turn の終わりに公開する旧方式を外す。`checked` / `pushed`、`/_runner/runs/:runId/publication`、公開チェックポイントと照合、`publication_unconfirmed` がこれにあたる。作業ブランチの名前は Session のブランチだけを受け付ける。
+- 計画会話専用の `planning_*` のテーブルを DROP する（マイグレーション 0014、[判断](../pdr/records/PDR-20261125-planning-tables-dropped.md)）。
+- `admitTrigger` から label 専用の分岐と Routine の照合を外す。内部のスモーク用の起動は同時実行をまとめる（`coalesced`）ので、それは残す。
+- 旧形式の実行設定の読み替え（`upgradeStoredContext`）は外さない。保存済みの行を書き換えない判断があり、Session 画面からの続きが古い Turn の設定を読むためである。
 
 ## 検証
 

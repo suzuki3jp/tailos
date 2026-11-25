@@ -2,10 +2,18 @@
 
 以下は Web を `http://localhost:3000`、API を `http://localhost:8787` で動かす手順。リポジトリのルートで実行する。
 
+## 開発ツールと依存関係
+
+[mise のインストール手順](https://mise.jdx.dev/installing-mise.html)に従って mise を用意する。リポジトリのルートで次を実行すると、`mise.toml` に指定された Node.js と pnpm が揃う。
+
+```sh
+mise install
+mise exec -- pnpm install --frozen-lockfile
+```
+
 ## 認証設定
 
 ```sh
-pnpm install --frozen-lockfile
 cp apps/api/.dev.vars.example apps/api/.dev.vars
 cp apps/web/.env.example apps/web/.env.local
 ```
@@ -33,13 +41,13 @@ GitHub の [Settings → Developer settings → OAuth Apps](https://github.com/s
 API を起動する。起動スクリプトがローカル D1 のマイグレーションも適用する。
 
 ```sh
-pnpm --filter @tailos/api run dev --port 8787
+mise exec -- pnpm --filter @tailos/api run dev --port 8787
 ```
 
 別のターミナルで Web を起動する。
 
 ```sh
-pnpm --filter @tailos/web run dev
+mise exec -- pnpm --filter @tailos/web run dev
 ```
 
 `http://localhost:3000/login` を開き、GitHub でログインする。本番のユーザー・Session・Project はローカル D1 には含まれないため、新規 DB の一覧 API は空の結果を返す。

@@ -1,5 +1,5 @@
 import { maxPromptLength } from "@tailos/core/runner";
-import { supportsCodexSelection } from "@tailos/core/models";
+import { agentEngines, supportsSelection } from "@tailos/core/models";
 import {
   createSession,
   type SessionStore,
@@ -55,9 +55,16 @@ const startInput = v.strictObject({
     v.minLength(1),
     v.maxLength(maxPromptLength),
   ),
+  engine: v.optional(v.picklist(agentEngines)),
   model: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(100))),
   effort: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
 });
+
+/** What a send answers when the owner has not connected the provider. */
+const notConnected = {
+  codex: "codex_not_connected",
+  claude: "claude_not_connected",
+} as const;
 
 export function createSessionRoutes<Detail>(
   store: (env: Bindings) => SessionStore<Detail> &
@@ -122,7 +129,8 @@ export function createSessionRoutes<Detail>(
         const parsed = v.safeParse(startInput, value);
         if (!parsed.success)
           return c.json({ error: "invalid_input" as const }, 400);
-        const unsupported = supportsCodexSelection(
+        const unsupported = supportsSelection(
+          parsed.output.engine ?? "codex",
           parsed.output.model,
           parsed.output.effort,
         );
@@ -147,8 +155,8 @@ export function createSessionRoutes<Detail>(
           return c.json({ error: "session_unavailable" as const }, 503);
         if (result.status === "project_not_found")
           return c.json({ error: "not_found" as const }, 404);
-        if (result.status === "codex_not_connected")
-          return c.json({ error: "codex_not_connected" as const }, 409);
+        if (result.status === "not_connected")
+          return c.json({ error: notConnected[result.engine] }, 409);
         await start
           .scheduleRun(c.env)?.(result.runId)
           .catch(() => {
@@ -168,13 +176,8 @@ export function createSessionRoutes<Detail>(
         const parsed = v.safeParse(startInput, value);
         if (!parsed.success)
           return c.json({ error: "invalid_input" as const }, 400);
-        const unsupported = supportsCodexSelection(
-          parsed.output.model,
-          parsed.output.effort,
-        );
-        return unsupported
-          ? c.json({ error: unsupported }, 400)
-          : parsed.output;
+        // The Session's own Model Provider decides what may be chosen.
+        return parsed.output;
       }),
       async (c) => {
         const projectId = c.req.param("projectId");
@@ -194,8 +197,12 @@ export function createSessionRoutes<Detail>(
           return c.json({ error: "session_unavailable" as const }, 503);
         if (result.status === "not_found")
           return c.json({ error: "not_found" as const }, 404);
-        if (result.status === "codex_not_connected")
-          return c.json({ error: "codex_not_connected" as const }, 409);
+        if (result.status === "not_connected")
+          return c.json({ error: notConnected[result.engine] }, 409);
+        if (result.status === "provider_fixed")
+          return c.json({ error: "session_provider_fixed" as const }, 409);
+        if (result.status === "unsupported_selection")
+          return c.json({ error: result.error }, 400);
         // Messages wait for nothing here: a working Session cannot take one.
         if (result.status === "busy")
           return c.json({ error: "session_busy" as const }, 409);

@@ -1,3 +1,4 @@
+import type { AgentEngine } from "@tailos/core/models";
 import { api } from "@/shared/api";
 
 export type SendMessageInput = {
@@ -5,6 +6,7 @@ export type SendMessageInput = {
   sessionId: string;
   requestId: string;
   message: string;
+  engine?: AgentEngine;
   model?: string;
   effort?: string;
 };

@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261122-codex-model-catalog-in-source
 key: triggers.routine-model-catalog-transport
-status: accepted
+status: "superseded"
 date: "2026-11-22"
 areas: [triggers, agent, web]
 keywords: [モデル候補, モデル一覧, effort, Codex, model/list, 静的定義, 同梱カタログ, codexModels]

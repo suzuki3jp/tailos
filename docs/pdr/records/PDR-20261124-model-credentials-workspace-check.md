@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261124-model-credentials-workspace-check
 key: agent.model-credentials-outside
-status: accepted
+status: "superseded"
 date: "2026-11-24"
 areas: [agent, security, infrastructure]
 keywords: [workspace routing discovery, accounts/check, 拒否のログ, パス, 許可, 更新の間隔, "401", 認証情報, コンテナ, Codex, ChatGPT, アクセストークン, 置き換え, プレースホルダー, 横取り, interceptOutboundHttps, chatgpt.com, 更新, リース, モデル API]

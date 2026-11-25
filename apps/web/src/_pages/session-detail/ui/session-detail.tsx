@@ -1,20 +1,28 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { agentEngineLabels } from "@tailos/core/models";
 import { RequestState } from "@/widgets/request-state";
 import { sessionQueryOptions } from "../api/queries";
 import { runResult } from "../model/run-result";
+import { runEngine } from "../model/agent-engine";
 import { useSessionTimeline } from "../api/use-session-timeline";
 import { ActivityItem } from "./activity-item";
 import { MessageJobContext } from "./message-job-context";
 
-const authorLabel = { agent: "Codex", automation: "GitHub", user: "ユーザー" };
+const authorLabel = { agent: "Agent", automation: "GitHub", user: "ユーザー" };
 const runLabel = {
   queued: "待機中",
   running: "実行中",
   succeeded: "完了",
   failed: "失敗",
 };
+
+/** Names an Agent's reply after the Model Provider of its Run. */
+function agentLabel(run: { engine?: string | null } | undefined) {
+  const engine = runEngine(run?.engine);
+  return engine ? agentEngineLabels[engine] : authorLabel.agent;
+}
 
 export function SessionDetail({ id }: { id: string }) {
   const session = useQuery(sessionQueryOptions(id));
@@ -46,7 +54,11 @@ export function SessionDetail({ id }: { id: string }) {
             {detail.messages.map((message) => (
               <li key={message.id} className="space-y-2 py-4">
                 <p className="text-sm font-medium text-signal">
-                  {authorLabel[message.authorKind]}
+                  {message.authorKind === "agent"
+                    ? agentLabel(
+                        detail.runs.find((run) => run.id === message.runId),
+                      )
+                    : authorLabel[message.authorKind]}
                 </p>
                 <p className="whitespace-pre-wrap wrap-anywhere">
                   {message.body}

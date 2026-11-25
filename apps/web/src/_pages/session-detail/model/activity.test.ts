@@ -6,6 +6,7 @@ test("uses the recorded agent runtime and falls back when an older run has no ti
     id: "run",
     status: "succeeded" as const,
     startMessageId: "prompt",
+    engine: "codex",
     agentDurationMs: 752_900,
     result: null,
     errorCode: null,

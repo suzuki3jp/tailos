@@ -177,3 +177,79 @@ test("signed label webhook runs the saved Routine with the Project settings", as
   expect(detail.status).toBe(200);
   expect(await detail.text()).not.toContain("Private details");
 });
+
+test("a Claude Routine starts its Turn on the owner's Claude connection", async (t) => {
+  const db = await createTestDb(t);
+  const login = testLoginBindings(db);
+  const owner = await createTestOperator(login);
+  const project = await d1Projects(db).create(
+    {
+      name: "Project",
+      repository: "owner/private",
+      repositoryId: 42,
+      installationId: 19,
+      maxRunMinutes: 3,
+    },
+    owner.id,
+  );
+  await d1Routines(db).save(owner.id, project.project.id, {
+    name: "Implement",
+    enabled: true,
+    engine: "claude",
+    prompt: "Implement the issue identified by structured job context.",
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+    trigger: { version: 1, type: "github.issue-label", label: "build" },
+    allowedActors: ["builder"],
+  });
+  const env = {
+    ...login,
+    RUNNER: { getByName: () => ({ schedule: async () => {} }) },
+    TAILOS_GH_WEBHOOK_SECRET: "test-secret",
+    TAILOS_GH_APP_ID: "100",
+    TAILOS_GH_APP_PRIVATE_KEY: "unused",
+  };
+  const pending: Promise<unknown>[] = [];
+  const body = JSON.stringify({
+    action: "labeled",
+    repository: { id: 42, full_name: "owner/private", default_branch: "main" },
+    installation: { id: 19 },
+    issue: { number: 3, title: "Issue", body: "Details", state: "open" },
+    label: { name: "build" },
+    sender: { login: "builder" },
+  });
+  const response = await app.request(
+    "https://tailos.example/webhooks/github",
+    {
+      method: "POST",
+      body,
+      headers: {
+        "X-GitHub-Event": "issues",
+        "X-GitHub-Delivery": "claude",
+        "X-Hub-Signature-256":
+          "sha256=" +
+          createHmac("sha256", env.TAILOS_GH_WEBHOOK_SECRET)
+            .update(body)
+            .digest("hex"),
+      },
+    },
+    env,
+    {
+      waitUntil: (work: Promise<unknown>) => void pending.push(work),
+      passThroughOnException: () => {},
+      props: {},
+    },
+  );
+  // Background work ends before the test database does.
+  await Promise.allSettled(pending);
+  expect(response.status).toBe(202);
+  const context = await db
+    .prepare("SELECT execution_context FROM runs")
+    .first<string>("execution_context");
+  expect(JSON.parse(context!)).toMatchObject({
+    engine: "claude",
+    connectionId: `claude/${owner.id}`,
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+  });
+});

@@ -6,10 +6,17 @@ import * as v from "valibot";
 const compress = promisify(gzip);
 const decompress = promisify(gunzip);
 
-/** The Codex conversation of a Session: its thread and the rollout file. */
+/**
+ * The Agent's conversation in a Session: Codex's thread and its rollout file,
+ * or Claude Code's session and its transcript.
+ */
 export type SavedConversation = {
+  /** Codex's thread ID, or Claude Code's session ID. */
   threadId: string;
-  /** Relative to `CODEX_HOME`, where Codex finds it again by thread ID. */
+  /**
+   * Relative to `CODEX_HOME` or `CLAUDE_CONFIG_DIR`, where the Agent finds it
+   * again by its ID.
+   */
   path: string;
   content: Buffer;
 };
@@ -44,6 +51,17 @@ export const rolloutPath = v.pipe(
   v.string(),
   v.regex(/^sessions\/\d{4}\/\d{2}\/\d{2}\/rollout-[\w.:-]+\.jsonl$/),
 );
+/**
+ * Claude Code writes a session's transcript here, under a directory named
+ * after the work tree; nothing else may be restored into its configuration.
+ */
+export const claudeTranscriptPath = v.pipe(
+  v.string(),
+  v.regex(
+    /^projects\/[A-Za-z0-9_-]{1,255}\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/,
+  ),
+);
+const conversationPath = v.union([rolloutPath, claudeTranscriptPath]);
 const Header = v.strictObject({
   version: v.literal(1),
   baseSha: sha,
@@ -55,7 +73,7 @@ const Header = v.strictObject({
   conversation: v.optional(
     v.strictObject({
       threadId: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
-      path: rolloutPath,
+      path: conversationPath,
       bytes: size,
     }),
   ),

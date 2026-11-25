@@ -8,7 +8,10 @@ import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
 import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
 import { sessionBranch } from "@tailos/core/runner";
-import { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
+import {
+  placeholderClaudeToken,
+  RunnerContainer,
+} from "@/infrastructure/cloudflare/runner-container.ts";
 import { runSession } from "@/infrastructure/cloudflare/run-start.ts";
 import type { DiagnosticBatch } from "@tailos/core/diagnostics";
 import { registerDiagnosticProducer } from "@/infrastructure/diagnostics/store.ts";
@@ -293,6 +296,105 @@ test("a rejected model token forces a refresh at most once every five seconds", 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("a Claude Turn gets a placeholder token, and only its egress gets the real one", async () => {
+  const runId = crypto.randomUUID();
+  const values = new Map<string, unknown>();
+  const storage = {
+    async get(key: string) {
+      return values.get(key);
+    },
+    async put(key: string, value: unknown) {
+      values.set(key, value);
+    },
+    async delete(key: string) {
+      return values.delete(key);
+    },
+  };
+  const issueClaudeAccess = vi.fn(async () => ({
+    token: "sk-ant-oat01-real",
+    connectionVersion: "connection-1",
+  }));
+  const issueAccess = vi.fn();
+  const getByName = vi.fn(() => ({ issueClaudeAccess, issueAccess }));
+  const runner = new RunnerContainer(
+    { storage } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    {
+      TAILOS_PUBLIC_ORIGIN: "https://tailos.example",
+      CREDENTIALS: { getByName },
+    } as never,
+  );
+  const connectionId = `claude/${crypto.randomUUID()}`;
+  const job = await (
+    runner as unknown as {
+      prepareJob(request: unknown): Promise<Record<string, unknown>>;
+    }
+  ).prepareJob({
+    runId,
+    prompt: "Fix the bug",
+    deadlineAt: Date.now() + 600_000,
+    context: {
+      version: 1,
+      engine: "claude",
+      connectionId,
+      model: "claude-opus-5-5",
+      effort: "max",
+    },
+  });
+
+  expect(getByName).toHaveBeenCalledWith(connectionId);
+  expect(job).toMatchObject({
+    engine: "claude",
+    model: "claude-opus-5-5",
+    effort: "max",
+    access: {
+      token: placeholderClaudeToken,
+      connectionVersion: "connection-1",
+    },
+    lease: { url: `https://tailos.example/_runner/runs/${runId}/` },
+  });
+  expect(JSON.stringify(job)).not.toContain("sk-ant-oat01-real");
+  expect(issueAccess).not.toHaveBeenCalled();
+
+  expect(await runner.claudeAccess(runId)).toBe("sk-ant-oat01-real");
+  // The Codex host gets nothing while a Claude Turn runs.
+  expect(await runner.modelAccess(runId)).toBeNull();
+  expect(await runner.claudeAccess(crypto.randomUUID())).toBeNull();
+  issueClaudeAccess.mockResolvedValueOnce({
+    token: "sk-ant-oat01-new",
+    connectionVersion: "connection-2",
+  });
+  // A connection saved again after the Turn started is not this Turn's.
+  expect(await runner.claudeAccess(runId)).toBeNull();
+  values.set("agentEgressClosed", true);
+  expect(await runner.claudeAccess(runId)).toBeNull();
+});
+
+test("a Codex Turn's egress adds no Claude token", async () => {
+  const runId = crypto.randomUUID();
+  const values = new Map<string, unknown>([
+    [
+      "refreshLease",
+      {
+        digest: "digest",
+        runId,
+        connectionId: "codex/connection",
+        connectionVersion: "connection-1",
+        expiresAt: Date.now() + 600_000,
+        lastRefreshAt: 0,
+      },
+    ],
+  ]);
+  const issueClaudeAccess = vi.fn();
+  const runner = new RunnerContainer(
+    {
+      storage: { get: async (key: string) => values.get(key) },
+    } as unknown as ConstructorParameters<typeof RunnerContainer>[0],
+    { CREDENTIALS: { getByName: () => ({ issueClaudeAccess }) } } as never,
+  );
+  expect(await runner.claudeAccess(runId)).toBeNull();
+  expect(issueClaudeAccess).not.toHaveBeenCalled();
 });
 
 vi.mock("cloudflare:workers", () => ({
@@ -814,6 +916,7 @@ test.for([{ oversized: false }, { oversized: true }])(
         "github.com",
         "api.github.com",
         "chatgpt.com",
+        "api.anthropic.com",
         "start",
       ]);
       // The egress Workers ask the Session for its current Run.
@@ -1409,7 +1512,7 @@ type Starting = {
   startRunner(
     deadlineAt: number,
     instance: "standard-3",
-    egress: { sessionId: string; github: boolean; codex: boolean },
+    egress: { sessionId: string; github: boolean },
     snapshot?: { id: string; image: string },
   ): Promise<unknown>;
 };
@@ -1428,15 +1531,17 @@ test("registers the intercepts again when a snapshot is not used after all", asy
   await (runner as unknown as Starting).startRunner(
     Date.now() + 60_000,
     "standard-3",
-    { sessionId: "session", github: false, codex: true },
+    { sessionId: "session", github: false },
     { id: "snapshot", image: "image" },
   );
   expect(order).toStrictEqual([
     "intercept chatgpt.com",
+    "intercept api.anthropic.com",
     "start snapshot",
     "destroy",
     // A destroyed container loses its intercepts, and with them the CA.
     "intercept chatgpt.com",
+    "intercept api.anthropic.com",
     "start image",
   ]);
 });
@@ -1446,7 +1551,12 @@ test.for([
   {
     name: "replaces",
     inspected: "old-image",
-    order: ["destroy", "intercept chatgpt.com", "start image"],
+    order: [
+      "destroy",
+      "intercept chatgpt.com",
+      "intercept api.anthropic.com",
+      "start image",
+    ],
   },
 ])(
   "$name a waiting container depending on its Runner image",
@@ -1466,7 +1576,7 @@ test.for([
     await (runner as unknown as Starting).startRunner(
       Date.now() + 60_000,
       "standard-3",
-      { sessionId: "session", github: false, codex: true },
+      { sessionId: "session", github: false },
     );
     expect(order).toStrictEqual(expected);
   },

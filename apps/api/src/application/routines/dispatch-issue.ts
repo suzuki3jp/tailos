@@ -10,7 +10,7 @@ import {
   type AdmitIssueMessage,
   type IssueMessage,
 } from "@/application/triggers/admit-trigger.ts";
-import { codexConnectionId } from "@/application/auth/device.ts";
+import { agentConnectionId } from "@/application/auth/agent-connection.ts";
 import type {
   commentPayload,
   issueCommand,
@@ -198,8 +198,8 @@ export async function dispatchIssueEvent(
             : { kind: "github.issue-comment", ...issue };
         const executionContext: ExecutionContext = {
           version: 1,
-          engine: "codex",
-          connectionId: codexConnectionId(input.ownerId),
+          engine: routine.engine,
+          connectionId: agentConnectionId(routine.engine, input.ownerId),
           ...(routine.model && { model: routine.model }),
           ...(routine.effort && { effort: routine.effort }),
           routine: {

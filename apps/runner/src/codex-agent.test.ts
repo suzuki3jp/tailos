@@ -1206,19 +1206,39 @@ test.for([
   },
 );
 
-test("refuses to restore a rollout outside the Codex sessions directory", async () => {
-  const agent = createCodexAgent(conversationStub([]));
-  await expect(
-    agent.run(testJob(), AbortSignal.timeout(5000), process.cwd(), undefined, {
-      resume: {
-        threadId: "saved-thread",
-        path: "../config.toml",
-        content: Buffer.from("model = 'other'"),
+test.for([
+  { name: "outside the Codex sessions directory", path: "../config.toml" },
+  {
+    name: "of another Model Provider",
+    path: "projects/-work-repo/0f8fad5b-d9cb-469f-a165-70867728950e.jsonl",
+  },
+])(
+  "starts a new thread instead of restoring a conversation $name",
+  async ({ path }) => {
+    const save = vi.fn();
+    const agent = createCodexAgent(conversationStub([]));
+    const result = await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+          path,
+          content: Buffer.from("model = 'other'"),
+        },
+        save,
       },
-      save: () => {},
-    }),
-  ).rejects.toBeInstanceOf(ValiError);
-});
+    );
+    expect(result.reply).toBe("done");
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("new-thread");
+    expect(saved.content.toString()).toMatch(
+      /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+    );
+  },
+);
 
 test("offers the publication tool to an implementation and answers its calls", async () => {
   const job = replyJob("implement");

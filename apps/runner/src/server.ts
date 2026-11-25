@@ -142,7 +142,7 @@ function workspaceContinuity(
   previous: Buffer | undefined,
 ): WorkspaceContinuity | undefined {
   const input = job.input;
-  if (input.engine !== "codex" || !input.continuity) return undefined;
+  if (input.engine === "fake" || !input.continuity) return undefined;
   job.saved = { state: "pending" };
   const restore = input.continuity.restore;
   return {
@@ -200,8 +200,13 @@ async function execute(
             signal,
             (cwd, conversation, publish) =>
               agent.run(input, signal, cwd, diagnostics, conversation, publish),
-            input.engine === "codex" && input.mode !== "plan"
-              ? (work) => publishWork(input.refresh, work, signal)
+            input.mode !== "plan"
+              ? (work) =>
+                  publishWork(
+                    input.engine === "codex" ? input.refresh : input.lease,
+                    work,
+                    signal,
+                  )
               : undefined,
             undefined,
             diagnostics,

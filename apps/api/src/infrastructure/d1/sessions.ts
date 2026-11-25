@@ -150,6 +150,10 @@ export function d1Sessions(database: D1Database) {
             result: runs.result,
             errorCode: runs.errorCode,
             startMessageId: runs.startMessageId,
+            // The Model Provider the Turn ran on, which names its replies.
+            engine: sql<
+              string | null
+            >`CASE WHEN json_valid(${runs.executionContext}) THEN json_extract(${runs.executionContext}, '$.engine') ELSE NULL END`,
             agentDurationMs: sql<number | null>`(
               SELECT sum(json_extract(${diagnosticEvents.attributes}, '$.durationMs'))
               FROM ${diagnosticEvents}

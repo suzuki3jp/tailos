@@ -162,7 +162,7 @@ Routine は一件ごとに条件と実行設定を持ち、複数一致は全件
 
 ## 将来の追加点
 
-Claude の Routine 対応は、Claude 自体の実行経路の対応後に追加する。接続の解決・ジョブ作成・checkout・実行・公開を通した動作と model・effort の反映を確認し、保存 API と UI の有効な選択肢を増やす。
+Claude の Routine 対応は、Claude 自体の実行経路の対応後に追加する。接続の解決・ジョブ作成・checkout・実行・公開を通した動作と model・effort の反映を確認し、保存 API と UI の有効な選択肢を増やす。この追加は [Agent の選択の判断](../pdr/records/PDR-20261126-agent-selection-claude.md) で行った。
 
 PR ではイベント adapter と条件スキーマに加え、PR の head / base と信頼範囲、checkout、参照ツール、読み取り専用実行、レビュー投稿権限・結果の公開方法を設計する。現在の repository job は Issue と実装・公開を前提にするため、trigger 種別の追加だけではレビュー機能にならない。
 

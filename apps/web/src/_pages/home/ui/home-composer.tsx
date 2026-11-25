@@ -16,10 +16,11 @@ import {
 function failureMessage(error: unknown) {
   const status = error instanceof StartSessionError ? error.status : undefined;
   const code = error instanceof StartSessionError ? error.code : undefined;
-  if (code === "codex_not_connected")
+  if (code === "codex_not_connected" || code === "claude_not_connected")
     return (
       <>
-        Connect Codex to start a loop.{" "}
+        Connect {code === "claude_not_connected" ? "Claude" : "Codex"} to start
+        a loop.{" "}
         <Link href="/connect" className="underline">
           Connect
         </Link>

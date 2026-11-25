@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-automation-agent-selection
 key: agent.selection
-status: accepted
+status: "superseded"
 date: "2026-11-18"
 areas: [agent, triggers, runs]
 keywords: [Routine, engine, codex, claude, model, effort, モデル, 既定値, 接続]

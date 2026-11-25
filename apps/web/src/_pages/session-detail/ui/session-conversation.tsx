@@ -1,6 +1,8 @@
 import { Fragment } from "react";
+import { agentEngineLabels } from "@tailos/core/models";
 import type { TimelineSnapshot } from "@tailos/core/timeline";
 import type { ProjectSession } from "../api/queries";
+import { runEngine } from "../model/agent-engine";
 import { MessageJobContext } from "./message-job-context";
 import { RunActivity } from "./run-activity";
 
@@ -57,7 +59,13 @@ export function SessionConversation({
                   }
                 >
                   <span className="sr-only">
-                    {authorLabels[message.authorKind]}
+                    {(() => {
+                      // A reply is named after the Model Provider of its Run.
+                      const engine = runEngine(replyRun?.engine);
+                      return engine
+                        ? agentEngineLabels[engine]
+                        : authorLabels[message.authorKind];
+                    })()}
                   </span>
                   {replyRun && (
                     <RunActivity

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -40,6 +40,7 @@ function failureMessage(error: unknown) {
 
 export function HomeComposer() {
   const router = useRouter();
+  const [message, setMessage] = useState("");
   const queryClient = useQueryClient();
   const { selection } = useProjectSelection();
   // One ID per draft, so resending the same message returns the same Session.
@@ -65,6 +66,8 @@ export function HomeComposer() {
   return (
     <LoopComposer
       mode="home"
+      message={message}
+      onMessageChange={setMessage}
       projectSelect={<HomeProjectSelect compact />}
       onSubmit={submit}
       pending={start.isPending || start.isSuccess}

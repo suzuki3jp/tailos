@@ -12,6 +12,8 @@ test("shares the model control and keeps the session composer editable with send
         <QueryClientProvider client={client}>
           <LoopComposer
             mode={mode}
+            message=""
+            onMessageChange={() => {}}
             projectSelect={<button type="button">Pick a project</button>}
           />
         </QueryClientProvider>,
@@ -39,7 +41,13 @@ test("home sending is enabled with a handler and shows the send status", () => {
     const render = (props: Partial<Parameters<typeof LoopComposer>[0]>) =>
       renderToStaticMarkup(
         <QueryClientProvider client={client}>
-          <LoopComposer mode="home" onSubmit={() => {}} {...props} />
+          <LoopComposer
+            mode="home"
+            message=""
+            onMessageChange={() => {}}
+            onSubmit={() => {}}
+            {...props}
+          />
         </QueryClientProvider>,
       );
     expect(render({})).not.toMatch(

@@ -17,7 +17,6 @@ import { useSessionTimeline } from "../api/use-session-timeline";
 
 type Props = { projectId: string; sessionId: string };
 const connectionLabels = {
-  live: "Live",
   unauthorized: "Sign in again to receive live updates.",
   reconnecting: "Reconnecting… Saved history remains available.",
   connecting: "Connecting…",
@@ -169,7 +168,9 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto w-full max-w-172 px-7.5 pt-4 text-control-xs text-muted-foreground">
-          <p role="status">{connectionLabels[timeline.connection]}</p>
+          {timeline.connection !== "live" && (
+            <p role="status">{connectionLabels[timeline.connection]}</p>
+          )}
           {timeline.isError && (
             <div>
               <p>Execution history could not be loaded.</p>

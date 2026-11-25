@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261124-planning-routine
 key: planning.issue-conversation
-status: accepted
+status: superseded
 date: "2026-11-24"
 areas: [planning, triggers, notifications, sessions]
 keywords: ["@tailos plan", 計画, 計画会話, Routine, issue_comment, コメント, Session, 順番待ち, 引き継ぎ, planning_inbox, planning_snapshots, planning_replies, planning_input_too_large, 返信, gh, 移行]

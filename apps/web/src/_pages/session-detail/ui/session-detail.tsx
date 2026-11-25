@@ -6,6 +6,7 @@ import { sessionQueryOptions } from "../api/queries";
 import { runResult } from "../model/run-result";
 import { useSessionTimeline } from "../api/use-session-timeline";
 import { ActivityItem } from "./activity-item";
+import { MessageJobContext } from "./message-job-context";
 
 const authorLabel = { agent: "Codex", automation: "GitHub", user: "ユーザー" };
 const runLabel = {
@@ -50,6 +51,7 @@ export function SessionDetail({ id }: { id: string }) {
                 <p className="whitespace-pre-wrap wrap-anywhere">
                   {message.body}
                 </p>
+                <MessageJobContext context={message.jobContext} />
               </li>
             ))}
           </ol>

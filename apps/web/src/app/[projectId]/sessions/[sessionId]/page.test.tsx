@@ -33,7 +33,12 @@ test("renders prefetched session and execution history without waiting for the l
         detail: {
           session: { id: "session", title: "Sample session" },
           messages: [
-            { id: "prompt", authorKind: "user", body: "**Prompt**" },
+            {
+              id: "prompt",
+              authorKind: "automation",
+              body: "**Prompt**",
+              jobContext: { github: { kind: "issue", number: 166 } },
+            },
             {
               id: "reply",
               authorKind: "agent",
@@ -69,6 +74,9 @@ test("renders prefetched session and execution history without waiting for the l
   );
   expect(html).toMatch(/id="project-sessions"[^>]*flex-basis:240px/);
   expect(html).toContain("**Prompt**");
+  expect(html).toMatch(
+    /\*\*Prompt\*\*<\/p>.*Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,
+  );
   expect(html).toContain("&lt;b&gt;Reply&lt;/b&gt;");
   expect(html).toContain("Worked for 12m 32s");
   expect(html).toContain("<summary");

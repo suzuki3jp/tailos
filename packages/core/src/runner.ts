@@ -242,6 +242,18 @@ export const ExecutionContext = v.pipe(
 
 export const maxRunnerJobBytes = 32 * 1024;
 
+/** The structured GitHub input sent to Codex for a repository Run. */
+export function githubJobContext(context: ExecutionContext) {
+  if (context.engine !== "codex" || !context.repository) return undefined;
+  const issue = triggerIssue(context.trigger);
+  if (!issue) return undefined;
+  return {
+    kind: "issue" as const,
+    number: issue.issueNumber,
+    ...(issue.issueContentHash && { contentHash: issue.issueContentHash }),
+  };
+}
+
 const job = {
   /**
    * The message this Turn answers, such as an issue comment, when the

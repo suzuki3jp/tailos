@@ -14,6 +14,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   continuitySaveMs,
   ExecutionContext,
+  githubJobContext,
   maxContinuityBytes,
   maxRunnerJobBytes,
   nextSessionBranch,
@@ -23,7 +24,6 @@ import {
   type PublishedWork,
   type SessionPublication,
   type RunnerJob,
-  triggerIssue,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
@@ -1139,15 +1139,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
     let realignFrom: string | undefined;
     let realign: { previousBase: string; publishedSha: string } | undefined;
     if (target && trigger && job.engine === "codex") {
-      const issue = triggerIssue(trigger);
-      if (issue)
-        job.githubContext = {
-          kind: "issue",
-          number: issue.issueNumber,
-          ...(issue.issueContentHash && {
-            contentHash: issue.issueContentHash,
-          }),
-        };
+      const githubContext = githubJobContext(request.context);
+      if (githubContext) job.githubContext = githubContext;
       const github = this.github;
       const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
       if (!github || !key)

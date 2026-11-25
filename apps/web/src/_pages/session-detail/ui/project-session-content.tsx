@@ -17,7 +17,6 @@ import { useSessionTimeline } from "../api/use-session-timeline";
 
 type Props = { projectId: string; sessionId: string };
 const connectionLabels = {
-  live: "Live",
   unauthorized: "Sign in again to receive live updates.",
   reconnecting: "Reconnecting… Saved history remains available.",
   connecting: "Connecting…",
@@ -74,13 +73,13 @@ function SessionComposer({
   const queryClient = useQueryClient();
   // One ID per draft, so resending the same message starts one Turn.
   const draft = useRef<{ key: string; requestId: string } | null>(null);
-  const [sent, setSent] = useState(0);
+  const [message, setMessage] = useState("");
   const send = useMutation({
     mutationFn: (input: Parameters<typeof sendMessage>[0]) =>
       sendMessage(input),
     onSuccess: async () => {
       draft.current = null;
-      setSent((count) => count + 1);
+      setMessage("");
       await queryClient.invalidateQueries({
         queryKey: projectSessionQueryOptions(projectId, sessionId).queryKey,
       });
@@ -99,8 +98,9 @@ function SessionComposer({
   };
   return (
     <LoopComposer
-      key={sent}
       mode="session"
+      message={message}
+      onMessageChange={setMessage}
       onSubmit={submit}
       pending={send.isPending}
       disabled={working}
@@ -169,7 +169,11 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto w-full max-w-172 px-7.5 pt-4 text-control-xs text-muted-foreground">
-          <p role="status">{connectionLabels[timeline.connection]}</p>
+          <p role="status">
+            {timeline.connection === "live"
+              ? null
+              : connectionLabels[timeline.connection]}
+          </p>
           {timeline.isError && (
             <div>
               <p>Execution history could not be loaded.</p>

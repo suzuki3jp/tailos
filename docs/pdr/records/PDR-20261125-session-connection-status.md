@@ -3,7 +3,7 @@ schema: 1
 id: PDR-20261125-session-connection-status
 key: sessions.connection-status
 status: accepted
-decided_by: user
+decided_by: suzuki3jp
 date: "2026-11-25"
 areas: [sessions, web]
 keywords: [WebSocket, Live, 接続状態]

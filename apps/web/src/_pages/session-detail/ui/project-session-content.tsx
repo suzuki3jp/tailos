@@ -74,13 +74,13 @@ function SessionComposer({
   const queryClient = useQueryClient();
   // One ID per draft, so resending the same message starts one Turn.
   const draft = useRef<{ key: string; requestId: string } | null>(null);
-  const [sent, setSent] = useState(0);
+  const [message, setMessage] = useState("");
   const send = useMutation({
     mutationFn: (input: Parameters<typeof sendMessage>[0]) =>
       sendMessage(input),
     onSuccess: async () => {
       draft.current = null;
-      setSent((count) => count + 1);
+      setMessage("");
       await queryClient.invalidateQueries({
         queryKey: projectSessionQueryOptions(projectId, sessionId).queryKey,
       });
@@ -99,8 +99,9 @@ function SessionComposer({
   };
   return (
     <LoopComposer
-      key={sent}
       mode="session"
+      message={message}
+      onMessageChange={setMessage}
       onSubmit={submit}
       pending={send.isPending}
       disabled={working}

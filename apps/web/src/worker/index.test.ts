@@ -44,6 +44,10 @@ test("protects HTML documents and gives vinext the same fresh nonce as the brows
   );
 
   expect(directives.get("default-src")).toEqual(["'none'"]);
+  expect(directives.get("img-src")).toEqual([
+    "'self'",
+    "https://avatars.githubusercontent.com",
+  ]);
   expect(directives.get("script-src")).toEqual([
     "'self'",
     expect.stringMatching(/^'nonce-[A-Za-z0-9+/]+=*'$/),

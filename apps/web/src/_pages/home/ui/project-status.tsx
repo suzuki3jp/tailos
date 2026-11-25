@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { DataRequestState } from "./data-request-state";
-import { useProjectSelection } from "./project-selection";
+import { useProjectSelection } from "@/features/select-project";
 
 export function ProjectStatus() {
   const { selection, error, retry } = useProjectSelection();

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { homeProjectsQueryOptions } from "../api/queries";
+import { projectsQueryOptions } from "../api/queries";
 import type { ProjectSelection } from "../model/project-selection";
 
 const ProjectContext = createContext<{
@@ -16,7 +16,7 @@ export function ProjectSelectionProvider({
 }: {
   children: ReactNode;
 }) {
-  const query = useQuery(homeProjectsQueryOptions());
+  const query = useQuery(projectsQueryOptions());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const projects = query.isError ? [] : (query.data ?? []);
   const selection = {

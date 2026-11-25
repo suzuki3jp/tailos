@@ -15,6 +15,12 @@ afterEach(() => vi.unstubAllGlobals());
 test("renders prefetched session and execution history without waiting for the live connection", async () => {
   const http = vi.fn<typeof fetch>(async (input) => {
     const path = new URL(String(input)).pathname;
+    if (path === "/v1/account/profile")
+      return Response.json({
+        name: "Session Operator",
+        email: "session@example.test",
+        image: null,
+      });
     if (path.endsWith("/timeline"))
       return Response.json({
         items: [],
@@ -81,5 +87,7 @@ test("renders prefetched session and execution history without waiting for the l
   expect(html).toContain("Worked for 12m 32s");
   expect(html).toContain("<summary");
   expect(html).not.toContain("Execution history could not be loaded.");
-  expect(http).toHaveBeenCalledTimes(2);
+  expect(html).toContain("Session Operator");
+  expect(html).toContain("session@example.test");
+  expect(http).toHaveBeenCalledTimes(3);
 });

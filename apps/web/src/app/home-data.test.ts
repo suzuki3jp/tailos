@@ -1,3 +1,4 @@
+import { projectsQueryOptions } from "@/features/select-project";
 import {
   hydrate,
   InfiniteQueryObserver,
@@ -5,11 +6,9 @@ import {
   QueryObserver,
 } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { prefetchHome } from "./home-data";
-import {
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "@/_pages/home/index.server";
+import { prefetchHome, prefetchNavigation } from "./home-data";
+import { homeSessionsQueryOptions } from "@/_pages/home/index.server";
+import { accountProfileQueryOptions } from "@/entities/account";
 import { apiOrigin } from "@/shared/config";
 
 afterEach(() => {
@@ -18,7 +17,7 @@ afterEach(() => {
 });
 const cookieName = `${apiOrigin.startsWith("https:") ? "__Secure-" : ""}tailos.session_token`;
 
-test("starts both protected lists before awaiting either and hydrates without a browser fetch", async () => {
+test("starts the profile and both protected lists before awaiting either and hydrates without a browser fetch", async () => {
   const pending = new Map<string, (response: Response) => void>();
   const http = vi.fn<typeof fetch>(
     (input, init) =>
@@ -41,9 +40,17 @@ test("starts both protected lists before awaiting either and hydrates without a 
   );
   await vi.waitFor(() =>
     expect([...pending.keys()].sort()).toEqual([
+      "/v1/account/profile",
       "/v1/projects",
       "/v1/sessions",
     ]),
+  );
+  pending.get("/v1/account/profile")?.(
+    Response.json({
+      name: "Operator",
+      email: "operator@example.test",
+      image: null,
+    }),
   );
   const project = {
     id: "p1",
@@ -60,19 +67,24 @@ test("starts both protected lists before awaiting either and hydrates without a 
   expect(serialized).not.toContain("private");
   const client = new QueryClient();
   hydrate(client, JSON.parse(serialized));
-  const projects = new QueryObserver(client, homeProjectsQueryOptions());
+  const projects = new QueryObserver(client, projectsQueryOptions());
   const sessions = new InfiniteQueryObserver(
     client,
     homeSessionsQueryOptions(),
   );
+  const profile = new QueryObserver(client, accountProfileQueryOptions());
+  const offProfile = profile.subscribe(() => {});
   const offProjects = projects.subscribe(() => {});
   const offSessions = sessions.subscribe(() => {});
   try {
+    expect(profile.getCurrentResult().data?.name).toBe("Operator");
     expect(projects.getCurrentResult().data).toEqual([project]);
     expect(sessions.getCurrentResult().data?.pages[0]?.items).toEqual([]);
     await Promise.resolve();
-    expect(http).toHaveBeenCalledTimes(2);
+    expect(http).toHaveBeenCalledTimes(3);
   } finally {
+    offProfile();
+    profile.destroy();
     offProjects();
     offSessions();
     projects.destroy();
@@ -98,12 +110,12 @@ test.each([401, 503])(
     }
     const client = new QueryClient();
     hydrate(client, JSON.parse(serialized));
-    const projects = new QueryObserver(client, homeProjectsQueryOptions());
+    const projects = new QueryObserver(client, projectsQueryOptions());
     const off = projects.subscribe(() => {});
     try {
       expect(projects.getCurrentResult().error).toMatchObject({ status });
       await Promise.resolve();
-      expect(http).toHaveBeenCalledTimes(2);
+      expect(http).toHaveBeenCalledTimes(3);
     } finally {
       off();
       projects.destroy();
@@ -130,7 +142,7 @@ test("request caches are isolated and unexpected fetch failures are redacted", a
   );
   expect(JSON.stringify(second)).not.toContain("internal details");
   expect(JSON.stringify(second)).not.toContain("not-for-browser");
-  expect(http).toHaveBeenCalledTimes(4);
+  expect(http).toHaveBeenCalledTimes(6);
 });
 
 function waitForAbort(
@@ -175,7 +187,7 @@ test.each([
     await vi.advanceTimersByTimeAsync(1);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     const state = await pending;
-    expect(state.queries).toHaveLength(2);
+    expect(state.queries).toHaveLength(3);
     for (const query of state.queries) {
       const timedOut = slow.includes(String(query.queryKey[0]));
       expect(query.state.status).toBe(timedOut ? "error" : "success");
@@ -196,7 +208,7 @@ test.each([
       defaultOptions: { queries: { retry: false } },
     });
     hydrate(client, JSON.parse(JSON.stringify(state)));
-    const projects = new QueryObserver(client, homeProjectsQueryOptions());
+    const projects = new QueryObserver(client, projectsQueryOptions());
     const sessions = new InfiniteQueryObserver(
       client,
       homeSessionsQueryOptions(),
@@ -205,7 +217,7 @@ test.each([
     const offSessions = sessions.subscribe(() => {});
     try {
       await Promise.resolve();
-      expect(http).toHaveBeenCalledTimes(2);
+      expect(http).toHaveBeenCalledTimes(3);
       http.mockImplementation(async (_input, init) => {
         expect(init?.signal?.aborted).toBe(false);
         expect(new Headers(init?.headers).has("Cookie")).toBe(false);
@@ -215,7 +227,7 @@ test.each([
         ? projects.refetch()
         : sessions.refetch());
       expect(retried.status).toBe("success");
-      expect(http).toHaveBeenCalledTimes(3);
+      expect(http).toHaveBeenCalledTimes(4);
     } finally {
       offProjects();
       offSessions();
@@ -244,8 +256,8 @@ test("project pages share the original deadline instead of resetting it", async 
   vi.stubGlobal("fetch", http);
   const pending = prefetchHome("");
   await vi.advanceTimersByTimeAsync(6_000);
-  expect(http).toHaveBeenCalledTimes(3);
-  const lastSignal = http.mock.calls[2]?.[1]?.signal;
+  expect(http).toHaveBeenCalledTimes(4);
+  const lastSignal = http.mock.calls[3]?.[1]?.signal;
   expect(lastSignal?.aborted).toBe(false);
   await vi.advanceTimersByTimeAsync(3_999);
   expect(lastSignal?.aborted).toBe(false);
@@ -272,4 +284,24 @@ test("successful prefetch clears its timer", async () => {
   expect(vi.getTimerCount()).toBe(0);
   await vi.advanceTimersByTimeAsync(20_000);
   expect(http.mock.calls.every((call) => !call[1]?.signal?.aborted)).toBe(true);
+});
+
+test("management navigation prefetches the same profile and projects without requesting sessions", async () => {
+  const http = vi.fn<typeof fetch>(async (input) => {
+    const path = new URL(String(input)).pathname;
+    return Response.json(
+      path.endsWith("/profile")
+        ? { name: "Operator", email: "operator@example.test", image: null }
+        : { items: [], nextCursor: null },
+    );
+  });
+  vi.stubGlobal("fetch", http);
+  const state = await prefetchNavigation("");
+  expect(
+    http.mock.calls.map(([input]) => new URL(String(input)).pathname).sort(),
+  ).toEqual(["/v1/account/profile", "/v1/projects"]);
+  expect(state.queries).toHaveLength(2);
+  expect(state.queries.every((query) => query.state.status === "success")).toBe(
+    true,
+  );
 });

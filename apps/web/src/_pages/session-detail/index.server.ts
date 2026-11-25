@@ -1,5 +1,6 @@
 import { QueryClient, dehydrate } from "@tanstack/react-query";
 import { createServerApi } from "@/shared/api/index.server";
+import { accountProfileQueryOptions } from "@/entities/account";
 import {
   projectSessionQueryOptions,
   projectSessionsQueryOptions,
@@ -17,6 +18,7 @@ export async function prefetchProjectSession(
   try {
     const api = createServerApi(cookie);
     await Promise.all([
+      cache.prefetchQuery(accountProfileQueryOptions(api)),
       cache.prefetchQuery(
         projectSessionQueryOptions(projectId, sessionId, api),
       ),

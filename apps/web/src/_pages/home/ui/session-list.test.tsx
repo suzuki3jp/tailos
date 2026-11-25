@@ -1,12 +1,10 @@
+import { projectsQueryOptions } from "@/features/select-project";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
-import {
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "../api/queries";
-import { ProjectSelectionProvider } from "./project-selection";
+import { homeSessionsQueryOptions } from "../api/queries";
+import { ProjectSelectionProvider } from "@/features/select-project";
 import { ProjectStatus } from "./project-status";
 import { SessionList } from "./session-list";
 
@@ -78,7 +76,7 @@ test.each([
     });
     try {
       await Promise.all([
-        client.prefetchQuery(homeProjectsQueryOptions()),
+        client.prefetchQuery(projectsQueryOptions()),
         client.prefetchInfiniteQuery(homeSessionsQueryOptions()),
       ]);
       const html = renderToStaticMarkup(

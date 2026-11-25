@@ -1,4 +1,1 @@
-export {
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "./api/queries";
+export { homeSessionsQueryOptions } from "./api/queries";

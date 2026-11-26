@@ -80,9 +80,9 @@ test("renders prefetched session and execution history without waiting for the l
     /<div[^>]*aria-label="Resize session list"[^>]*role="separator"/,
   );
   expect(html).toMatch(/id="project-sessions"[^>]*flex-basis:240px/);
-  expect(html).toContain("**Prompt**");
+  expect(html).toContain("<strong>Prompt</strong>");
   expect(html).toMatch(
-    /\*\*Prompt\*\*<\/p>.*Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,
+    /<strong>Prompt<\/strong><\/p><\/div><div[^>]*><p[^>]*>Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,
   );
   expect(html).toContain("&lt;b&gt;Reply&lt;/b&gt;");
   // The reply is named after its Run's Model Provider, which the composer keeps.

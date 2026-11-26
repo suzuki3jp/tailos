@@ -9,6 +9,7 @@ import { runEngine } from "../model/agent-engine";
 import { useSessionTimeline } from "../api/use-session-timeline";
 import { ActivityItem } from "./activity-item";
 import { MessageJobContext } from "./message-job-context";
+import { MessageMarkdown } from "./message-markdown";
 
 const authorLabel = { agent: "Agent", automation: "GitHub", user: "ユーザー" };
 const runLabel = {
@@ -60,9 +61,7 @@ export function SessionDetail({ id }: { id: string }) {
                       )
                     : authorLabel[message.authorKind]}
                 </p>
-                <p className="whitespace-pre-wrap wrap-anywhere">
-                  {message.body}
-                </p>
+                <MessageMarkdown body={message.body} withinSection />
                 <MessageJobContext context={message.jobContext} />
               </li>
             ))}

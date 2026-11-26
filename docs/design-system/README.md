@@ -21,6 +21,7 @@ The visual reference is the [Home frame](https://www.figma.com/design/8xCaWOhzVy
 | light-bg-primary | background | `#fffcf5` |
 | light-font-primary | foreground | `#271e18` |
 | light-font-secondary | muted-foreground | `#63584a` |
+| light-font-link | link | `#454fb1` |
 | light-border | border / input | `#ded4c3` |
 | light-button-primary | primary | `#855333` |
 | light-font-danger | destructive | `#a42b2b` |
@@ -68,6 +69,10 @@ The session page places progress and tool activity in the conversation, immediat
 The page hydrates the initial timeline alongside Session and list data. WebSocket attachment does not block rendering. History is paginated, output bodies are excluded from the initial payload, and updates change the affected Item rather than refetching the whole conversation. Auto-follow applies while the reader is at the bottom; otherwise a New activity action brings them back. The session composer continues to have submission disabled.
 
 The first implementation streams message and tool lifecycle events. Command output becomes available on completion; character-by-character output and Agent control are later stages. See the [session display decision](../pdr/records/PDR-20261121-project-session-timeline.md), [timeline contract](../pdr/records/PDR-20261121-session-execution-timeline.md) and [transport](../pdr/records/PDR-20261121-session-realtime-transport.md).
+
+## Session messages
+
+Saved message bodies render Markdown with compact 18px semibold headings, 16px text and square unordered-list markers. The first list level uses solid squares and nested levels use outlined squares. Links are underlined with the `link` token on the page and the text color inside a message bubble. Inline code uses a muted monospace treatment. Code blocks can scroll horizontally within the message and use Shiki when the fence names a supported language. [Session Markdown decision](../pdr/records/PDR-20261126-session-message-markdown.md)
 
 ## Assets
 

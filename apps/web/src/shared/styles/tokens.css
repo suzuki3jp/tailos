@@ -4,6 +4,7 @@
   --background: #fffcf5;
   --foreground: #271e18;
   --foreground-strong: #000;
+  --link: #454fb1;
   --card: var(--background);
   --card-foreground: var(--foreground);
   --popover: var(--background);

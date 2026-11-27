@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261124-publication-base
 key: publication.tool
-status: accepted
+status: superseded
 date: "2026-11-24"
 areas: [github, agent, sessions]
 keywords: [公開, 公開ツール, PR, コミット, 署名付きコミット, 作業ブランチ, PR の更新, Session, Turn, tailos_publish, マージ済み, 未公開の作業, 載せ直し, 始点, ブランチ名, base, PR の base, invalid_base]

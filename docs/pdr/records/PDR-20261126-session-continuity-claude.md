@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261126-session-continuity-claude
 key: session.continuity
-status: accepted
+status: superseded
 date: "2026-11-26"
 areas: [sessions, agent, infrastructure]
 keywords: [作業の引き継ぎ, Session, コンテナ, スナップショット, snapshotContainer, containerSnapshot, 復元, R2, rollout, thread/resume, CODEX_HOME, Claude Code, CLAUDE_CONFIG_DIR, resume, session_id, 待機時間, イメージ, digest, 30 日, 公開ベータ]

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
-import { homeSessionsQueryOptions } from "../api/queries";
+import { accountSessionsQueryOptions } from "@/entities/session";
 import { ProjectSelectionProvider } from "@/features/select-project";
 import { ProjectStatus } from "./project-status";
 import { SessionList } from "./session-list";
@@ -28,7 +28,7 @@ test("renders only the first five sessions and retains the full response in cach
   const http = vi.fn<typeof fetch>(async () => Response.json(page));
   vi.stubGlobal("fetch", http);
   const client = new QueryClient();
-  const options = homeSessionsQueryOptions();
+  const options = accountSessionsQueryOptions();
   try {
     await client.fetchInfiniteQuery(options);
     const html = renderToStaticMarkup(
@@ -77,7 +77,7 @@ test.each([
     try {
       await Promise.all([
         client.prefetchQuery(projectsQueryOptions()),
-        client.prefetchInfiniteQuery(homeSessionsQueryOptions()),
+        client.prefetchInfiniteQuery(accountSessionsQueryOptions()),
       ]);
       const html = renderToStaticMarkup(
         <QueryClientProvider client={client}>

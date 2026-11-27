@@ -3,10 +3,10 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Button } from "@/shared/ui/design-systems";
 import {
-  homeSessionsQueryOptions,
-  requestErrorStatus,
-  type HomeSession,
-} from "../api/queries";
+  accountSessionsQueryOptions,
+  uniqueSessions,
+} from "@/entities/session";
+import { requestErrorStatus } from "../api/queries";
 import { DataRequestState } from "./data-request-state";
 import { SessionRow } from "./session-row";
 import { useProjectSelection } from "@/features/select-project";
@@ -14,18 +14,9 @@ import { useProjectSelection } from "@/features/select-project";
 const RECENT_SESSION_LIMIT = 5;
 
 export function SessionList() {
-  const query = useInfiniteQuery(homeSessionsQueryOptions());
+  const query = useInfiniteQuery(accountSessionsQueryOptions());
   const { error: projectError } = useProjectSelection();
-  const sessionsById = new Map<string, HomeSession>();
-  for (const page of query.data?.pages ?? []) {
-    for (const session of page.items) {
-      if (!sessionsById.has(session.id)) sessionsById.set(session.id, session);
-    }
-  }
-  const sessions = Array.from(sessionsById.values()).slice(
-    0,
-    RECENT_SESSION_LIMIT,
-  );
+  const sessions = uniqueSessions(query.data?.pages, RECENT_SESSION_LIMIT);
   if (requestErrorStatus(query.error) === 401) {
     if (requestErrorStatus(projectError) === 401) return null;
     return (

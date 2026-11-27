@@ -1,7 +1,10 @@
 import { projectsQueryOptions } from "@/features/select-project";
 import { InfiniteQueryObserver, QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { HomeRequestError, homeSessionsQueryOptions } from "./queries";
+import {
+  AccountSessionsError,
+  accountSessionsQueryOptions,
+} from "@/entities/session";
 
 afterEach(() => vi.unstubAllGlobals());
 function queryClient() {
@@ -79,7 +82,7 @@ test("session pagination keeps existing rows after a next-page failure and retri
   const client = queryClient();
   const observer = new InfiniteQueryObserver(
     client,
-    homeSessionsQueryOptions(),
+    accountSessionsQueryOptions(),
   );
   try {
     await observer.refetch();
@@ -124,8 +127,8 @@ test.each([401, 403, 503])(
         client.fetchQuery(projectsQueryOptions()),
       ).rejects.toMatchObject({ status });
       await expect(
-        client.fetchInfiniteQuery(homeSessionsQueryOptions()),
-      ).rejects.toBeInstanceOf(HomeRequestError);
+        client.fetchInfiniteQuery(accountSessionsQueryOptions()),
+      ).rejects.toBeInstanceOf(AccountSessionsError);
       expect(http).toHaveBeenCalledTimes(2);
     } finally {
       client.clear();

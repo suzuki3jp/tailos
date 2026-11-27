@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261121-session-list-width-persistence
 key: web.project.session-list-resize
-status: accepted
+status: superseded
 date: "2026-11-21"
 decided_by: suzuki3jp
 areas: [web, sessions]

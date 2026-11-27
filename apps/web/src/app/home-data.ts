@@ -1,22 +1,12 @@
 import { projectsQueryOptions } from "@/features/select-project";
 import { QueryClient, dehydrate } from "@tanstack/react-query";
-import { homeSessionsQueryOptions } from "@/_pages/home/index.server";
+import { accountSessionsQueryOptions } from "@/entities/session";
 import { createServerApi } from "@/shared/api/index.server";
 import { accountProfileQueryOptions } from "@/entities/account";
 
 // Each invocation belongs to one request; neither cookies nor cache are shared.
-export function prefetchHome(cookieHeader: string) {
-  return prefetchPageNavigation(cookieHeader, true);
-}
-
-export function prefetchNavigation(cookieHeader: string) {
-  return prefetchPageNavigation(cookieHeader, false);
-}
-
-async function prefetchPageNavigation(
-  cookieHeader: string,
-  includeSessions: boolean,
-) {
+// Every sidebar shows Recent Sessions, so pages read the same three queries.
+export async function prefetchNavigation(cookieHeader: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -33,9 +23,7 @@ async function prefetchPageNavigation(
     await Promise.all([
       client.prefetchQuery(accountProfileQueryOptions(api)),
       client.prefetchQuery(projectsQueryOptions(api)),
-      ...(includeSessions
-        ? [client.prefetchInfiniteQuery(homeSessionsQueryOptions(api))]
-        : []),
+      client.prefetchInfiniteQuery(accountSessionsQueryOptions(api)),
     ]);
     const state = dehydrate(client, {
       shouldDehydrateQuery: (query) => query.state.status !== "pending",

@@ -10,6 +10,7 @@ export function Disclosure({
   open,
   onOpenChange,
   className,
+  summaryClassName,
   inlineChevron = false,
 }: {
   label: ReactNode;
@@ -17,6 +18,7 @@ export function Disclosure({
   open: boolean;
   onOpenChange(open: boolean): void;
   className?: string;
+  summaryClassName?: string;
   inlineChevron?: boolean;
 }) {
   return (
@@ -29,6 +31,7 @@ export function Disclosure({
         className={cn(
           "flex cursor-pointer list-none items-center rounded-sm text-control marker:hidden [&::-webkit-details-marker]:hidden",
           inlineChevron ? "gap-1.5" : "gap-2",
+          summaryClassName,
         )}
       >
         <span className={cn("min-w-0", !inlineChevron && "flex-1")}>

@@ -6,9 +6,9 @@ import {
 } from "@/infrastructure/d1/testing.ts";
 import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
-import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
-import { sessionBranch } from "@tailos/core/runner";
+import { GitHubApp } from "@/infrastructure/github/app.ts";
 import {
+  maxPushedBranches,
   placeholderClaudeToken,
   RunnerContainer,
 } from "@/infrastructure/cloudflare/runner-container.ts";
@@ -46,7 +46,7 @@ function memoryStorage(
   };
 }
 
-test("a diagnostics lease accepts late telemetry but cannot publish or obtain model access", async (t) => {
+test("a diagnostics lease accepts late telemetry but cannot obtain model access", async (t) => {
   const { DB, RUN_ARTIFACTS } = await createTestBindings(t);
   const { runId } = await admitTrigger(DB, {
     source: "test",
@@ -99,15 +99,6 @@ test("a diagnostics lease accepts late telemetry but cannot publish or obtain mo
   ).toBe(false);
   expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(true);
   expect(await runner.modelAccess(runId)).toBeNull();
-  expect(
-    await runner.publishWork(runId, bearer, {
-      branch: sessionBranch(crypto.randomUUID()),
-      parentSha: "a".repeat(40),
-      tree: "b".repeat(40),
-      headline: "feat: publish",
-      changes: { additions: [], deletions: [] },
-    }),
-  ).toEqual({ error: "invalid_lease" });
   lease.expiresAt = Date.now() - 1;
   expect(await runner.ingestDiagnostics(runId, bearer, batch)).toBe(false);
 });
@@ -352,8 +343,9 @@ test("a Claude Turn gets a placeholder token, and only its egress gets the real 
       token: placeholderClaudeToken,
       connectionVersion: "connection-1",
     },
-    lease: { url: `https://tailos.example/_runner/runs/${runId}/` },
   });
+  // Nothing calls back into the controller: the Runner gets no lease.
+  expect(job).not.toHaveProperty("lease");
   expect(JSON.stringify(job)).not.toContain("sk-ant-oat01-real");
   expect(issueAccess).not.toHaveBeenCalled();
 
@@ -436,7 +428,7 @@ test("a failed container cleanup preserves the runner health result", async (t) 
   expect(warn.mock.calls.length).toBe(1);
 });
 
-async function publishingRun(t: import("vitest").TestContext) {
+async function pushingRun(t: import("vitest").TestContext) {
   const DB = await createTestDb(t);
   const repository = {
     repository: "owner/private",
@@ -451,7 +443,7 @@ async function publishingRun(t: import("vitest").TestContext) {
   } as const;
   const { runId, sessionId } = await admitTrigger(DB, {
     source: "test",
-    idempotencyKey: "publishing",
+    idempotencyKey: "pushing",
     concurrencyKey: "target",
     ownerId: "owner",
     prompt: "Make changes",
@@ -464,33 +456,19 @@ async function publishingRun(t: import("vitest").TestContext) {
       trigger,
     }),
   });
-  const baseSha = "a".repeat(40);
-  const branch = sessionBranch(sessionId);
-  await DB.prepare(
-    "UPDATE runs SET status = 'running', step_state = ? WHERE id = ?",
-  )
-    .bind(JSON.stringify({ version: 2, baseSha, branch }), runId)
+  await DB.prepare("UPDATE runs SET status = 'running' WHERE id = ?")
+    .bind(runId)
     .run();
-  const bearer = newRunLease();
   const stored = new Map<string, unknown>([
     ["runId", runId],
     ["sessionId", sessionId],
-    [
-      "refreshLease",
-      {
-        digest: await hashRunLease(bearer),
-        runId,
-        expiresAt: Date.now() + 60_000,
-      },
-    ],
   ]);
-  const destroy = vi.fn(async () => {});
   const runner = new RunnerContainer(
     {
       storage: memoryStorage(stored),
       container: {
         running: true,
-        destroy,
+        destroy: vi.fn(async () => {}),
         getTcpPort: () => ({
           fetch: async () =>
             Response.json({
@@ -510,221 +488,67 @@ async function publishingRun(t: import("vitest").TestContext) {
   t.onTestFinished(() => {
     vi.restoreAllMocks();
   });
-  const work = {
-    branch,
-    parentSha: baseSha,
-    tree: "b".repeat(40),
-    headline: "feat: add the feature",
-    changes: {
-      additions: [{ path: "feature.ts", contents: "Cg==" }],
-      deletions: [],
-    },
-  };
-  return { DB, runId, runner, bearer, stored, work, repository, trigger };
+  return { DB, runId, runner, stored, repository };
 }
 
-test("publishes the Agent's work on the Session's branch, once per checked work", async (t) => {
-  const { runner, runId, bearer, stored, work, repository, trigger } =
-    await publishingRun(t);
-  const url = "https://github.com/owner/private/pull/1";
-  const first = "c".repeat(40);
-  const second = "d".repeat(40);
-  let pull: Awaited<ReturnType<GitHubApp["sessionPullRequest"]>> = {
-    state: "none",
-  };
-  vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockImplementation(
-    async () => pull,
-  );
-  const commit = vi
-    .spyOn(GitHubApp.prototype, "commitSessionWork")
-    .mockResolvedValueOnce(first)
-    .mockResolvedValueOnce(second);
-  const open = vi
-    .spyOn(GitHubApp.prototype, "openPullRequest")
-    .mockImplementation(async () => {
-      pull = { state: "open", url };
-      return url;
-    });
-
-  const startsOn = vi
-    .spyOn(GitHubApp.prototype, "startsOn")
-    .mockResolvedValue(false);
-  // Only this Turn, on this Session's branch, may publish, and only from a
-  // start on the base branch.
-  expect(await runner.publishWork(runId, newRunLease(), work)).toEqual({
-    error: "invalid_lease",
-  });
-  expect(
-    await runner.publishWork(runId, bearer, {
-      ...work,
-      branch: "tailos/session/x",
-    }),
-  ).toEqual({ error: "invalid_publication" });
-  expect(
-    await runner.publishWork(runId, bearer, {
-      ...work,
-      parentSha: "e".repeat(40),
-    }),
-  ).toEqual({ error: "invalid_base" });
-  expect(startsOn).toHaveBeenCalledExactlyOnceWith(
-    repository,
-    repository.defaultBranch,
-    "e".repeat(40),
-  );
-  expect(commit).not.toHaveBeenCalled();
-
-  expect(await runner.publishWork(runId, bearer, work)).toEqual({
-    sha: first,
-    url,
-  });
-  expect(open).toHaveBeenCalledExactlyOnceWith(repository, trigger, runId, {
-    branch: work.branch,
-    sha: first,
-    headline: work.headline,
-  });
-  // The same work again, after its response was lost, is not committed twice.
-  expect(await runner.publishWork(runId, bearer, work)).toEqual({
-    sha: first,
-    url,
-  });
-  expect(commit).toHaveBeenCalledOnce();
-  // Changed work on the old parent, after the answer was lost, is told where
-  // the branch went instead.
-  expect(
-    await runner.publishWork(runId, bearer, { ...work, tree: "9".repeat(40) }),
-  ).toEqual({ error: "parent_moved", sha: first });
-  expect(commit).toHaveBeenCalledOnce();
-
-  // The next publication builds on the last one and updates the open PR.
-  const next = { ...work, parentSha: first, tree: "f".repeat(40) };
-  expect(await runner.publishWork(runId, bearer, next)).toEqual({
-    sha: second,
-    url,
-  });
-  expect(commit).toHaveBeenLastCalledWith(
-    repository,
+test("records the branches a Run pushes only while it works", async (t) => {
+  const { runner, runId, stored } = await pushingRun(t);
+  await runner.recordPush(runId, ["feature", "fix"]);
+  await runner.recordPush(undefined, ["fix", "docs"]);
+  // Another Run's pushes, or pushes after the work is over, are not this
+  // Run's.
+  await runner.recordPush(crypto.randomUUID(), ["other"]);
+  expect(stored.get("pushedBranches")).toEqual(["feature", "fix", "docs"]);
+  await runner.recordPush(
     runId,
-    next,
-    expect.any(Number),
+    Array.from({ length: 30 }, (_, i) => `many-${i}`),
   );
-  expect(open).toHaveBeenCalledOnce();
-  expect(stored.get("sessionPublication")).toEqual({
-    branch: work.branch,
-    sha: second,
-    parentSha: first,
-    tree: next.tree,
-    url,
-  });
-
-  // A merged pull request is not published to again; neither is a branch
-  // that someone else moved.
-  pull = { state: "merged" };
-  const later = { ...work, parentSha: second, tree: "9".repeat(40) };
-  expect(await runner.publishWork(runId, bearer, later)).toEqual({
-    error: "pull_request_merged",
-  });
-  pull = { state: "open", url };
-  commit.mockRejectedValueOnce(new WorkBranchMoved("moved"));
-  expect(await runner.publishWork(runId, bearer, later)).toEqual({
-    error: "branch_moved",
-  });
-  expect(stored.get("sessionPublication")).toMatchObject({ sha: second });
+  expect(stored.get("pushedBranches")).toHaveLength(maxPushedBranches);
+  stored.set("agentEgressClosed", true);
+  stored.delete("pushedBranches");
+  await runner.recordPush(runId, ["late"]);
+  expect(stored.has("pushedBranches")).toBe(false);
 });
 
-test("publishes into the branch the Agent started from, and keeps that base", async (t) => {
-  const { runner, runId, bearer, stored, work, repository, trigger } =
-    await publishingRun(t);
-  const url = "https://github.com/owner/private/pull/2";
-  const feature = "e".repeat(40);
-  const first = "c".repeat(40);
-  const pulls = vi
-    .spyOn(GitHubApp.prototype, "sessionPullRequest")
-    .mockResolvedValue({ state: "none" });
-  const startsOn = vi
-    .spyOn(GitHubApp.prototype, "startsOn")
-    .mockImplementation(
-      async (_target, base, sha) => base === "feature" && sha === feature,
-    );
-  vi.spyOn(GitHubApp.prototype, "commitSessionWork").mockResolvedValue(first);
-  const open = vi
-    .spyOn(GitHubApp.prototype, "openPullRequest")
-    .mockResolvedValue(url);
-  const moved = { ...work, base: "feature", parentSha: feature };
-
-  // The base cannot be the Session's own branch, and must hold the start.
-  expect(
-    await runner.publishWork(runId, bearer, { ...moved, base: work.branch }),
-  ).toEqual({ error: "invalid_base" });
-  expect(
-    await runner.publishWork(runId, bearer, { ...moved, base: "other" }),
-  ).toEqual({ error: "invalid_base" });
-  expect(await runner.publishWork(runId, bearer, moved)).toEqual({
-    sha: first,
-    url,
-  });
-  expect(startsOn).toHaveBeenLastCalledWith(repository, "feature", feature);
-  expect(pulls).toHaveBeenCalledWith(repository, work.branch, "feature");
-  expect(open).toHaveBeenCalledExactlyOnceWith(repository, trigger, runId, {
-    branch: work.branch,
-    sha: first,
-    headline: work.headline,
-    base: "feature",
-  });
-  expect(stored.get("sessionPublication")).toMatchObject({
-    branch: work.branch,
-    base: "feature",
-    sha: first,
-  });
-  // The pull request keeps its base: another one is refused, and later
-  // publications without one stay on it.
-  const next = { ...work, parentSha: first, tree: "f".repeat(40) };
-  expect(
-    await runner.publishWork(runId, bearer, { ...next, base: "main" }),
-  ).toEqual({ error: "invalid_base" });
-  pulls.mockResolvedValue({ state: "open", url });
-  expect(await runner.publishWork(runId, bearer, next)).toEqual({
-    sha: first,
-    url,
-  });
-  expect(pulls).toHaveBeenLastCalledWith(repository, work.branch, "feature");
-});
-
-test("a Turn's result is the pull request it published, and the Session keeps its branch", async (t) => {
-  const { DB, runner, runId, bearer, stored, work } = await publishingRun(t);
+test("a Turn's result is the pull requests of the branches it pushed", async (t) => {
+  const { DB, runner, runId, stored, repository } = await pushingRun(t);
   const url = "https://github.com/owner/private/pull/1";
-  const sha = "c".repeat(40);
-  vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockResolvedValue({
-    state: "none",
-  });
-  vi.spyOn(GitHubApp.prototype, "commitSessionWork").mockResolvedValue(sha);
-  vi.spyOn(GitHubApp.prototype, "openPullRequest").mockResolvedValue(url);
-  // A branch the Session moved to after a merge has nothing published yet.
-  stored.set("sessionPublication", {
-    branch: work.branch,
-    realignFrom: "e".repeat(40),
-  });
-  expect(await runner.publishWork(runId, bearer, work)).toEqual({ sha, url });
+  const lookup = vi
+    .spyOn(GitHubApp.prototype, "branchPullRequests")
+    .mockResolvedValue([{ branch: "feature", url }]);
+  await runner.recordPush(runId, ["feature", "no-pull-request"]);
 
   await runner.alarm();
+  expect(lookup).toHaveBeenCalledExactlyOnceWith(repository, [
+    "feature",
+    "no-pull-request",
+  ]);
   const run = await DB.prepare("SELECT status, result FROM runs WHERE id = ?")
     .bind(runId)
     .first<{ status: string; result: string }>();
   expect(run?.status).toBe("succeeded");
   expect(JSON.parse(run!.result)).toMatchObject({
-    kind: "pull_request",
-    branch: work.branch,
-    sha,
-    url,
+    kind: "pull_requests",
+    pullRequests: [{ branch: "feature", url }],
   });
-  // The next Turn publishes on the same branch, but has no result of its own yet.
-  expect(stored.has("runPublication")).toBe(false);
-  expect(stored.get("sessionPublication")).toStrictEqual({
-    branch: work.branch,
-    sha,
-    parentSha: work.parentSha,
-    tree: work.tree,
-    url,
-  });
+  // The next Run of the Session starts with nothing recorded.
+  expect(stored.has("pushedBranches")).toBe(false);
+});
+
+test("a Turn that pushed nothing, or whose pull requests cannot be read, is completed", async (t) => {
+  const { DB, runner, runId } = await pushingRun(t);
+  const lookup = vi
+    .spyOn(GitHubApp.prototype, "branchPullRequests")
+    .mockRejectedValue(new Error("GitHub unavailable"));
+  await runner.recordPush(runId, ["feature"]);
+
+  await runner.alarm();
+  expect(lookup).toHaveBeenCalledOnce();
+  const run = await DB.prepare("SELECT status, result FROM runs WHERE id = ?")
+    .bind(runId)
+    .first<{ status: string; result: string }>();
+  expect(run?.status).toBe("succeeded");
+  expect(JSON.parse(run!.result)).toMatchObject({ kind: "completed" });
 });
 
 test.for([{ oversized: false }, { oversized: true }])(
@@ -858,7 +682,10 @@ test.for([{ oversized: false }, { oversized: true }])(
       token: "read-token",
       expiresAt: Date.now() + 60_000,
       baseSha: "a".repeat(40),
-      branch: `tailos/issue-3/${runId}`,
+      author: {
+        name: "tailos-app[bot]",
+        email: "1+tailos-app[bot]@users.noreply.github.com",
+      },
     });
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
     t.onTestFinished(() => {
@@ -933,9 +760,8 @@ test.for([{ oversized: false }, { oversized: true }])(
         ].chatgpt_account_id,
       ).toBe("account");
       expect(job.access.accountId).toBe("account");
-      expect(job.refresh.url).toBe(
-        `https://api.tailos.app/_runner/runs/${runId}/`,
-      );
+      // The Runner gets no lease: nothing calls back into the controller.
+      expect(job.refresh).toBeUndefined();
       expect([...controlKeys]).toEqual([
         expect.stringMatching(/^Bearer [a-f0-9]{64}$/),
       ]);
@@ -1012,23 +838,15 @@ test.for([
     name: "its snapshot",
     snapshotImage: "image",
     fromSnapshot: true,
-    merged: false,
   },
   {
     name: "the image after an update",
     snapshotImage: "old-image",
     fromSnapshot: false,
-    merged: false,
-  },
-  {
-    name: "moves it onto the default branch after its PR was merged",
-    snapshotImage: "image",
-    fromSnapshot: true,
-    merged: true,
   },
 ])(
   "continues a Session's Turn from its saved work and $name, and keeps the new work",
-  async ({ snapshotImage, fromSnapshot, merged }, t) => {
+  async ({ snapshotImage, fromSnapshot }, t) => {
     const DB = await createTestDb(t);
     const { runId, sessionId } = await admitTrigger(DB, {
       source: "test",
@@ -1064,17 +882,6 @@ test.for([
           snapshot: { id: "snapshot-0", image: snapshotImage },
         },
       ],
-      // What an earlier Turn published, which this one builds on.
-      [
-        "sessionPublication",
-        {
-          branch: sessionBranch(sessionId),
-          sha: "e".repeat(40),
-          parentSha: savedBase,
-          tree: "f".repeat(40),
-          url: "https://github.com/owner/repo/pull/1",
-        },
-      ],
     ]);
     const requests: string[] = [];
     let collected = 0;
@@ -1090,23 +897,17 @@ test.for([
       if (path === "/job") {
         const job = JSON.parse(String(init?.body));
         expect(job.continuity).toStrictEqual({ restore: "saved" });
-        if (merged) {
-          // The saved work moves from its own base onto the latest branch,
-          // and the Session publishes to its next branch.
-          expect(job.checkout).toStrictEqual({
-            repository: "owner/repo",
-            baseSha: "a".repeat(40),
-            branch: sessionBranch(sessionId, 2),
-            realign: { previousBase: savedBase, publishedSha: "e".repeat(40) },
-          });
-        } else {
-          // The saved work continues on its own base, not the latest branch.
-          expect(job.checkout.baseSha).toBe(savedBase);
-          expect(job.checkout).toMatchObject({
-            branch: sessionBranch(sessionId),
-            publishedSha: "e".repeat(40),
-          });
-        }
+        // The saved work continues on its own base, not the latest branch,
+        // even after a pull request of the Session merged.
+        expect(job.checkout).toStrictEqual({
+          repository: "owner/repo",
+          baseSha: savedBase,
+          defaultBranch: "main",
+          author: {
+            name: "tailos-app[bot]",
+            email: "1+tailos-app[bot]@users.noreply.github.com",
+          },
+        });
         return new Response(null, { status: 202 });
       }
       if (path === `/job/${runId}`)
@@ -1130,13 +931,11 @@ test.for([
         token: "write-token",
         expiresAt: Date.now() + 60_000,
         baseSha: "a".repeat(40),
-        branch: merged ? sessionBranch(sessionId, 2) : sessionBranch(sessionId),
+        author: {
+          name: "tailos-app[bot]",
+          email: "1+tailos-app[bot]@users.noreply.github.com",
+        },
       });
-    vi.spyOn(GitHubApp.prototype, "sessionPullRequest").mockResolvedValue(
-      merged
-        ? { state: "merged" }
-        : { state: "open", url: "https://github.com/owner/repo/pull/1" },
-    );
     vi.spyOn(GitHubApp.prototype, "revoke").mockResolvedValue();
     t.onTestFinished(() => {
       vi.restoreAllMocks();
@@ -1186,10 +985,6 @@ test.for([
     await runner.schedule(runId, sessionId);
     await runner.alarm();
     expect(checkout).toHaveBeenCalledOnce();
-    // The Session publishes to its own branch.
-    expect(checkout.mock.calls[0]![2]).toBe(
-      sessionBranch(sessionId, merged ? 2 : 1),
-    );
     // A snapshot of another image would silently run the older Runner.
     expect(start).toHaveBeenCalledExactlyOnceWith(
       fromSnapshot
@@ -1207,17 +1002,12 @@ test.for([
     expect(snapshotContainer).toHaveBeenCalledOnce();
     expect(memory.get("continuity")).toStrictEqual({
       key: savedKey,
-      baseSha: merged ? "a".repeat(40) : savedBase,
+      baseSha: savedBase,
       snapshot: { id: "snapshot-1", image: "image" },
     });
     // Only the latest work of the Session is kept.
     expect(objects.has(previousKey)).toBe(false);
     expect(memory.has("continuityRun")).toBe(false);
-    // Once the work moved, later Turns build on the new branch as it is.
-    if (merged)
-      expect(memory.get("sessionPublication")).toStrictEqual({
-        branch: sessionBranch(sessionId, 2),
-      });
   },
 );
 

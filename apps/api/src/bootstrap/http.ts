@@ -22,7 +22,6 @@ import {
   findOperatorUserId,
   getOperatorSession,
 } from "@/infrastructure/auth/login.ts";
-import { findActiveRun } from "@/infrastructure/d1/active-run.ts";
 import { findOwnedRun } from "@/infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "@/infrastructure/r2/run-artifacts.ts";
 import { checkRunnerHealth } from "@/infrastructure/cloudflare/runner-health.ts";
@@ -35,7 +34,6 @@ import { cors } from "hono/cors";
 import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
 import { createConnectRoutes } from "@/presentation/http/handlers/connect/connect.ts";
 import { createLoginRoutes } from "@/presentation/http/handlers/login/login.ts";
-import { createRefreshRoutes } from "@/presentation/http/handlers/refresh/refresh.ts";
 import { type Bindings } from "@/bindings.ts";
 import { createRunRoutes } from "@/presentation/http/handlers/runs/runs.ts";
 import { createSessionRoutes } from "@/presentation/http/handlers/sessions/sessions.ts";
@@ -143,10 +141,6 @@ const runRoutes = createRunRoutes(
       : Promise.resolve(null),
 );
 
-const refreshRoutes = createRefreshRoutes((env, runId, now) =>
-  findActiveRun(env.DB, runId, now),
-);
-
 const loginRoutes = createLoginRoutes(createLoginAuth);
 
 const connectRoutes = createConnectRoutes(operatorAuth);
@@ -250,7 +244,6 @@ app.route(directBrowserApiPath, browserApi);
 app.route(`${directBrowserApiPath}/auth`, loginRoutes);
 app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
-app.route("/_runner/runs", refreshRoutes);
 app.route(
   "/_runner/runs",
   createDiagnosticIngestRoutes((env, id, now) =>

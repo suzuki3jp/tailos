@@ -31,7 +31,6 @@ import {
   AgentSandboxUnavailable,
   type AgentAdapter,
   type Conversation,
-  type Publish,
 } from "@/agent.ts";
 import {
   agentPrompt,
@@ -40,7 +39,6 @@ import {
   type RepositoryJob,
 } from "@/agent-turns.ts";
 import { createGitHubReader, githubTool } from "@/github-tool.ts";
-import { callPublicationTool, publicationTool } from "@/publication-tool.ts";
 import { claudeTranscriptPath } from "@/continuity.ts";
 import {
   continuityNotice,
@@ -58,11 +56,8 @@ import {
 
 type ClaudeJob = Extract<RepositoryJob, { engine: "claude" }>;
 type GitHubRead = ReturnType<typeof createGitHubReader>["read"];
-type PublicationCall = (
-  input: unknown,
-) => ReturnType<typeof callPublicationTool>;
 /** The Tailos tools Claude Code gets, each run in the Runner process. */
-type TailosTools = { read?: GitHubRead; publish?: PublicationCall };
+type TailosTools = { read?: GitHubRead };
 
 // The part of the Agent SDK the adapter depends on. Tests replace it with a
 // fixed message sequence, as the Codex adapter's tests replace its process.
@@ -80,10 +75,8 @@ export type ClaudeRuntime = {
 
 const tailosServerName = "tailos";
 const githubToolLocalName = "github_get";
-const publicationToolLocalName = "publish";
 // The names Claude Code gives the tools of an SDK MCP server.
 const githubToolName = `mcp__${tailosServerName}__${githubToolLocalName}`;
-const publicationToolName = `mcp__${tailosServerName}__${publicationToolLocalName}`;
 
 // The SDK ships Claude Code as a platform-specific binary, so the image
 // installs it next to the bundle and the bundle loads it only for Claude jobs.
@@ -114,41 +107,26 @@ export const loadClaudeRuntime = async (): Promise<ClaudeRuntime> => {
           (error) => resolve(!error),
         );
       }),
-    tailosServer: ({ read, publish }) =>
+    tailosServer: ({ read }) =>
       sdk.createSdkMcpServer({
         name: tailosServerName,
         version: "0.1.0",
-        tools: [
-          ...(read
-            ? [
-                sdk.tool(
-                  githubToolLocalName,
-                  githubTool.description,
-                  {
-                    kind: z.enum(["issue", "pull_request"]),
-                    number: z.number().int().min(1),
-                    bodyOffset: z.number().int().min(0).optional(),
-                  },
-                  // The handler runs in the Runner process, whose GitHub
-                  // requests get the Run's token outside the container.
-                  async (input) => toolContent(await read(input)),
-                ),
-              ]
-            : []),
-          ...(publish
-            ? [
-                sdk.tool(
-                  publicationToolLocalName,
-                  publicationTool.description,
-                  {
-                    headline: z.string().max(100),
-                    base: z.string().max(255).optional(),
-                  },
-                  async (input) => toolContent(await publish(input)),
-                ),
-              ]
-            : []),
-        ],
+        tools: read
+          ? [
+              sdk.tool(
+                githubToolLocalName,
+                githubTool.description,
+                {
+                  kind: z.enum(["issue", "pull_request"]),
+                  number: z.number().int().min(1),
+                  bodyOffset: z.number().int().min(0).optional(),
+                },
+                // The handler runs in the Runner process, whose GitHub
+                // requests get the Run's token outside the container.
+                async (input) => toolContent(await read(input)),
+              ),
+            ]
+          : [],
       }),
   };
 };
@@ -401,7 +379,7 @@ export function createClaudeAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics, conversation, publish) {
+    async run(job, signal, cwd, diagnostics, conversation, gitDir) {
       if (job.engine !== "claude") throw new Error("Invalid Claude job");
       const root = await mkdtemp(join(tmpdir(), "tailos-claude-"));
       // Outside the Agent's writable roots, and rebuilt every Turn: only the
@@ -441,14 +419,11 @@ export function createClaudeAgent(
             ...(resume && { resume }),
             lostWork: conversation?.lost ?? false,
             lostConversation: !!saved && !resume,
-            ...(conversation?.realigned && {
-              realigned: conversation.realigned,
-            }),
             started: (id) => {
               sessionId = id;
             },
           },
-          publish,
+          gitDir,
         );
       } finally {
         // Kept for the Session's next Turn, whether this one succeeded or not.
@@ -474,7 +449,6 @@ type TurnContinuity = {
   resume?: string;
   lostWork: boolean;
   lostConversation: boolean;
-  realigned?: Conversation["realigned"];
   /** Receives the session that holds this Turn's conversation. */
   started(sessionId: string): void;
 };
@@ -489,7 +463,7 @@ async function runTurns(
   http: typeof fetch,
   diagnostics?: Diagnostics,
   continuity?: TurnContinuity,
-  publish?: Publish,
+  gitDir?: string,
 ) {
   if (job.githubContext && !job.checkout)
     throw new Error("GitHub issue context requires a repository checkout");
@@ -503,7 +477,7 @@ async function runTurns(
         job.githubContext?.contentHash,
       )
     : undefined;
-  const sensitive = new Set([job.access.token, job.lease.bearer]);
+  const sensitive = new Set([job.access.token]);
   const agentSpan = diagnostics?.start(
     "agent",
     JSON.stringify({
@@ -545,30 +519,10 @@ async function runTurns(
     }
   };
 
-  const publication: PublicationCall | undefined =
-    publish &&
-    (async (input) => {
-      // The publication span records the outcome; the tool span only the call.
-      const span = diagnostics?.start(
-        "tool",
-        JSON.stringify({ name: publicationToolName }),
-        agentSpan,
-      );
-      const result = await callPublicationTool(publish, input);
-      if (span)
-        diagnostics?.end(span, {
-          outcome: result.success ? "succeeded" : "failed",
-        });
-      return result;
-    });
   const tailosTools: TailosTools = {
     ...(githubReader && { read: readGitHub }),
-    ...(publication && { publish: publication }),
   };
-  const tailosToolNames = [
-    ...(githubReader ? [githubToolName] : []),
-    ...(publication ? [publicationToolName] : []),
-  ];
+  const tailosToolNames = githubReader ? [githubToolName] : [];
   if (supportsSelection("claude", job.model, job.effort))
     throw new Error("Requested model or effort is unavailable");
   const selection: Partial<Options> = {
@@ -631,16 +585,8 @@ async function runTurns(
       job,
       signal,
       prompt:
-        continuityNotice(
-          continuity?.lostWork ?? false,
-          lostConversation,
-          continuity?.realigned,
-        ) +
-        agentPrompt(
-          job,
-          githubToolName,
-          publication ? publicationToolName : undefined,
-        ),
+        continuityNotice(continuity?.lostWork ?? false, lostConversation) +
+        agentPrompt(job, githubToolName),
       sensitive,
       async turn(prompt, revision, timeoutMs) {
         const first = revision === 0;
@@ -727,7 +673,10 @@ async function runTurns(
                   failIfUnavailable: true,
                   allowUnsandboxedCommands: false,
                   autoAllowBashIfSandboxed: true,
-                  filesystem: { allowWrite: [cwd, environment] },
+                  // The Agent commits, so it writes the git directory too.
+                  filesystem: {
+                    allowWrite: [cwd, environment, ...(gitDir ? [gitDir] : [])],
+                  },
                   // Claude Code cannot allow every host itself, so
                   // commands reach the internet through Tailos's proxy,
                   // which is not checked against these lists. The strict

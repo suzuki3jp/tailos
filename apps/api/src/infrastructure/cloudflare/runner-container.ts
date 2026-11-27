@@ -1,5 +1,5 @@
 import { dispatchSessionInbox } from "@/infrastructure/d1/session-inbox.ts";
-import { GitHubApp, WorkBranchMoved } from "@/infrastructure/github/app.ts";
+import { GitHubApp } from "@/infrastructure/github/app.ts";
 import {
   seal,
   unseal,
@@ -17,12 +17,7 @@ import {
   githubJobContext,
   maxContinuityBytes,
   maxRunnerJobBytes,
-  nextSessionBranch,
   RunnerStatus,
-  sessionBranch,
-  type PublicationRefusal,
-  type PublishedWork,
-  type SessionPublication,
   type RunnerJob,
 } from "@tailos/core/runner";
 import * as v from "valibot";
@@ -64,9 +59,8 @@ type RepositoryGrant = {
   attempts: number;
 };
 
-/** Authorizes the Runner's publication checkpoint and names the model connection. */
+/** Names the model connection the Run's Agent may use while it works. */
 type RefreshLease = {
-  digest: string;
   runId: string;
   /** The Model Provider of the connection; leases without it are Codex's. */
   engine?: "codex" | "claude";
@@ -88,10 +82,9 @@ type RunnerExports = {
 };
 
 /**
- * Set once the Agent's work is over. Publication runs before the container is
- * destroyed, so the egress Workers must stop adding the Run's credentials
- * first: otherwise a process the Agent left behind could push to the work
- * branch or keep using the model connection.
+ * Set once the Turn is over, before its work is saved and the container goes:
+ * the egress Workers stop adding the Run's credentials, so that a process the
+ * Agent left behind cannot use GitHub or the model connection afterwards.
  */
 const agentEgressClosed = "agentEgressClosed";
 /** The access version that the model API last rejected, forcing a refresh. */
@@ -154,39 +147,19 @@ type ContainerSnapshotRecord = { id: string; image: string };
 export const sessionIdleMs = 0;
 const idleUntilStorage = "idleUntil";
 const continuityStorage = "continuity";
-/**
- * The Run whose work is saved when it ends, and the base it works on.
- * `realigning` says it moves the Session's work onto a new start.
- */
-type ContinuityRun = { runId: string; baseSha: string; realigning?: boolean };
+/** The Run whose work is saved when it ends, and the base it works on. */
+type ContinuityRun = { runId: string; baseSha: string };
 const continuityRunStorage = "continuityRun";
 const continuityKey = (sessionId: string, runId: string) =>
   `sessions/v1/${sessionId}/continuity/${runId}`;
 
 /**
- * What the Session last published: the head of its branch, and the checked
- * work that made it, so that the same work sent again after a lost response
- * gets the same answer. `url` is set once the pull request is open.
- *
- * Once that pull request is merged, the Session moves to its next branch,
- * with nothing published yet: `realignFrom` keeps the commit it published
- * last, until a Turn has carried the Session's work onto the latest default
- * branch.
+ * The branches the current Run pushed, which the egress Worker records: the
+ * Run's result shows their pull requests.
  */
-type SessionPublicationRecord = {
-  branch: string;
-  /** The pull request's base, when it is not the default branch. */
-  base?: string;
-  sha?: string;
-  parentSha?: string;
-  tree?: string;
-  url?: string;
-  realignFrom?: string;
-};
-const sessionPublicationStorage = "sessionPublication";
-/** What this Run published last, which becomes its result. */
-type RunPublication = { branch: string; sha: string; url: string };
-const runPublicationStorage = "runPublication";
+const pushedBranchesStorage = "pushedBranches";
+/** The most branches one Run records. */
+export const maxPushedBranches = 20;
 
 /** Runs of this Session that wait for the current one to finish. */
 const queuedRuns = "queuedRuns";
@@ -203,7 +176,7 @@ const runStorage = [
   rejectedModelAccess,
   agentEgressClosed,
   continuityRunStorage,
-  runPublicationStorage,
+  pushedBranchesStorage,
 ] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
@@ -340,7 +313,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
           await this.ctx.storage.put(continuityStorage, {
             lost: true,
           } satisfies ContinuityRecord);
-          if (continuing.realigning) await this.realigned();
         } finally {
           // Saved once: a cleanup that is retried, for instance while the
           // GitHub token is revoked, must not save again after the container
@@ -370,19 +342,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       if (idleUntil && !(await this.ctx.storage.get<string>("runId")))
         await this.ctx.storage.setAlarm(idleUntil);
     }
-  }
-
-  /**
-   * The Session's work has moved onto its new start, or is gone: later Turns
-   * no longer realign it.
-   */
-  private async realigned() {
-    const record = await this.ctx.storage.get<SessionPublicationRecord>(
-      sessionPublicationStorage,
-    );
-    if (!record?.realignFrom) return;
-    const { realignFrom: _done, ...rest } = record;
-    await this.ctx.storage.put(sessionPublicationStorage, rest);
   }
 
   /** Destroys a container that waited for the next Turn long enough. */
@@ -487,7 +446,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       (result) => (result === "lost" ? "failed" : "succeeded"),
     );
     if (outcome === "skipped") return;
-    if (run.realigning) await this.realigned();
     // The saved work is the source of truth; the snapshot only restores it
     // faster, so a failed snapshot leaves the Turn as it is.
     const snapshot =
@@ -815,185 +773,23 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
   }
 
-  /** Publications of the Session, one at a time. */
-  private publications: Promise<unknown> = Promise.resolve();
-
   /**
-   * Commits work the Agent published with the publication tool on the
-   * Session's branch, and opens its pull request unless one is open.
+   * Records the branches the current Run pushed, as the egress Worker reads
+   * them from the push. Nothing is recorded once the Run's work is over.
    */
-  async publishWork(
-    runId: string,
-    bearer: string,
-    work: SessionPublication,
-  ): Promise<PublishedWork | PublicationRefusal> {
-    const next = this.publications.then(() =>
-      this.publishNow(runId, bearer, work),
-    );
-    this.publications = next.catch(() => {});
-    return next;
-  }
-
-  private async publishNow(
-    runId: string,
-    bearer: string,
-    work: SessionPublication,
-  ): Promise<PublishedWork | PublicationRefusal> {
-    const run = await this.env.DB.prepare(
-      `SELECT execution_context, step_state FROM runs
-       WHERE id = ? AND status = 'running' AND deadline_at > ?`,
-    )
-      .bind(runId, Date.now())
-      .first<{ execution_context: string; step_state: string | null }>();
-    const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
-    if (
-      !run ||
-      !lease ||
-      lease.runId !== runId ||
-      lease.expiresAt <= Date.now() ||
-      !matchRunLease(await hashRunLease(bearer), lease.digest)
-    )
-      return { error: "invalid_lease" };
-    const context = v.parse(
-      ExecutionContext,
-      JSON.parse(run.execution_context),
-    );
-    const step = v.safeParse(
-      v.object({ baseSha: v.string(), branch: v.string() }),
-      JSON.parse(run.step_state ?? "null"),
-    );
-    if (
-      context.engine === "fake" ||
-      context.mode === "plan" ||
-      !context.repository ||
-      !context.trigger ||
-      !step.success ||
-      step.output.branch !== work.branch
-    )
-      return { error: "invalid_publication" };
-    const target = {
-      repository: context.repository,
-      trigger: context.trigger,
-    };
-    const github = this.github;
-    if (!github) return { error: "publication_unavailable" };
-
-    let record = await this.ctx.storage.get<SessionPublicationRecord>(
-      sessionPublicationStorage,
-    );
-    const published =
-      record?.branch === work.branch && record.sha ? record : undefined;
-    const sameWork =
-      published?.parentSha === work.parentSha && published.tree === work.tree;
-    // A pull request keeps the base it was opened with.
-    const base =
-      work.base ?? published?.base ?? target.repository.defaultBranch;
-    if (
-      base === work.branch ||
-      (published &&
-        base !== (published.base ?? target.repository.defaultBranch))
-    )
-      return { error: "invalid_base" };
-    // The Runner builds on what the Session last published, or, the first
-    // time, on where the Turn started or where the Agent moved it.
-    const head = published?.sha ?? step.output.baseSha;
-    const moved =
-      !published &&
-      (work.parentSha !== head || base !== target.repository.defaultBranch);
-    if (!sameWork && work.parentSha !== head && !moved) {
-      // The Runner missed the answer to the publication that moved the
-      // branch from its parent: it builds on the new head instead.
-      if (published?.sha && published.parentSha === work.parentSha)
-        return { error: "parent_moved", sha: published.sha };
-      return { error: "invalid_publication" };
-    }
-
-    try {
-      // The start must be on the branch the pull request merges into.
-      if (
-        moved &&
-        !sameWork &&
-        !(await github.startsOn(target.repository, base, work.parentSha))
-      )
-        return { error: "invalid_base" };
-      if (!sameWork) {
-        const pull = await github.sessionPullRequest(
-          target.repository,
-          work.branch,
-          base,
-        );
-        if (pull.state === "merged") return { error: "pull_request_merged" };
-        const sha = await observeRun(
-          this.env.DB,
-          runId,
-          "commit",
-          () =>
-            github.commitSessionWork(
-              target.repository,
-              runId,
-              work,
-              lease.expiresAt,
-            ),
-          (result) => (result ? "succeeded" : "unknown"),
-        );
-        if (!sha) return { error: "publication_unavailable" };
-        // The branch has moved: record it before anything else can fail.
-        record = {
-          branch: work.branch,
-          ...(base !== target.repository.defaultBranch && { base }),
-          sha,
-          parentSha: work.parentSha,
-          tree: work.tree,
-          ...(pull.state === "open" && { url: pull.url }),
-        };
-        await this.ctx.storage.put(sessionPublicationStorage, record);
-      }
-      const sha = record?.sha;
-      if (!record || !sha) return { error: "publication_unavailable" };
-      if (!record.url) {
-        const current = record;
-        const pull = await github.sessionPullRequest(
-          target.repository,
-          work.branch,
-          current.base,
-        );
-        const url =
-          pull.state === "open"
-            ? pull.url
-            : await observeRun(
-                this.env.DB,
-                runId,
-                "pull_request",
-                () =>
-                  github.openPullRequest(
-                    target.repository,
-                    target.trigger,
-                    runId,
-                    {
-                      branch: current.branch,
-                      sha,
-                      headline: work.headline,
-                      ...(current.base && { base: current.base }),
-                    },
-                  ),
-                (result) => (result ? "succeeded" : "unknown"),
-              );
-        record = { ...current, url };
-        await this.ctx.storage.put(sessionPublicationStorage, record);
-      }
-      const url = record.url!;
-      await this.ctx.storage.put(runPublicationStorage, {
-        branch: record.branch,
-        sha,
-        url,
-      } satisfies RunPublication);
-      return { sha, url };
-    } catch (error) {
-      if (error instanceof WorkBranchMoved) return { error: "branch_moved" };
-      // oxlint-disable-next-line no-console -- Record publication failures without work data.
-      console.warn("Publishing the Session's work failed", { runId });
-      return { error: "publication_unavailable" };
-    }
+  async recordPush(runId: string | undefined, branches: string[]) {
+    await this.ctx.storage.transaction(async (storage) => {
+      const current = await storage.get<string>("runId");
+      if (!current || (runId !== undefined && current !== runId)) return;
+      if (await storage.get<boolean>(agentEgressClosed)) return;
+      const pushed = (await storage.get<string[]>(pushedBranchesStorage)) ?? [];
+      const next = [...new Set([...pushed, ...branches])].slice(
+        0,
+        maxPushedBranches,
+      );
+      if (next.length !== pushed.length)
+        await storage.put(pushedBranchesStorage, next);
+    });
   }
 
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
@@ -1020,10 +816,10 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin) return null;
     const connection = this.env.CREDENTIALS.getByName(context.connectionId);
+    // The egress Workers add the connection's credentials while this lease
+    // lasts.
     const lease = async (connectionVersion: string) => {
-      const bearer = newRunLease();
       await this.ctx.storage.put("refreshLease", {
-        digest: await hashRunLease(bearer),
         runId,
         engine: context.engine,
         connectionId: context.connectionId,
@@ -1031,8 +827,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
         expiresAt: deadlineAt,
         lastRefreshAt: 0,
       } satisfies RefreshLease);
-      // Base URL of the publication checkpoint.
-      return { url: origin + `/_runner/runs/${runId}/`, bearer };
     };
     const selection = {
       ...(context.model && { model: context.model }),
@@ -1042,6 +836,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     if (context.engine === "claude") {
       const access = await connection.issueClaudeAccess();
       if (!access) return null;
+      await lease(access.connectionVersion);
       return {
         ...base,
         engine: "claude",
@@ -1052,13 +847,12 @@ export class RunnerContainer extends DurableObject<Bindings> {
           token: placeholderClaudeToken,
           connectionVersion: access.connectionVersion,
         },
-        lease: await lease(access.connectionVersion),
       };
     }
 
     const access = await connection.issueAccess();
     if (!access) return null;
-    const refresh = await lease(access.connectionVersion);
+    await lease(access.connectionVersion);
     return {
       ...base,
       engine: "codex",
@@ -1073,7 +867,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
           deadlineAt,
         ),
       },
-      refresh,
     };
   }
 
@@ -1181,9 +974,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { status: "failed", errorCode: "runner_unavailable" } as const;
     if (previous && job.engine !== "fake")
       job.continuity = previous.restore ? { restore: previous.restore } : {};
-    let publishedSha: string | undefined;
-    let realignFrom: string | undefined;
-    let realign: { previousBase: string; publishedSha: string } | undefined;
     if (target && trigger && job.engine !== "fake") {
       const githubContext = githubJobContext(request.context);
       if (githubContext) job.githubContext = githubContext;
@@ -1194,52 +984,17 @@ export class RunnerContainer extends DurableObject<Bindings> {
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
-      const sessionId = await this.ctx.storage.get<string>("sessionId");
-      if (!sessionId)
-        return { status: "failed", errorCode: "runner_unavailable" } as const;
-      // The Session publishes to one branch, and builds on what it published.
-      let published = await this.ctx.storage.get<SessionPublicationRecord>(
-        sessionPublicationStorage,
-      );
-      // Once its pull request is merged, the Session moves to its next
-      // branch on the latest default branch. A pull request that cannot be
-      // read now is looked at again on the next Turn.
-      if (published?.sha && request.context.mode !== "plan") {
-        const pull = await github
-          .sessionPullRequest(target, published.branch, published.base)
-          .catch(() => null);
-        if (pull?.state === "merged") {
-          published = {
-            branch: nextSessionBranch(published.branch),
-            realignFrom: published.sha,
-          };
-          await this.ctx.storage.put(sessionPublicationStorage, published);
-        }
-      }
       const checkout = await github
-        .checkout(
-          target,
-          trigger,
-          published?.branch ?? sessionBranch(sessionId),
-          request.context.mode,
-        )
+        .checkout(target, trigger, request.context.mode)
         .catch(() => null);
-      publishedSha = published?.sha;
-      realignFrom = published?.realignFrom;
       if (!checkout)
         return {
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
-      // The saved work sits on the base it started from, not on the latest
-      // default branch, unless it moves there after a merge.
-      if (realignFrom && previous?.restore === "saved" && previous.baseSha)
-        realign = {
-          previousBase: previous.baseSha,
-          publishedSha: realignFrom,
-        };
-      else if (previous?.baseSha && !realignFrom)
-        checkout.baseSha = previous.baseSha;
+      // The Session's work stays on the base it started from; the Agent moves
+      // it to newer commits itself.
+      if (previous?.baseSha) checkout.baseSha = previous.baseSha;
       try {
         await this.ctx.storage.put("repositoryGrant", {
           value: await seal(
@@ -1250,18 +1005,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
           expiresAt: checkout.expiresAt,
           attempts: 0,
         } satisfies RepositoryGrant);
-        await this.env.DB.prepare(
-          "UPDATE runs SET step_state = ? WHERE id = ? AND status = 'running'",
-        )
-          .bind(
-            JSON.stringify({
-              version: 2,
-              baseSha: checkout.baseSha,
-              branch: checkout.branch,
-            }),
-            request.runId,
-          )
-          .run();
       } catch {
         await github.revoke(checkout.token).catch(() => {});
         return {
@@ -1273,9 +1016,8 @@ export class RunnerContainer extends DurableObject<Bindings> {
       job.checkout = {
         repository: target.repository,
         baseSha: checkout.baseSha,
-        branch: checkout.branch,
-        ...(publishedSha && { publishedSha }),
-        ...(realign && { realign }),
+        defaultBranch: target.defaultBranch,
+        author: checkout.author,
       };
     }
     // A long message, such as an issue comment, may not fit in a job.
@@ -1328,7 +1070,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
       await this.ctx.storage.put(continuityRunStorage, {
         runId: request.runId,
         baseSha: job.checkout!.baseSha,
-        ...(realignFrom && { realigning: true }),
       } satisfies ContinuityRun);
     }
     const response = await port.fetch("http://runner/job", {
@@ -1364,17 +1105,23 @@ export class RunnerContainer extends DurableObject<Bindings> {
             events: status.events,
           } as const);
     if (!repository || !trigger) return status;
-    // The Agent publishes with the publication tool: the Run's result is what
-    // it published last, if anything.
-    const published = await this.ctx.storage.get<RunPublication>(
-      runPublicationStorage,
-    );
-    return {
-      ...status,
-      publicationResult: published
-        ? { kind: "pull_request" as const, ...published }
-        : { kind: "no_changes" as const },
-    };
+    // The Agent pushes and opens pull requests itself: the Run's result shows
+    // those of the branches it pushed. They are only shown, so a lookup that
+    // fails leaves them out.
+    const branches =
+      (await this.ctx.storage.get<string[]>(pushedBranchesStorage)) ?? [];
+    const pullRequests = branches.length
+      ? await (
+          this.github?.branchPullRequests(repository, branches) ??
+          Promise.resolve([])
+        ).catch(() => [])
+      : [];
+    return pullRequests.length
+      ? {
+          ...status,
+          publicationResult: { kind: "pull_requests" as const, pullRequests },
+        }
+      : status;
   }
 
   private async readRunnerStatus(runId: string) {

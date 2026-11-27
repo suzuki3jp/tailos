@@ -18,8 +18,7 @@ import {
 } from "@/agent.ts";
 import { claudeAgent } from "@/claude-agent.ts";
 import { codexAgent } from "@/codex-agent.ts";
-import { createRunnerServer, publishWork } from "@/server.ts";
-import { PublicationRefused } from "@/agent.ts";
+import { createRunnerServer } from "@/server.ts";
 import { withDiagnosticSpan } from "@/diagnostic-operations.ts";
 
 async function listen(t: TestContext, agent?: AgentAdapter) {
@@ -417,17 +416,9 @@ test("runs a Claude job with the Claude agent and accepts only its own credentia
     prompt: "test",
     deadlineAt: Date.now() + 10_000,
     access: { token: "claude-oauth-token", connectionVersion: randomUUID() },
-    lease: {
-      url: "https://tailos.example/_runner/runs/1/credentials",
-      bearer: "b".repeat(64),
-    },
   } satisfies RunnerJob;
 
   // A job cannot mix the Codex and Claude credential shapes.
-  const { lease, ...withoutLease } = job;
-  expect(
-    v.safeParse(RunnerJobSchema, { ...withoutLease, refresh: lease }).success,
-  ).toBe(false);
   expect(
     v.safeParse(RunnerJobSchema, { ...job, engine: "codex" }).success,
   ).toBe(false);
@@ -531,7 +522,6 @@ test("takes the previous work only from the controller before the job and report
       connectionVersion: randomUUID(),
       accessVersion: randomUUID(),
     },
-    refresh: { url: "https://tailos.example/runs/", bearer: "a".repeat(64) },
   };
   expect((await sendJob(origin, job, other)).status).toBe(401);
   expect((await sendJob(origin, job)).status).toBe(202);
@@ -559,53 +549,4 @@ test("has no saved work for a job that does not carry work over", async (t) => {
   expect(
     (await fetch(`${origin}/job/${job.runId}/continuity`, control)).status,
   ).toBe(404);
-});
-
-test("asks the controller to publish and turns its refusals into outcomes", async () => {
-  const lease = {
-    url: "https://tailos.example/_runner/runs/run/",
-    bearer: "a".repeat(64),
-  };
-  const work = {
-    branch: `tailos/session/${randomUUID()}`,
-    parentSha: "a".repeat(40),
-    tree: "b".repeat(40),
-    headline: "feat: add the feature",
-    changes: { additions: [], deletions: [{ path: "old.ts" }] },
-  };
-  const answers = [
-    Response.json(
-      { sha: "c".repeat(40), url: "https://github.com/owner/repo/pull/1" },
-      { status: 200 },
-    ),
-    Response.json({ error: "pull_request_merged" }, { status: 409 }),
-    new Response("bad gateway", { status: 502 }),
-  ];
-  const requests: Request[] = [];
-  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
-    requests.push(new Request(url, init));
-    return answers.shift()!;
-  });
-  try {
-    const signal = AbortSignal.timeout(5_000);
-    await expect(publishWork(lease, work, signal)).resolves.toEqual({
-      sha: "c".repeat(40),
-      url: "https://github.com/owner/repo/pull/1",
-    });
-    expect(requests[0]!.url).toBe(
-      "https://tailos.example/_runner/runs/run/publish",
-    );
-    expect(requests[0]!.headers.get("Authorization")).toBe(
-      `Bearer ${lease.bearer}`,
-    );
-    expect(await requests[0]!.json()).toEqual(work);
-    await expect(publishWork(lease, work, signal)).rejects.toEqual(
-      new PublicationRefused({ error: "pull_request_merged" }),
-    );
-    await expect(publishWork(lease, work, signal)).rejects.toThrow(
-      "Publication unavailable",
-    );
-  } finally {
-    vi.unstubAllGlobals();
-  }
 });

@@ -50,70 +50,6 @@ const repositoryName = v.pipe(
 );
 export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
-// A Session publishes to its own branch, and to a numbered one after its
-// pull request is merged.
-export const workBranch = v.pipe(
-  v.string(),
-  v.regex(/^tailos\/session\/[a-f0-9-]{36}(?:-[2-9]|-[1-9][0-9]+)?$/),
-);
-/** The branch a Session publishes to; `n` counts its merged pull requests. */
-export const sessionBranch = (sessionId: string, n = 1) =>
-  `tailos/session/${sessionId}${n > 1 ? `-${n}` : ""}`;
-/** The branch a Session publishes to after the pull request of `branch` merged. */
-export function nextSessionBranch(branch: string) {
-  const match = /^tailos\/session\/([a-f0-9-]{36})(?:-([1-9][0-9]*))?$/.exec(
-    branch,
-  );
-  if (!match) throw new Error("Not a Session branch");
-  return sessionBranch(match[1]!, Number(match[2] ?? 1) + 1);
-}
-export const changeHeadline = v.pipe(
-  v.string(),
-  v.maxLength(100),
-  v.check((headline) => !/[\r\n]/.test(headline)),
-  v.regex(
-    /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([a-z0-9./_-]+\))?!?: [!-~](?:[ -~]*[!-~])?$/,
-  ),
-);
-const gitPath = v.pipe(
-  v.string(),
-  v.maxLength(4096),
-  v.check((path) =>
-    path
-      .split("/")
-      .every(
-        (part) =>
-          part !== "" &&
-          part !== "." &&
-          part !== ".." &&
-          part.toLowerCase() !== ".git" &&
-          !part.includes("\0"),
-      ),
-  ),
-);
-export const maxPublicationBytes = 4 * 1024 * 1024;
-export const FileChanges = v.strictObject({
-  additions: v.pipe(
-    v.array(
-      v.strictObject({
-        path: gitPath,
-        contents: v.pipe(
-          v.string(),
-          v.regex(
-            /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
-          ),
-        ),
-      }),
-    ),
-    v.maxLength(512),
-  ),
-  deletions: v.pipe(
-    v.array(v.strictObject({ path: gitPath })),
-    v.maxLength(512),
-  ),
-});
-export type FileChanges = v.InferOutput<typeof FileChanges>;
-
 export const RepositoryTarget = v.strictObject({
   repository: repositoryName,
   repositoryId: positiveId,
@@ -298,16 +234,20 @@ const repositoryJob = {
   checkout: v.optional(
     v.strictObject({
       repository: repositoryName,
+      // The commit the Session's work started from: the first Turn checks it
+      // out on a local branch named after the default branch.
       baseSha: gitSha,
-      branch: workBranch,
-      // The commit the Session last published to its branch, if any.
-      publishedSha: v.optional(gitSha),
-      // The Session's pull request was merged: the saved work, on
-      // `previousBase`, moves onto `baseSha`, the latest default branch,
-      // with what was not in `publishedSha` re-applied.
-      realign: v.optional(
-        v.strictObject({ previousBase: gitSha, publishedSha: gitSha }),
-      ),
+      defaultBranch: branch,
+      // Who the Agent's commits are by, unless it changes the git settings.
+      author: v.strictObject({
+        name: v.pipe(v.string(), v.regex(/^[A-Za-z0-9-]{1,100}\[bot\]$/)),
+        email: v.pipe(
+          v.string(),
+          v.regex(
+            /^[0-9]{1,20}\+[A-Za-z0-9-]{1,100}\[bot\]@users\.noreply\.github\.com$/,
+          ),
+        ),
+      }),
     }),
   ),
 };
@@ -328,11 +268,6 @@ export const RunnerContinuity = v.strictObject({
 });
 export type RunnerContinuity = v.InferOutput<typeof RunnerContinuity>;
 
-// Authorizes the Runner to call back into its Run's controller.
-const lease = v.strictObject({
-  url: v.pipe(v.string(), v.url()),
-  bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
-});
 // A pasted long-lived token: it cannot be refreshed, so it has no version.
 export const ClaudeAccess = v.strictObject({
   token: secret,
@@ -348,8 +283,6 @@ export const RunnerJob = v.variant("engine", [
     ...agentOptions,
     continuity: v.optional(RunnerContinuity),
     access: CodexAccess,
-    // Also the base URL of the publication checkpoint.
-    refresh: lease,
   }),
   v.strictObject({
     ...job,
@@ -359,8 +292,6 @@ export const RunnerJob = v.variant("engine", [
     continuity: v.optional(RunnerContinuity),
     // The token is a placeholder: the model egress Worker adds the real one.
     access: ClaudeAccess,
-    // Base URL of the publication checkpoint.
-    lease,
   }),
 ]);
 
@@ -390,8 +321,6 @@ export const RunnerStatus = v.variant("status", [
       "agent_failed",
       "deadline_exceeded",
       "sandbox_unavailable",
-      "invalid_change_headline",
-      "unsupported_changes",
     ]),
     events,
   }),
@@ -399,49 +328,6 @@ export const RunnerStatus = v.variant("status", [
 
 export type RunnerJob = v.InferOutput<typeof RunnerJob>;
 export type RunnerStatus = v.InferOutput<typeof RunnerStatus>;
-
-/**
- * Work the Agent publishes with the publication tool during a Turn: the whole
- * work tree, as changes from `parentSha`, the head of the Session's branch.
- */
-export const SessionPublication = v.strictObject({
-  branch: workBranch,
-  /**
-   * The branch the pull request merges into, when the Agent started from
-   * one other than the default branch. `parentSha` must be on it.
-   */
-  base: v.optional(branch),
-  parentSha: gitSha,
-  tree: gitSha,
-  headline: changeHeadline,
-  changes: FileChanges,
-});
-export type SessionPublication = v.InferOutput<typeof SessionPublication>;
-/** What a publication made: the signed commit and its pull request. */
-export const PublishedWork = v.strictObject({
-  sha: gitSha,
-  url: v.pipe(v.string(), v.url()),
-});
-export type PublishedWork = v.InferOutput<typeof PublishedWork>;
-/**
- * Why a publication was refused, in words the Agent can act on. With
- * `parent_moved`, an earlier publication whose answer was lost already moved
- * the branch to `sha`: the Runner builds on it and publishes again.
- */
-export const PublicationRefusal = v.union([
-  v.strictObject({
-    error: v.picklist([
-      "pull_request_merged",
-      "branch_moved",
-      "invalid_base",
-      "invalid_lease",
-      "invalid_publication",
-      "publication_unavailable",
-    ]),
-  }),
-  v.strictObject({ error: v.literal("parent_moved"), sha: gitSha }),
-]);
-export type PublicationRefusal = v.InferOutput<typeof PublicationRefusal>;
 
 export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;
 

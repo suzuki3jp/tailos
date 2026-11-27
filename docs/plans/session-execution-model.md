@@ -10,6 +10,7 @@
 | [Session 単位の隔離の境界](../pdr/records/PDR-20261123-repository-settings-session-boundary.md) | 隔離の境界を Session のコンテナとファイルシステムにする（PDR-20261114-009 の後継） |
 | [作業の引き継ぎ](../pdr/records/PDR-20261123-session-continuity.md) | Session の Durable Object がコンテナを持つ。スナップショットで速く戻し、正本は R2。待機時間は定数で既定 0 |
 | [公開ツール](../pdr/records/PDR-20261124-publication-base.md) | Agent が公開ツールを呼び、API が検査して署名付きコミットと PR を作る。Session が同時に開く PR は 1 つ。マージ後は未公開の作業を既定ブランチの最新に載せ直す。PR の base は公開ツールで指定する（PDR-20261124-publication-tool の後継） |
+| [git と gh での公開](../pdr/records/PDR-20261128-agent-git-publication.md) | 段階 5〜5c の公開ツールをやめ、ブランチ・コミット・PR を Agent が git と gh で直接扱う。Session ごとに PR を 1 つとする制限とマージ後の載せ直しをなくす（PDR-20261124-publication-base の後継、suzuki3jp/tailos#158） |
 | [計画会話の Routine](../pdr/records/PDR-20261125-planning-tables-dropped.md) | `@tailos plan` を Issue コメントで起動する読み取り専用の Routine にする。会話は Session の引き継ぎで続け、返信は Agent が gh で行い、状態コメントはアプリが続ける（PDR-20261113-012 の後継） |
 | [Routine の受付](../pdr/records/PDR-20261124-issue-routine-dispatch.md) | Session は Routine と Issue の組ごとに 1 つ。作業中の配送は捨てずに順番待ちにする（PDR-20261118-label-automation-dispatch の後継） |
 | [Issue の参照](../pdr/records/PDR-20261124-routine-github-context.md) / [Project の編集項目](../pdr/records/PDR-20261124-project-settings-routine-actors.md) | 計画も label と同じく受付時のイベントから内容ハッシュを作る。計画の許可ユーザーを plan Routine に移す |
@@ -152,6 +153,18 @@ suzuki3jp/tailos#164。本番での確認の後、移行のために残してい
 - 計画会話専用の `planning_*` のテーブルを DROP する（マイグレーション 0014、[判断](../pdr/records/PDR-20261125-planning-tables-dropped.md)）。
 - `admitTrigger` から label 専用の分岐と Routine の照合を外す。内部のスモーク用の起動は同時実行をまとめる（`coalesced`）ので、それは残す。
 - 旧形式の実行設定の読み替え（`upgradeStoredContext`）は外さない。保存済みの行を書き換えない判断があり、Session 画面からの続きが古い Turn の設定を読むためである。
+
+## 公開ツールの廃止
+
+判断: [git と gh での公開](../pdr/records/PDR-20261128-agent-git-publication.md)、[作業の引き継ぎ](../pdr/records/PDR-20261128-session-continuity-branches.md)、[外部通信](../pdr/records/PDR-20261128-agent-egress-turn-end.md)。suzuki3jp/tailos#158。段階 5〜5c で作った公開ツールと載せ直しを外す。
+
+- `tailos_publish`、`/_runner/runs/:runId/publish`、Session の公開の記録、マージの検知と載せ直し（`checkout.realign`）を外す。Runner に渡していたリース（`refresh` / `lease`）も、呼び返す先がなくなるので外す。
+- 最初の Turn は `git clone --depth 1` と同じ形（既定ブランチのローカルブランチ、`origin`）で始め、作者を GitHub App の bot にする。Codex・Claude Code のサンドボックスは git の管理ディレクトリにも書き込める。
+- 作業の保存（第 2 版）はローカルブランチ、HEAD のブランチ、リモート追跡ブランチの位置、Agent の git の設定を含む。Runner 自身の git 操作は Agent の設定を読まない。
+- GitHub 通信のプロキシが push のブランチ名を記録し、Turn の終わりにその PR を探して Run の結果にする（`kind: "pull_requests"`）。
+- 既定の実装 Routine の指示を、Agent が PR を作る文に変える（マイグレーション 0015）。
+
+完了条件: Agent が git と gh でブランチ・コミット・PR を作り、Turn をまたいでもブランチと設定が残る。Session 画面に push したブランチの PR が出る。
 
 ## 検証
 

@@ -1,6 +1,19 @@
+const pullRequestUrl = (value: unknown) => {
+  if (typeof value !== "string" || !URL.canParse(value)) return undefined;
+  const url = new URL(value);
+  return url.origin === "https://github.com" &&
+    /^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(url.pathname)
+    ? url.href
+    : undefined;
+};
+
+/**
+ * What a finished Run left to show: its plan, or the pull requests of the
+ * branches it pushed. Older Runs kept one pull request.
+ */
 export function runResult(result: string | null): {
   plan?: string;
-  url?: string;
+  urls?: string[];
 } {
   if (!result) return {};
   try {
@@ -25,12 +38,22 @@ export function runResult(result: string | null): {
       "url" in data &&
       typeof data.url === "string"
     ) {
-      const url = new URL(data.url);
-      if (
-        url.origin === "https://github.com" &&
-        /^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(url.pathname)
-      )
-        return { url: url.href };
+      const url = pullRequestUrl(data.url);
+      return url ? { urls: [url] } : {};
+    }
+    if (
+      data.kind === "pull_requests" &&
+      "pullRequests" in data &&
+      Array.isArray(data.pullRequests)
+    ) {
+      const urls = data.pullRequests.flatMap((pull: unknown) => {
+        const url =
+          pull && typeof pull === "object" && "url" in pull
+            ? pullRequestUrl(pull.url)
+            : undefined;
+        return url ? [url] : [];
+      });
+      return urls.length ? { urls } : {};
     }
   } catch {
     return {};

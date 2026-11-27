@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { accountSessionsQueryOptions } from "@/entities/session";
 import {
   parseTimelineMessage,
   type TimelineSnapshot,
@@ -113,11 +114,11 @@ export function openSessionTimeline(
                 : ["sessions", id],
               exact: true,
             });
-            if (projectId)
-              void cache.invalidateQueries({
-                queryKey: ["projects", projectId, "sessions"],
-                exact: true,
-              });
+            // Titles and order in the sidebar's Recent Sessions.
+            void cache.invalidateQueries({
+              queryKey: accountSessionsQueryOptions().queryKey,
+              exact: true,
+            });
           }
         })
         .catch(() => active.close());

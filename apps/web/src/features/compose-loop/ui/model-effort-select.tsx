@@ -4,15 +4,7 @@ import {
   agentModels,
   type AgentEngine,
 } from "@tailos/core/models";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/shared/ui/select";
+import { Select, type SelectGroup } from "@/shared/ui/design-systems";
 import { defaultModelEffort, modelEffortValue } from "../model/model-effort";
 
 const effortLabels: Record<string, string> = {
@@ -26,28 +18,25 @@ const effortLabels: Record<string, string> = {
   ultra: "Ultra",
 };
 
-type Option = { value: string; label: string };
-type Group = { key: string; label: string; options: Option[] };
-
 /** The choices of one Model Provider: its default, then each model. */
-function providerGroups(engine: AgentEngine): Group[] {
+function providerGroups(engine: AgentEngine): SelectGroup[] {
   const provider = agentEngineLabels[engine];
   return [
     {
-      key: engine,
+      id: engine,
       label: provider,
       options: [
         {
-          value: modelEffortValue(engine),
+          id: modelEffortValue(engine),
           label: `${provider} / Default model`,
         },
       ],
     },
     ...agentModels(engine).map(({ model, efforts }) => ({
-      key: `${engine}/${model}`,
+      id: `${engine}/${model}`,
       label: `${provider} · ${model}`,
       options: [undefined, ...efforts].map((effort) => ({
-        value: modelEffortValue(engine, model, effort),
+        id: modelEffortValue(engine, model, effort),
         label: `${model} / ${effort ? (effortLabels[effort] ?? effort) : "Default effort"}`,
       })),
     })),
@@ -70,52 +59,28 @@ export function ModelEffortSelect({
   engine?: AgentEngine;
 }) {
   const defaultOption = {
-    value: defaultModelEffort,
+    id: defaultModelEffort,
     label: engine
       ? `${agentEngineLabels[engine]} / Default model / effort`
       : "Default model / effort",
   };
   const groups = (engine ? [engine] : agentEngines).flatMap(providerGroups);
-  const items = [defaultOption, ...groups.flatMap(({ options }) => options)];
   return (
     <Select
-      items={items}
+      aria-label="Model provider, model and effort"
+      options={[defaultOption, ...groups]}
       {...(value === undefined
-        ? { defaultValue: defaultOption.value }
+        ? { defaultValue: defaultOption.id }
         : { value })}
       onValueChange={(next) => {
-        if (typeof next === "string") onValueChange?.(next);
+        if (next !== null) onValueChange?.(next);
       }}
       disabled={disabled}
-    >
-      <SelectTrigger
-        aria-label="Model provider, model and effort"
-        variant="ghost"
-        size="xs"
-        className="min-w-0 max-w-48"
-      >
-        <SelectValue className="truncate" />
-      </SelectTrigger>
-      <SelectContent
-        side="top"
-        align="end"
-        alignItemWithTrigger={false}
-        className="min-w-64 max-w-[calc(100vw-2rem)]"
-      >
-        <SelectItem value={defaultOption.value}>
-          {defaultOption.label}
-        </SelectItem>
-        {groups.map(({ key, label, options }) => (
-          <SelectGroup key={key}>
-            <SelectLabel>{label}</SelectLabel>
-            {options.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
+      variant="ghost"
+      size="xs"
+      className="max-w-48"
+      placement="top end"
+      popoverClassName="min-w-64 max-w-[calc(100vw-2rem)]"
+    />
   );
 }

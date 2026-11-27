@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Button } from "@/shared/ui/button";
+import { Button } from "@/shared/ui/design-systems";
 import {
   homeSessionsQueryOptions,
   requestErrorStatus,
@@ -68,8 +68,8 @@ export function SessionList() {
         !query.isFetchNextPageError && (
           <Button
             variant="outline"
-            disabled={query.isFetching}
-            onClick={() => void query.fetchNextPage()}
+            isDisabled={query.isFetching}
+            onPress={() => void query.fetchNextPage()}
           >
             {query.isFetchingNextPage ? "Loading…" : "Load more sessions"}
           </Button>

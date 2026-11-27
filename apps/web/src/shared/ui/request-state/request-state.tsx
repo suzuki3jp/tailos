@@ -1,3 +1,5 @@
+import { Button } from "../design-systems";
+
 export function RequestState({
   status,
   missing,
@@ -13,9 +15,9 @@ export function RequestState({
       <p role="alert" className="text-danger">
         データを取得できませんでした。
       </p>
-      <button type="button" className="action" onClick={retry}>
+      <Button unstyled type="button" className="action" onPress={retry}>
         再試行
-      </button>
+      </Button>
     </div>
   );
 }

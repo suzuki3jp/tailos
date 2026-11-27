@@ -1,3 +1,4 @@
+import { Button } from "@/shared/ui/design-systems";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
@@ -65,9 +66,10 @@ function Sidebar({
               Sessions
             </Link>
           )}
-          <button
+          <Button
+            unstyled
             type="button"
-            disabled
+            isDisabled
             title="Insights is not available"
             className={cn(
               sidebarItemClass,
@@ -76,7 +78,7 @@ function Sidebar({
           >
             <IconChartHistogram aria-hidden="true" size={20} />
             Insights
-          </button>
+          </Button>
           <Link
             href="/projects"
             aria-current={activePage === "settings" ? "page" : undefined}

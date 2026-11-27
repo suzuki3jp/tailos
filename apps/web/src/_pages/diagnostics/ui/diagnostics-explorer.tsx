@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, Input, Label } from "@/shared/ui/design-systems";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -48,14 +49,15 @@ function DiagnosticBody({
   }
   return (
     <div className="space-y-2">
-      <button
+      <Button
         type="button"
-        className="action"
+        variant="outline"
+        size="touch"
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onPress={() => setOpen(!open)}
       >
         {open ? "本文を閉じる" : "本文を読む"}
-      </button>
+      </Button>
       {open && renderBody()}
     </div>
   );
@@ -178,25 +180,25 @@ export function DiagnosticsExplorer() {
           setSelected(null);
         }}
       >
-        <label className="space-y-1">
+        <Label className="space-y-1">
           <span className="block text-sm">Run ID</span>
-          <input
-            className="rounded border border-rule px-3 py-2"
+          <Input
+            className="h-9"
             value={runInput}
             onChange={(event) => setRunInput(event.target.value)}
           />
-        </label>
-        <label className="space-y-1">
+        </Label>
+        <Label className="space-y-1">
           <span className="block text-sm">GitHub delivery ID</span>
-          <input
-            className="rounded border border-rule px-3 py-2"
+          <Input
+            className="h-9"
             value={deliveryInput}
             onChange={(event) => setDeliveryInput(event.target.value)}
           />
-        </label>
-        <button type="submit" className="action">
+        </Label>
+        <Button type="submit" variant="outline" size="touch">
           検索
-        </button>
+        </Button>
       </form>
       {traces.isError ? (
         <RequestState
@@ -215,27 +217,29 @@ export function DiagnosticsExplorer() {
             <ul className="space-y-3">
               {allTraces.map((item) => (
                 <li key={item.id}>
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     className={`w-full text-left ${item.id === traceId ? "text-signal" : "text-muted-foreground"}`}
-                    onClick={() => setSelected(item.id)}
+                    onPress={() => setSelected(item.id)}
                   >
                     <span className="block font-medium">{item.source}</span>
                     <span className="block break-all font-mono text-xs">
                       {item.requestId ?? item.runId ?? item.id}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
             {traces.hasNextPage && (
-              <button
+              <Button
                 type="button"
-                className="action"
-                onClick={() => void traces.fetchNextPage()}
+                variant="outline"
+                size="touch"
+                onPress={() => void traces.fetchNextPage()}
               >
                 さらに表示
-              </button>
+              </Button>
             )}
           </aside>
           {traceId && (
@@ -253,13 +257,14 @@ export function DiagnosticsExplorer() {
               </header>
               {renderEvents()}
               {events.hasNextPage && (
-                <button
+                <Button
                   type="button"
-                  className="action"
-                  onClick={() => void events.fetchNextPage()}
+                  variant="outline"
+                  size="touch"
+                  onPress={() => void events.fetchNextPage()}
                 >
                   続きの履歴を読む
-                </button>
+                </Button>
               )}
             </section>
           )}

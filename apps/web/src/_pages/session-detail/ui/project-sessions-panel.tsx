@@ -8,7 +8,7 @@ import {
   IconMessageReport,
 } from "@tabler/icons-react";
 import { sessionPath } from "@/shared/lib/session-path";
-import { Button } from "@/shared/ui/button";
+import { Button } from "@/shared/ui/design-systems";
 import { RequestState } from "@/widgets/request-state";
 import {
   projectSessionsQueryOptions,
@@ -90,8 +90,8 @@ export function ProjectSessionsPanel({
           <Button
             variant="ghost"
             size="sm"
-            disabled={sessions.isFetching}
-            onClick={() => void sessions.fetchNextPage()}
+            isDisabled={sessions.isFetching}
+            onPress={() => void sessions.fetchNextPage()}
           >
             {sessions.isFetchingNextPage
               ? "Loading sessions…"

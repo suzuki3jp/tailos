@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type { AgentEngine } from "@tailos/core/models";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/shared/ui/button";
+import { Button } from "@/shared/ui/design-systems";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { RequestState } from "@/widgets/request-state";
 import {
@@ -187,7 +187,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void timeline.refetch()}
+                onPress={() => void timeline.refetch()}
               >
                 Retry
               </Button>
@@ -198,8 +198,8 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
               <Button
                 variant="ghost"
                 size="sm"
-                disabled={timeline.loadingOlder}
-                onClick={() => void timeline.loadOlder()}
+                isDisabled={timeline.loadingOlder}
+                onPress={() => void timeline.loadOlder()}
               >
                 {olderLabel(timeline.loadingOlder, timeline.olderError)}
               </Button>
@@ -216,7 +216,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
+            onPress={() => {
               pinned.current = true;
               setNewActivity(false);
               if (scroll.current)

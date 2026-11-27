@@ -57,13 +57,84 @@ export default { meta: { name: "tailos-web" }, rules: { boundaries: createWebBou
       rules: { "tailos-web/boundaries": "error" },
     }),
   );
-  return run(oxlint, root, [
-    "--threads=1",
-    "--config",
-    ".oxlintrc.json",
-    "src",
-  ]);
+  return run(oxlint, root, ["--threads=1", "--config", ".oxlintrc.json", "."]);
 }
+
+test("Oxlint allows React Aria in the design system and its public API elsewhere", async (t) => {
+  const result = await boundaryFixture(t, {
+    "src/shared/ui/design-systems/button.tsx":
+      'import { Button as AriaButton } from "react-aria-components/Button"; export const Button = () => <AriaButton />;',
+    "src/shared/ui/design-systems/lib/types.ts":
+      'export type Key = import("@react-types/shared").Key;',
+    "src/app/page.tsx":
+      'import { Button } from "@/shared/ui/design-systems"; export const Page = () => <Button />;',
+  });
+  assert.equal(result.status, 0, result.output);
+});
+
+test("Oxlint rejects direct React Aria imports outside the design system", async (t) => {
+  const cases = {
+    "src/app/provider.tsx":
+      'import { RouterProvider } from "react-aria-components"; export { RouterProvider };',
+    "src/_pages/home/ui/input.tsx":
+      'export { Input } from "react-aria-components/Input";',
+    "src/shared/ui/design-systems-extra/index.ts":
+      'export * from "react-aria";',
+    "src/features/action/design-systems/select.ts":
+      'import type { AriaSelectProps } from "@react-aria/select"; export type Props = AriaSelectProps;',
+    "src/shared/lib/async.ts":
+      "export const load = () => import(`react-aria/useButton`);",
+    "src/shared/lib/import-type.ts":
+      'export type Key = import("@react-types/shared").Key;',
+    "src/shared/lib/import-equals.ts":
+      'import Stately = require("react-stately"); export { Stately };',
+    "apps/api/src/example.cjs":
+      'module.exports = require("@react-stately/select");',
+  };
+  const result = await boundaryFixture(t, cases);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /Direct imports of .* are allowed only in/);
+  for (const path of Object.keys(cases)) {
+    assert.ok(result.output.includes(path), result.output);
+  }
+});
+
+test("Oxlint rejects raw form tags outside the real design system", async (t) => {
+  const tags = ["select", "button", "label", "option", "input", "textarea"];
+  const cases = Object.fromEntries(
+    tags.map((tag) => [
+      `src/_pages/example/ui/${tag}.test.tsx`,
+      `export const control = <${tag} />;`,
+    ]),
+  );
+  const result = await boundaryFixture(t, {
+    ...cases,
+    "apps/api/other/design-systems/raw.tsx":
+      "export const control = <button />;",
+  });
+  assert.equal(result.status, 1, result.output);
+  for (const tag of tags) {
+    assert.ok(
+      result.output.includes(`Raw <${tag}> is only allowed`),
+      result.output,
+    );
+    assert.ok(result.output.includes(`${tag}.test.tsx`), result.output);
+  }
+  assert.ok(
+    result.output.includes("apps/api/other/design-systems/raw.tsx"),
+    result.output,
+  );
+});
+
+test("Oxlint allows form tags in the design system and components elsewhere", async (t) => {
+  const result = await boundaryFixture(t, {
+    "src/shared/ui/design-systems/fields.tsx":
+      "export const controls = <><label><input /></label><select><option /></select><button /><textarea /></>;",
+    "src/_pages/example/ui/fields.tsx":
+      'import { Button, Select } from "@/shared/ui/design-systems"; export const controls = <><Button /><Select /><form /></>;',
+  });
+  assert.equal(result.status, 0, result.output);
+});
 
 test("Oxlint allows public adapters, framework composition and API types", async (t) => {
   const result = await boundaryFixture(t, {

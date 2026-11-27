@@ -8,6 +8,10 @@ import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
 import { hashRunLease, newRunLease } from "@/infrastructure/auth/run-lease.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import {
+  implementationPrompt,
+  legacyImplementationPrompt,
+} from "@/application/routines/routines.ts";
+import {
   maxPushedBranches,
   placeholderClaudeToken,
   RunnerContainer,
@@ -331,11 +335,15 @@ test("a Claude Turn gets a placeholder token, and only its egress gets the real 
       connectionId,
       model: "claude-opus-5-5",
       effort: "max",
+      // A Session started before the Agent opened pull requests itself.
+      instructions: legacyImplementationPrompt,
     },
   });
 
   expect(getByName).toHaveBeenCalledWith(connectionId);
   expect(job).toMatchObject({
+    prompt: implementationPrompt,
+    message: "Fix the bug",
     engine: "claude",
     model: "claude-opus-5-5",
     effort: "max",
@@ -493,20 +501,24 @@ async function pushingRun(t: import("vitest").TestContext) {
 
 test("records the branches a Run pushes only while it works", async (t) => {
   const { runner, runId, stored } = await pushingRun(t);
-  await runner.recordPush(runId, ["feature", "fix"]);
-  await runner.recordPush(undefined, ["fix", "docs"]);
+  const repo = "owner/private";
+  await runner.recordPush(runId, repo, ["feature", "fix"]);
+  await runner.recordPush(undefined, repo, ["fix", "docs"]);
   // Another Run's pushes, or pushes after the work is over, are not this
   // Run's.
-  await runner.recordPush(crypto.randomUUID(), ["other"]);
-  expect(stored.get("pushedBranches")).toEqual(["feature", "fix", "docs"]);
+  await runner.recordPush(crypto.randomUUID(), repo, ["other"]);
+  expect(stored.get("pushedBranches")).toEqual(
+    ["feature", "fix", "docs"].map((branch) => ({ repository: repo, branch })),
+  );
   await runner.recordPush(
     runId,
+    repo,
     Array.from({ length: 30 }, (_, i) => `many-${i}`),
   );
   expect(stored.get("pushedBranches")).toHaveLength(maxPushedBranches);
   stored.set("agentEgressClosed", true);
   stored.delete("pushedBranches");
-  await runner.recordPush(runId, ["late"]);
+  await runner.recordPush(runId, repo, ["late"]);
   expect(stored.has("pushedBranches")).toBe(false);
 });
 
@@ -516,7 +528,10 @@ test("a Turn's result is the pull requests of the branches it pushed", async (t)
   const lookup = vi
     .spyOn(GitHubApp.prototype, "branchPullRequests")
     .mockResolvedValue([{ branch: "feature", url }]);
-  await runner.recordPush(runId, ["feature", "no-pull-request"]);
+  await runner.recordPush(runId, "Owner/Private", ["feature"]);
+  await runner.recordPush(runId, "owner/private", ["no-pull-request"]);
+  // A push to another repository is not this Run's work in its target.
+  await runner.recordPush(runId, "other/repo", ["elsewhere"]);
 
   await runner.alarm();
   expect(lookup).toHaveBeenCalledExactlyOnceWith(repository, [
@@ -540,7 +555,7 @@ test("a Turn that pushed nothing, or whose pull requests cannot be read, is comp
   const lookup = vi
     .spyOn(GitHubApp.prototype, "branchPullRequests")
     .mockRejectedValue(new Error("GitHub unavailable"));
-  await runner.recordPush(runId, ["feature"]);
+  await runner.recordPush(runId, "owner/private", ["feature"]);
 
   await runner.alarm();
   expect(lookup).toHaveBeenCalledOnce();

@@ -80,12 +80,19 @@ export async function readPushedBranches(
   };
 }
 
-/** Whether a request is a git push to a repository on GitHub. */
-const isPush = (request: Request, url: URL) =>
-  request.method === "POST" &&
-  url.hostname === "github.com" &&
-  /^\/[^/]+\/[^/]+\/git-receive-pack$/.test(url.pathname) &&
-  !request.headers.get("content-encoding");
+/** The repository a git push goes to, as `owner/name`; none for other requests. */
+function pushRepository(request: Request, url: URL) {
+  if (
+    request.method !== "POST" ||
+    url.hostname !== "github.com" ||
+    request.headers.get("content-encoding")
+  )
+    return undefined;
+  const match = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/git-receive-pack$/.exec(
+    url.pathname,
+  );
+  return match ? `${match[1]}/${match[2]}` : undefined;
+}
 
 const denied = (status: number, message: string) =>
   new Response(message, {
@@ -104,7 +111,7 @@ export async function forwardGitHubRequest(
   request: Request,
   token: () => Promise<string | null | undefined>,
   upstream: typeof fetch = fetch,
-  recordPush?: (branches: string[]) => Promise<void>,
+  recordPush?: (repository: string, branches: string[]) => Promise<void>,
 ): Promise<Response> {
   const url = new URL(request.url);
   if (
@@ -130,10 +137,12 @@ export async function forwardGitHubRequest(
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   let body = request.body;
   // The Run's result shows the pull requests of the branches it pushed.
-  if (recordPush && body && isPush(request, url)) {
+  const repository = pushRepository(request, url);
+  if (recordPush && body && repository) {
     const push = await readPushedBranches(body);
     body = push.body;
-    if (push.branches.length) await recordPush(push.branches).catch(() => {});
+    if (push.branches.length)
+      await recordPush(repository, push.branches).catch(() => {});
   }
   // A redirect target is outside this check: return it to the client as is.
   return upstream(
@@ -159,7 +168,8 @@ export class GitHubEgress extends WorkerEntrypoint<
       request,
       async () => runner?.githubToken(runId),
       fetch,
-      async (branches) => runner?.recordPush(runId, branches),
+      async (repository, branches) =>
+        runner?.recordPush(runId, repository, branches),
     );
   }
 }

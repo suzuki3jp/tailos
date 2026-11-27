@@ -42,6 +42,7 @@ import {
   registerDiagnosticProducer,
 } from "@/infrastructure/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
+import { currentInstructions } from "@/application/routines/routines.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
 import { runStarter } from "./run-start.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
@@ -154,9 +155,11 @@ const continuityKey = (sessionId: string, runId: string) =>
   `sessions/v1/${sessionId}/continuity/${runId}`;
 
 /**
- * The branches the current Run pushed, which the egress Worker records: the
- * Run's result shows their pull requests.
+ * The branches the current Run pushed, and the repository of each, which the
+ * egress Worker records: the Run's result shows the pull requests of those in
+ * its target repository.
  */
+type PushedBranch = { repository: string; branch: string };
 const pushedBranchesStorage = "pushedBranches";
 /** The most branches one Run records. */
 export const maxPushedBranches = 20;
@@ -777,16 +780,27 @@ export class RunnerContainer extends DurableObject<Bindings> {
    * Records the branches the current Run pushed, as the egress Worker reads
    * them from the push. Nothing is recorded once the Run's work is over.
    */
-  async recordPush(runId: string | undefined, branches: string[]) {
+  async recordPush(
+    runId: string | undefined,
+    repository: string,
+    branches: string[],
+  ) {
     await this.ctx.storage.transaction(async (storage) => {
       const current = await storage.get<string>("runId");
       if (!current || (runId !== undefined && current !== runId)) return;
       if (await storage.get<boolean>(agentEgressClosed)) return;
-      const pushed = (await storage.get<string[]>(pushedBranchesStorage)) ?? [];
-      const next = [...new Set([...pushed, ...branches])].slice(
-        0,
-        maxPushedBranches,
-      );
+      const pushed =
+        (await storage.get<PushedBranch[]>(pushedBranchesStorage)) ?? [];
+      const next = [...pushed];
+      for (const branch of branches)
+        if (
+          next.length < maxPushedBranches &&
+          !next.some(
+            (known) =>
+              known.repository === repository && known.branch === branch,
+          )
+        )
+          next.push({ repository, branch });
       if (next.length !== pushed.length)
         await storage.put(pushedBranchesStorage, next);
     });
@@ -798,8 +812,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
       () => undefined,
     );
     // A Routine's message is what someone wrote; its prompt says what to do.
-    const instructions =
-      context.engine === "fake" ? undefined : context.instructions;
+    const instructions = currentInstructions(
+      context.engine === "fake" ? undefined : context.instructions,
+    );
     const base = {
       version: 1 as const,
       ...(context.mode === "plan" && { mode: "plan" as const }),
@@ -1108,8 +1123,13 @@ export class RunnerContainer extends DurableObject<Bindings> {
     // The Agent pushes and opens pull requests itself: the Run's result shows
     // those of the branches it pushed. They are only shown, so a lookup that
     // fails leaves them out.
-    const branches =
-      (await this.ctx.storage.get<string[]>(pushedBranchesStorage)) ?? [];
+    // GitHub names repositories without regard to case.
+    const target = repository.repository.toLowerCase();
+    const branches = (
+      (await this.ctx.storage.get<PushedBranch[]>(pushedBranchesStorage)) ?? []
+    )
+      .filter((pushed) => pushed.repository.toLowerCase() === target)
+      .map((pushed) => pushed.branch);
     const pullRequests = branches.length
       ? await (
           this.github?.branchPullRequests(repository, branches) ??

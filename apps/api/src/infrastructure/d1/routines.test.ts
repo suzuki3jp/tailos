@@ -7,6 +7,7 @@ import { dispatchIssueEvent } from "@/application/routines/dispatch-issue.ts";
 import type { IssueMessage } from "@/application/triggers/admit-trigger.ts";
 import {
   implementationPrompt,
+  legacyImplementationPrompt,
   type RoutineSettings,
 } from "@/application/routines/routines.ts";
 const owner = "00000000-0000-4000-8000-000000000001";
@@ -131,8 +132,7 @@ test("migration preserves label configuration as an enabled Routine and removes 
   });
 });
 test("migration gives Routines with the old default prompt the new one, and keeps written prompts", async (t) => {
-  const oldDefault =
-    "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.";
+  const oldDefault = legacyImplementationPrompt;
   const projectId = crypto.randomUUID();
   const routine = (id: string, prompt: string, deletedAt: number | null) => [
     id,

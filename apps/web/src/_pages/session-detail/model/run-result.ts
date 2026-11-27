@@ -3,7 +3,7 @@ const pullRequestUrl = (value: unknown) => {
   const url = new URL(value);
   return url.origin === "https://github.com" &&
     /^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(url.pathname)
-    ? url.href
+    ? url.origin + url.pathname.replace(/\/$/, "")
     : undefined;
 };
 

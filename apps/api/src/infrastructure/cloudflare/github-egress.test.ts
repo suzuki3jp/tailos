@@ -138,9 +138,9 @@ test("names no branches for a push whose commands cannot be read", async () => {
 
 test("records a push's branches before forwarding it, and nothing else", async () => {
   const { sent, upstream } = capture();
-  const recorded: string[][] = [];
-  const recordPush = vi.fn(async (branches: string[]) => {
-    recorded.push(branches);
+  const recorded: [string, string[]][] = [];
+  const recordPush = vi.fn(async (repository: string, branches: string[]) => {
+    recorded.push([repository, branches]);
   });
   const response = await forwardGitHubRequest(
     new Request("https://github.com/owner/repo.git/git-receive-pack", {
@@ -153,7 +153,7 @@ test("records a push's branches before forwarding it, and nothing else", async (
     recordPush,
   );
   expect(response.status).toBe(200);
-  expect(recorded).toEqual([["feature", "fix/nested"]]);
+  expect(recorded).toEqual([["owner/repo", ["feature", "fix/nested"]]]);
   expect(await sent[0]!.text()).toBe(push);
 
   // A fetch is not a push; a failed record does not stop the push.
@@ -180,7 +180,10 @@ test("records a push's branches before forwarding it, and nothing else", async (
     failing,
   );
   expect(pushed.status).toBe(200);
-  expect(failing).toHaveBeenCalledOnce();
+  expect(failing).toHaveBeenCalledExactlyOnceWith("owner/repo", [
+    "feature",
+    "fix/nested",
+  ]);
   expect(await sent[2]!.text()).toBe(push);
 
   // Without the Run's token nothing is read or recorded.

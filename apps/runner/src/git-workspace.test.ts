@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { expect, test, type TestContext } from "vitest";
+import { expect, test, vi, type TestContext } from "vitest";
 import {
   bundlePrerequisites,
   runInGitWorkspace,
@@ -26,6 +26,10 @@ import {
   type Diagnostics,
 } from "@tailos/core/diagnostics";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
+
+// Each Turn runs real git commands, several Turns to a test: slower machines
+// such as CI need more than the default time.
+vi.setConfig({ testTimeout: 30_000 });
 
 const author = {
   name: "tailos-app[bot]",
@@ -365,6 +369,23 @@ test("carries a detached HEAD and branches from a shallow fetch over", async (t)
       `${repo.baseSha}\n${mine}`,
     );
     expect(agentGit(cwd, "show", "mine:unrelated.txt")).toBe("three");
+    return result;
+  });
+  expect(second.result).toEqual(result);
+});
+
+test("keeps the files of a branch without commits yet", async (t) => {
+  const repo = await repository(t);
+  const first = await turn(repo, undefined, async ({ cwd }) => {
+    agentGit(cwd, "switch", "--quiet", "--orphan", "docs");
+    await writeFile(join(cwd, "guide.md"), "guide\n");
+    return result;
+  });
+  const saved = await decodeSavedWork(archiveOf(first.saved));
+  expect(saved).toMatchObject({ head: repo.baseSha });
+  expect(saved.branch).toBeUndefined();
+  const second = await turn(repo, archiveOf(first.saved), async ({ cwd }) => {
+    expect(await readFile(join(cwd, "guide.md"), "utf8")).toBe("guide\n");
     return result;
   });
   expect(second.result).toEqual(result);

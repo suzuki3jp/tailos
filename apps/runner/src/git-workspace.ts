@@ -472,8 +472,14 @@ export async function runInGitWorkspace(
     let agentConfig: Buffer | undefined;
     try {
       agentConfig = await asRunner();
-      const head = await text(["rev-parse", "HEAD"], options);
-      const branch = await headBranch(options);
+      // A branch without commits yet has no HEAD: its files are kept as
+      // changes on the base, without the branch.
+      const born = await text(
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        options,
+      ).catch(() => undefined);
+      const head = born || checkout.baseSha;
+      const branch = born ? await headBranch(options) : undefined;
       const refs = await keptRefs(options);
       const tree = await workTree(head, options);
       const work = await text(

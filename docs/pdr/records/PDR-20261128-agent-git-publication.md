@@ -34,7 +34,7 @@ decided_by: suzuki3jp
 - 作業ツリーには、対象リポジトリを指す `origin` と、GitHub App の bot を作者とする git の設定（`user.name` は `<App の slug>[bot]`、`user.email` はその bot の noreply アドレス）を Runner が置く。Agent はこの設定を変えてもよい（変えられないようにすることは suzuki3jp/tailos#182 で検討する）。
 - Tailos は、Turn の中で Agent が push したブランチを GitHub 通信のプロキシで記録する。git の push（`git-receive-pack`）の先頭にある ref の更新から `refs/heads/` のブランチ名だけを読み、push の中身は読まない。
 - Turn が成功したら、その Turn で push したブランチを head とする PR を GitHub で探し、Run の結果として Session に表示する。PR がなければ結果は「完了」とする。
-- label 起動の Routine は、Run の終わりに Tailos が公開する作りから、Routine の指示で Agent が PR を作る形に移す。既定の実装 Routine の指示を「ブランチにコミットして push し、gh で Issue を参照する PR を作る」に変える。既定の指示のまま変更されていない Routine の指示も、同じ文に書き換える。
+- label 起動の Routine は、Run の終わりに Tailos が公開する作りから、Routine の指示で Agent が PR を作る形に移す。既定の実装 Routine の指示を「ブランチにコミットして push し、gh で Issue を参照する PR を作る」に変える。既定の指示のまま変更されていない Routine の指示も、同じ文に書き換える。移行の前に始まった Session の続きの Turn も、旧既定の指示を持ち越していれば新しい指示で動かす。
 
 ## 理由
 

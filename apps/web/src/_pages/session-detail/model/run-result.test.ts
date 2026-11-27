@@ -24,6 +24,12 @@ test("shows the one pull request an older Run published", () => {
       JSON.stringify({ version: 1, kind: "pull_request", url: pull(3) }),
     ),
   ).toEqual({ urls: [pull(3)] });
+  // The link ends in the number, which labels it.
+  expect(
+    runResult(
+      JSON.stringify({ kind: "pull_request", url: `${pull(5)}/?x=1#y` }),
+    ),
+  ).toEqual({ urls: [pull(5)] });
 });
 
 test("leaves out links that are not GitHub pull requests", () => {

@@ -1,10 +1,21 @@
-import * as React from "react";
-import { Input as InputPrimitive } from "@base-ui/react/input";
-import { cn } from "../lib/cn";
+"use client";
 
-function Input({ className, type, ...props }: React.ComponentProps<"input">) {
+import {
+  Input as AriaInput,
+  type InputProps as AriaInputProps,
+} from "react-aria-components/Input";
+import type { RefAttributes } from "react";
+import { cn } from "../../lib/cn";
+
+function Input({
+  className,
+  type,
+  ...props
+}: Omit<AriaInputProps, "className"> & {
+  className?: string;
+} & RefAttributes<HTMLInputElement>) {
   return (
-    <InputPrimitive
+    <AriaInput
       type={type}
       data-slot="input"
       className={cn(

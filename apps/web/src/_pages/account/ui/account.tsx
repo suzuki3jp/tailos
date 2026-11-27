@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/shared/ui/design-systems";
 import { useQuery } from "@tanstack/react-query";
 import { browserApiBaseUrl } from "@/shared/config";
 import { RequestState } from "@/shared/ui/request-state";
@@ -27,9 +28,9 @@ export function Account() {
   if (!data) {
     return (
       <form method="post" action={`${browserApiBaseUrl}/auth/login`}>
-        <button className="action action-primary" type="submit">
+        <Button variant="default" size="touch" type="submit">
           GitHub でログイン
-        </button>
+        </Button>
       </form>
     );
   }
@@ -49,9 +50,9 @@ export function Account() {
           </a>
         )}
         <form method="post" action={`${browserApiBaseUrl}/auth/logout`}>
-          <button className="action" type="submit">
+          <Button variant="outline" size="touch" type="submit">
             ログアウト
-          </button>
+          </Button>
         </form>
       </div>
     </div>

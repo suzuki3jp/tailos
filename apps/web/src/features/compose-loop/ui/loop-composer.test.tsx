@@ -1,3 +1,4 @@
+import { Button } from "@/shared/ui/design-systems";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
@@ -14,13 +15,13 @@ test("shares the model control and keeps the session composer editable with send
             mode={mode}
             message=""
             onMessageChange={() => {}}
-            projectSelect={<button type="button">Pick a project</button>}
+            projectSelect={<Button type="button">Pick a project</Button>}
           />
         </QueryClientProvider>,
       );
     const session = render("session");
     expect(session).toMatch(
-      /<button[^>]*disabled=""[^>]*aria-label="Send message"/,
+      /<button(?=[^>]*\sdisabled="")[^>]*aria-label="Send message"/,
     );
     expect(session).toMatch(/<textarea[^>]*aria-label="Message"/);
     expect(session).toContain('aria-label="Model provider, model and effort"');
@@ -28,7 +29,9 @@ test("shares the model control and keeps the session composer editable with send
     const home = render("home");
     expect(home).toContain("Pick a project");
     // Without a send handler, the home composer cannot send either.
-    expect(home).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Start loop"/);
+    expect(home).toMatch(
+      /<button(?=[^>]*\sdisabled="")[^>]*aria-label="Start loop"/,
+    );
     expect(home).toContain('aria-label="Model provider, model and effort"');
   } finally {
     client.clear();
@@ -51,11 +54,11 @@ test("home sending is enabled with a handler and shows the send status", () => {
         </QueryClientProvider>,
       );
     expect(render({})).not.toMatch(
-      /<button[^>]*disabled=""[^>]*aria-label="Start loop"/,
+      /<button(?=[^>]*\sdisabled="")[^>]*aria-label="Start loop"/,
     );
     for (const blocked of [{ pending: true }, { disabled: true }])
       expect(render(blocked)).toMatch(
-        /<button[^>]*disabled=""[^>]*aria-label="Start loop"/,
+        /<button(?=[^>]*\sdisabled="")[^>]*aria-label="Start loop"/,
       );
     const failed = render({ status: "Your message wasn’t sent." });
     expect(failed).toContain('role="status"');

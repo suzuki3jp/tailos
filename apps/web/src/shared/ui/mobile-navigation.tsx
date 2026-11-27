@@ -2,36 +2,28 @@
 
 import { useState, type ReactNode } from "react";
 import { IconMenu2 } from "@tabler/icons-react";
-import { Button } from "./button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-  SheetTrigger,
-} from "./sheet";
+import { Button, Dialog, SheetContent } from "./design-systems";
 
 export function MobileNavigation({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className="md:hidden"
-            aria-label="Open navigation"
-          />
-        }
+    <Dialog isOpen={open} onOpenChange={setOpen}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden"
+        aria-label="Open navigation"
       >
         <IconMenu2 aria-hidden="true" />
-      </SheetTrigger>
+      </Button>
       <SheetContent
         lang="en"
         side="left"
+        title="Navigation"
+        description="Open a Tailos page."
+        hideHeading
         showCloseButton={false}
-        className="gap-0 overflow-y-auto bg-sidebar p-0 data-[side=left]:w-60"
+        className="w-60 gap-0 bg-sidebar"
         onClick={(event) => {
           if (
             event.target instanceof Element &&
@@ -40,12 +32,8 @@ export function MobileNavigation({ children }: { children: ReactNode }) {
             setOpen(false);
         }}
       >
-        <SheetTitle className="sr-only">Navigation</SheetTitle>
-        <SheetDescription className="sr-only">
-          Open a Tailos page.
-        </SheetDescription>
         {children}
       </SheetContent>
-    </Sheet>
+    </Dialog>
   );
 }

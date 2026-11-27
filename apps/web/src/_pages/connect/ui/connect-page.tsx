@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/shared/ui/design-systems";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
 import { connectionQueryOptions, connectionKey } from "../api/queries";
@@ -61,20 +62,19 @@ export function ConnectPage() {
     return (
       <>
         <p>{messages[status.state]}</p>
-        <button
-          className={
-            status.state === "connected" ? "action" : "action action-primary"
-          }
+        <Button
+          variant={status.state === "connected" ? "outline" : "default"}
+          size="touch"
           type="button"
-          disabled={update.isPending}
-          onClick={() => {
+          isDisabled={update.isPending}
+          onPress={() => {
             if (status.state !== "connected") update.mutate("start");
             else if (window.confirm("ChatGPT 接続を解除しますか？"))
               update.mutate("disconnect");
           }}
         >
           {status.state === "connected" ? "接続を解除" : "ChatGPT に接続"}
-        </button>
+        </Button>
         {update.isError && (
           <p role="alert" className="text-danger">
             {update.error.message}

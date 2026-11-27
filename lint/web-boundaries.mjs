@@ -14,6 +14,17 @@ const layers = new Set([
 const testModule = /(?:\.(?:test|spec)|[/\\]testing)(?:\.[cm]?[jt]sx?)?$/;
 const routeModule =
   /(?:^|\/)(?:page|layout|route|loading|error|not-found|global-error|default)(?:\.[cm]?[jt]sx?)?$/;
+const reactAriaModule =
+  /^(?:(?:react-aria(?:-components)?|react-stately)(?:\/|$)|@(?:react-aria|react-aria-components|react-stately|react-types)\/)/;
+
+const formTagReplacements = new Map([
+  ["select", "Use the Design Systems Select."],
+  ["button", "Use the Design Systems Button."],
+  ["label", "Use the Design Systems Label or Select's label prop."],
+  ["option", "Pass the choice in the Design Systems Select's options."],
+  ["input", "Use the Design Systems Input or Checkbox."],
+  ["textarea", "Use the Design Systems Textarea."],
+]);
 
 function publicEntry(parts) {
   const name = parts.at(-1)?.replace(/\.[cm]?[jt]sx?$/, "");
@@ -48,7 +59,11 @@ export function createWebBoundaryRule(root) {
     create(context) {
       const filename = resolve(context.filename);
       const from = location(filename);
-      if (!from) return {};
+      const inDesignSystems =
+        from?.length > 3 &&
+        from[0] === "shared" &&
+        from[1] === "ui" &&
+        from[2] === "design-systems";
 
       // A colocated test may import its own route; routes still cannot compose
       // other routes, and tests cannot reach unrelated framework modules.
@@ -63,7 +78,20 @@ export function createWebBoundaryRule(root) {
 
       function check(node, source, typeOnly = false) {
         if (!source) return;
-        const specifier = source.value;
+        const specifier =
+          source.type === "TemplateLiteral" && source.expressions.length === 0
+            ? source.quasis[0].value.cooked
+            : source.value;
+        if (typeof specifier === "string" && reactAriaModule.test(specifier)) {
+          if (!inDesignSystems) {
+            report(
+              node,
+              `Direct imports of "${specifier}" are allowed only in apps/web/src/shared/ui/design-systems. Define a reusable design system component and import it from its public module.`,
+            );
+          }
+          return;
+        }
+        if (!from) return;
         if (typeof specifier !== "string") {
           report(node, "Use a static import path in Web modules.");
           return;
@@ -139,8 +167,19 @@ export function createWebBoundaryRule(root) {
 
       return {
         Program(node) {
-          if (!layers.has(from[0]))
+          if (from && !layers.has(from[0]))
             report(node, "Place Web source in an FSD layer, app, or worker.");
+        },
+        JSXOpeningElement(node) {
+          if (inDesignSystems || node.name.type !== "JSXIdentifier") return;
+          const tag = node.name.name;
+          const replacement = formTagReplacements.get(tag);
+          if (replacement) {
+            report(
+              node.name,
+              `Raw <${tag}> is only allowed in apps/web/src/shared/ui/design-systems. ${replacement}`,
+            );
+          }
         },
         ImportDeclaration(node) {
           check(

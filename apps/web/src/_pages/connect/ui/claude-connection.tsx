@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, Input, Label } from "@/shared/ui/design-systems";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
@@ -67,17 +68,18 @@ export function ClaudeConnection() {
               で発行し直したトークンを保存してください。
             </p>
           )}
-          <button
-            className="action"
+          <Button
+            variant="outline"
+            size="touch"
             type="button"
-            disabled={disconnect.isPending}
-            onClick={() => {
+            isDisabled={disconnect.isPending}
+            onPress={() => {
               if (window.confirm("Claude 接続を解除しますか？"))
                 disconnect.mutate();
             }}
           >
             接続を解除
-          </button>
+          </Button>
           {disconnect.isError && (
             <p role="alert" className="text-danger">
               {disconnect.error.message}
@@ -91,9 +93,9 @@ export function ClaudeConnection() {
           手元で <code>claude setup-token</code>{" "}
           を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
         </p>
-        <label className="block space-y-2 text-sm">
+        <Label>
           トークン
-          <input
+          <Input
             required
             type="password"
             autoComplete="off"
@@ -101,16 +103,17 @@ export function ClaudeConnection() {
             value={token}
             onChange={(event) => setToken(event.target.value)}
             placeholder="sk-ant-oat01-…"
-            className="block w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono"
+            className="h-9 font-mono"
           />
-        </label>
-        <button
+        </Label>
+        <Button
           type="submit"
-          className="action action-primary"
-          disabled={save.isPending || !token.trim()}
+          variant="default"
+          size="touch"
+          isDisabled={save.isPending || !token.trim()}
         >
           {save.isPending ? "保存しています…" : "トークンを保存"}
-        </button>
+        </Button>
         {save.isError && (
           <p role="alert" className="text-danger">
             {save.error.message}

@@ -15,9 +15,12 @@ test("server rendering includes the real Select without a hydration fallback", (
         disabled={false}
       />,
     );
-    expect(html).toContain("Project Alpha");
-    expect(html).toContain('role="combobox"');
-    expect(html).toContain('data-slot="select-trigger"');
+    const trigger = html.match(
+      /<button[^>]*data-slot="select-trigger"[^>]*>.*?<\/button>/,
+    )?.[0];
+    expect(trigger).toContain("Project Alpha");
+    expect(trigger).toContain('aria-haspopup="listbox"');
+    expect(trigger).toContain('aria-expanded="false"');
     expect(html).not.toContain('aria-busy="true"');
   }
 });

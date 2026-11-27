@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261125-csp-github-avatars
 key: web.csp.style-attributes
-status: accepted
+status: superseded
 date: "2026-11-25"
 decided_by: suzuki3jp
 areas: [web, security, design-system]

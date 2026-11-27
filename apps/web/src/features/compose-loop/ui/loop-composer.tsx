@@ -8,7 +8,7 @@ import {
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
-} from "@/shared/ui/input-group";
+} from "@/shared/ui/design-systems";
 import { ModelEffortSelect } from "./model-effort-select";
 import {
   defaultModelEffort,
@@ -83,7 +83,7 @@ export function LoopComposer({
             />
             <InputGroupButton
               type="submit"
-              disabled={!canSend}
+              isDisabled={!canSend}
               aria-label={home ? "Start loop" : "Send message"}
               className="h-5.5 w-9 rounded-md px-2 py-0 text-muted-foreground"
             >

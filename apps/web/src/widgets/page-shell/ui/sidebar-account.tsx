@@ -1,10 +1,11 @@
 "use client";
 
+import { Button } from "@/shared/ui/design-systems";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { IconUser } from "@tabler/icons-react";
 import { accountProfileQueryOptions } from "@/entities/account";
-import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar";
+import { Avatar } from "@/shared/ui/design-systems";
 
 export function SidebarAccount() {
   const account = useQuery(accountProfileQueryOptions());
@@ -17,14 +18,13 @@ export function SidebarAccount() {
         href="/login"
         className="flex h-15 min-w-0 items-center gap-2.5 px-3 hover:bg-sidebar-accent"
       >
-        <Avatar className="size-9 after:hidden">
-          {data?.image && (
-            <AvatarImage src={data.image} alt="" referrerPolicy="no-referrer" />
-          )}
-          <AvatarFallback>
-            <IconUser aria-hidden="true" size={20} />
-          </AvatarFallback>
-        </Avatar>
+        <Avatar
+          className="size-9 after:hidden"
+          src={data?.image ?? undefined}
+          alt=""
+          referrerPolicy="no-referrer"
+          fallback={<IconUser aria-hidden="true" size={20} />}
+        />
         <span className="flex min-w-0 flex-col gap-1.5">
           <span className="truncate text-caption font-medium">
             {data?.name ?? (unauthorized ? "Sign in" : "Account")}
@@ -39,14 +39,15 @@ export function SidebarAccount() {
       {account.isError && !unauthorized && (
         <div className="px-3 pb-2 text-xs text-muted-foreground">
           <p role="status">Account could not be loaded.</p>
-          <button
+          <Button
+            unstyled
             type="button"
             className="underline"
-            disabled={account.isFetching}
-            onClick={() => void account.refetch()}
+            isDisabled={account.isFetching}
+            onPress={() => void account.refetch()}
           >
             Retry account
-          </button>
+          </Button>
         </div>
       )}
     </div>

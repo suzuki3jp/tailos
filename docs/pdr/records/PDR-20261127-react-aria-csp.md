@@ -21,7 +21,7 @@ supersedes: [PDR-20261125-csp-github-avatars]
 
 Web の `img-src` は `'self' https://avatars.githubusercontent.com` とする。本番の `script-src` と `style-src` は `'self'` とレスポンスごとの nonce に限定し、配置やフォームに必要となる style 属性は `style-src-attr 'unsafe-inline'` で許可する。
 
-ルートレイアウトの `meta[property="csp-nonce"]` に、Worker がそのレスポンス用に生成した nonce を渡す。React Aria はこの値をライブラリが作る style 要素に使う。Project の Select は選択済み値と操作部をサーバーで描画する。
+ルートレイアウトの `meta[property="csp-nonce"]` の `nonce` 属性に、Worker がそのレスポンス用に生成した nonce を渡す。React Aria はこの値をライブラリが作る style 要素に使う。Project の Select は選択済み値と操作部をサーバーで描画する。
 
 ## 理由
 

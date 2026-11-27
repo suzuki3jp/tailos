@@ -45,7 +45,7 @@ Geist is self-hosted through the pinned Fontsource package. Font sizes / line he
 
 The shared desktop sidebar is 240px wide, with a 60px head, 36px navigation rows, 12px icon gaps, 24px between navigation groups and a 60px account footer pinned to the viewport bottom. There is no desktop main header or border below the sidebar head. On mobile, the Sheet contains focus while open and restores focus to the navigation button on dismissal.
 
-The root layout exposes the Worker's per-response CSP nonce through `meta[property="csp-nonce"]`. React Aria uses it on generated style elements. The policy allows inline style attributes for overlay positioning and limits image sources to the same origin and `https://avatars.githubusercontent.com`. The Project Select renders its current label and trigger in the initial HTML. [CSP decision](../pdr/records/PDR-20261127-react-aria-csp.md)
+The root layout exposes the Worker's per-response CSP nonce through the `nonce` attribute of `meta[property="csp-nonce"]`. React Aria uses it on generated style elements. The policy allows inline style attributes for overlay positioning and limits image sources to the same origin and `https://avatars.githubusercontent.com`. The Project Select renders its current label and trigger in the initial HTML. [CSP decision](../pdr/records/PDR-20261127-react-aria-csp.md)
 
 ## Adding and using primitives
 

@@ -103,7 +103,7 @@ export function ClaudeConnection() {
             value={token}
             onChange={(event) => setToken(event.target.value)}
             placeholder="sk-ant-oat01-…"
-            className="block w-full rounded-md border border-rule bg-paper px-3 py-2 font-mono"
+            className="h-9 font-mono"
           />
         </Label>
         <Button

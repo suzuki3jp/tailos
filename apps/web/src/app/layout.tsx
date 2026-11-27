@@ -32,7 +32,7 @@ export default async function RootLayout({
     ?.match(/'nonce-([^']+)'/)?.[1];
   return (
     <html lang="ja">
-      <head>{nonce && <meta property="csp-nonce" content={nonce} />}</head>
+      <head>{nonce && <meta property="csp-nonce" nonce={nonce} />}</head>
       <body>
         <Providers>{children}</Providers>
       </body>

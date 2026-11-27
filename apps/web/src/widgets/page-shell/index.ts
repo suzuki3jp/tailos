@@ -1,6 +1,1 @@
-export {
-  PageShell,
-  ProjectPageShell,
-  PageContent,
-  sidebarItemClass,
-} from "./ui/page-shell";
+export { PageShell, ProjectPageShell, PageContent } from "./ui/page-shell";

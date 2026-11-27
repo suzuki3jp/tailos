@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { sessionPath } from "@/shared/lib/session-path";
-import { homeSessionsQueryOptions } from "../api/queries";
+import { accountSessionsQueryOptions } from "@/entities/session";
 import { startSession, StartSessionError } from "../api/start-session";
 import {
   CurrentProjectSelect,
@@ -53,7 +53,7 @@ export function HomeComposer() {
       startSession(input),
     onSuccess: async ({ sessionId, projectId }) => {
       await queryClient.invalidateQueries({
-        queryKey: homeSessionsQueryOptions().queryKey,
+        queryKey: accountSessionsQueryOptions().queryKey,
       });
       router.push(sessionPath(sessionId, projectId));
     },

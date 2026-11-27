@@ -14,24 +14,26 @@ import {
   ProjectSelectionProvider,
 } from "@/features/select-project";
 import { SidebarAccount } from "./sidebar-account";
+import { SidebarRecentSessions } from "./sidebar-recent-sessions";
 
-export const sidebarItemClass =
+const sidebarItemClass =
   "flex h-9 w-full items-center gap-3 px-6 py-2.5 text-caption hover:bg-sidebar-accent [&_svg]:shrink-0 [&_svg]:text-foreground-strong";
 
 type Props = {
   children: ReactNode;
   projectControl: ReactNode;
-  sessionsNavigation?: ReactNode;
   sessionsHref?: string;
   activePage?: "home" | "sessions" | "settings";
+  /** The Session shown on the page, highlighted in Recent Sessions. */
+  activeSessionId?: string;
   fixedHeight?: boolean;
 };
 
 function Sidebar({
   projectControl,
-  sessionsNavigation,
   sessionsHref = "/#recent-sessions",
   activePage,
+  activeSessionId,
 }: Omit<Props, "children">) {
   return (
     <>
@@ -56,16 +58,14 @@ function Sidebar({
           Account Home
         </Link>
         <div>
-          {sessionsNavigation ?? (
-            <Link
-              href={sessionsHref}
-              aria-current={activePage === "sessions" ? "page" : undefined}
-              className={sidebarItemClass}
-            >
-              <IconMessages aria-hidden="true" size={20} />
-              Sessions
-            </Link>
-          )}
+          <Link
+            href={sessionsHref}
+            aria-current={activePage === "sessions" ? "page" : undefined}
+            className={sidebarItemClass}
+          >
+            <IconMessages aria-hidden="true" size={20} />
+            Sessions
+          </Link>
           <Button
             unstyled
             type="button"
@@ -89,6 +89,7 @@ function Sidebar({
           </Link>
         </div>
       </nav>
+      <SidebarRecentSessions activeSessionId={activeSessionId} />
       <SidebarAccount />
     </>
   );

@@ -3,6 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { TimelineItem, TimelineSnapshot } from "@tailos/core/timeline";
 import { openSessionTimeline } from "./timeline-stream";
 import { timelineQueryOptions } from "./timeline";
+import { accountSessionsQueryOptions } from "@/entities/session";
 
 class Socket {
   static OPEN = 1;
@@ -187,6 +188,32 @@ test("blocked WebSockets still reconcile Run state through HTTP on reconnect att
     expect(Socket.instances).toHaveLength(3);
   } finally {
     unsubscribe();
+    stop();
+    cache.clear();
+  }
+});
+
+test("Session changes refresh the sidebar's Recent Sessions", async () => {
+  const { cache, stop } = setup();
+  const sessionsKey = accountSessionsQueryOptions().queryKey;
+  cache.setQueryData(sessionsKey, {
+    pages: [{ items: [], nextCursor: null }],
+    pageParams: [""],
+  });
+  try {
+    const socket = Socket.instances[0];
+    socket.open();
+    socket.message({
+      type: "changes",
+      cursor: 2,
+      items: [],
+      hasMore: false,
+      sessionChanged: true,
+      captureChanged: false,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cache.getQueryState(sessionsKey)?.isInvalidated).toBe(true);
+  } finally {
     stop();
     cache.clear();
   }

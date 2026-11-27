@@ -28,9 +28,16 @@ test("renders prefetched session and execution history without waiting for the l
         cursor: 0,
         before: null,
       });
-    if (path === "/v1/projects/project/sessions")
+    if (path === "/v1/sessions")
       return Response.json({
-        items: [{ id: "session", title: "Sample session" }],
+        items: [
+          {
+            id: "session",
+            title: "Sample session",
+            project: { id: "project" },
+          },
+          { id: "other", title: "Other session", project: { id: "project" } },
+        ],
         nextCursor: null,
       });
     if (path === "/v1/projects/project/sessions/session")
@@ -75,11 +82,13 @@ test("renders prefetched session and execution history without waiting for the l
   const { Providers } = await import("@/app/providers");
   const html = renderToStaticMarkup(<Providers>{page}</Providers>);
   expect(html).toContain("Sample project");
-  expect(html).toContain('href="/project/sessions/session"');
+  // The sidebar's Recent Sessions marks the open Session; no right panel lists them.
   expect(html).toMatch(
-    /<div[^>]*aria-label="Resize session list"[^>]*role="separator"/,
+    /<a[^>]*href="\/project\/sessions\/session"[^>]*aria-current="page"[^>]*>/,
   );
-  expect(html).toMatch(/id="project-sessions"[^>]*flex-basis:240px/);
+  expect(html).toContain('href="/project/sessions/other"');
+  expect(html).not.toContain("Resize session list");
+  expect(html).not.toContain('id="project-sessions"');
   expect(html).toContain("<strong>Prompt</strong>");
   expect(html).toMatch(
     /<strong>Prompt<\/strong><\/p><\/div><div[^>]*><p[^>]*>Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,

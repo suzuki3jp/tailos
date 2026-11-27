@@ -11,7 +11,7 @@ export function HomePage() {
         <section aria-labelledby="home-heading" className="space-y-3">
           <h1
             id="home-heading"
-            className="text-page-title font-semibold text-foreground-strong"
+            className="text-page-title font-semibold text-foreground"
           >
             Let’s dive into the looooop
             <HomeGreeting />!

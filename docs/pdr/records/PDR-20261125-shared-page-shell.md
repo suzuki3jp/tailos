@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261125-shared-page-shell
 key: web.navigation.page-shell
-status: accepted
+status: superseded
 date: "2026-11-25"
 decided_by: suzuki3jp
 areas: [web, api, design-system]

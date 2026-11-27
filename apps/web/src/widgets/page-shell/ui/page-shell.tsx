@@ -160,7 +160,7 @@ export function PageContent({
           {children}
         </main>
       </div>
-      <div className="hidden w-60 shrink-0 xl:block">{slot}</div>
+      {!home && <div className="hidden w-60 shrink-0 xl:block">{slot}</div>}
     </div>
   );
 }

@@ -32,9 +32,13 @@ export function SessionRow({
     <div className="space-y-1.5 p-3">
       <Link
         href={sessionPath(session.id, session.project?.id)}
-        className="flex items-start gap-3 rounded-sm text-foreground-strong hover:underline"
+        className="flex items-start gap-3 rounded-sm text-foreground hover:underline"
       >
-        <Icon aria-hidden="true" size={20} className="shrink-0" />
+        <Icon
+          aria-hidden="true"
+          size={20}
+          className="shrink-0 text-foreground-strong"
+        />
         <span className="min-w-0 text-body wrap-anywhere">{session.title}</span>
       </Link>
       <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-8 text-caption text-muted-foreground">

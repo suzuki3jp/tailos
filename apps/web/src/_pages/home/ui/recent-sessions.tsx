@@ -9,7 +9,7 @@ export function RecentSessions() {
     >
       <h2
         id="recent-sessions-heading"
-        className="text-section-title font-semibold text-foreground-strong"
+        className="text-section-title font-semibold text-foreground"
       >
         Recent Sessions
       </h2>

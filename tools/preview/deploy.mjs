@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { readLoginConfig } from "../../apps/api/scripts/login-config.mjs";
 import { webBrowserApiPath } from "../../packages/core/src/auth.ts";
-import { cloudflare } from "./cloudflare.mjs";
+import { cloudflare, previewDatabase } from "./cloudflare.mjs";
 import {
   findApiDeploymentOrigin,
   origins,
@@ -28,33 +28,17 @@ login.secrets.BETTER_AUTH_SECRET = digest(
   login.secrets.BETTER_AUTH_SECRET,
   "session",
 );
-const database = {
-  binding: "DB",
-  database_name: "tailos-preview",
-  database_id: process.env.TAILOS_PREVIEW_D1_DATABASE_ID,
-};
-if (
-  !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(
-    database.database_id ?? "",
-  )
-)
-  throw new Error(
-    "Set TAILOS_PREVIEW_D1_DATABASE_ID to the Preview database UUID",
-  );
 const bucket = {
   binding: "RUN_ARTIFACTS",
   bucket_name: "tailos-preview-run-artifacts",
 };
-const [d1, r2] = await Promise.all([
-  cloudflare(`d1/database/${database.database_id}`),
+const [database, r2] = await Promise.all([
+  previewDatabase(),
   cloudflare(`r2/buckets/${bucket.bucket_name}`),
 ]);
-if (
-  d1.result?.name !== database.database_name ||
-  r2.result?.name !== bucket.bucket_name
-)
+if (r2.result?.name !== bucket.bucket_name)
   throw new Error(
-    "Cloudflare bindings must point to the named Preview resources",
+    "Cloudflare R2 binding must point to the named Preview bucket",
   );
 
 const temp = mkdtempSync(join(tmpdir(), "tailos-preview-"));

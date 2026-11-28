@@ -8,6 +8,7 @@ decided_by: suzuki3jp
 areas: [deployment, web, api, auth]
 keywords: [PR, Preview, Workers Previews, tailos.app, /api/v1, Cookie, OAuth, 承認, 削除]
 paths:
+  - .github/workflows/preview-setup.yml
   - .github/workflows/preview.yml
   - .github/workflows/ci.yml
   - apps/api/src/bootstrap/preview.ts
@@ -38,5 +39,7 @@ supersedes: [PDR-20261121-pr-preview-approval]
 現在の Cloudflare アカウントには本番と Preview のリソースがある。アカウント全体に設定されたトークン権限は本番にも及ぶため、公開・削除トークンは `main` の手順で動く GitHub Actions のジョブ内だけで使う。Worker の実行環境には Preview 専用のデータと実行時の資格情報を設定する。
 
 close・merge 後は Web と API の Preview を削除し、日次照合で削除漏れを回収する。GitHub で閉じた状態を確認できない場合は削除せず、失敗を記録する。共有 D1・R2 は保持し、PR 固有の migration は共有 DB に自動適用しない。
+
+Preview 用カスタムドメインの設定と共有 D1 への `main` の migration 適用は、`main` から手動起動するセットアップジョブで行う。公開済みの Preview も同じ D1 を使うため、運用者がスキーマ互換性を確認してから実行する。ドメインと D1 を変更できるセットアップ用トークンは、そのジョブでのみ使用する。
 
 対象は Web、ブラウザー向け API、設定済み運用者の GitHub ログイン。Runner、Cron、GitHub App Webhook は対象外。本番の認証は [本番 Cookie の方針](PDR-20261122-login-cookie-scope.md) に従う。

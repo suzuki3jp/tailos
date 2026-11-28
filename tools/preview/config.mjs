@@ -3,6 +3,12 @@ export const workers = {
   web: "tailos-preview-web",
 };
 
+export const previewZone = "tailos.app";
+export const previewDomains = {
+  api: `preview-api.${previewZone}`,
+  web: `preview.${previewZone}`,
+};
+
 export function previewName(number) {
   if (!/^[1-9]\d*$/.test(number ?? "")) throw new Error("Invalid PR number");
   return `pr-${number}`;
@@ -10,8 +16,8 @@ export function previewName(number) {
 
 export function origins(name) {
   return {
-    web: `https://${name}.preview.tailos.app`,
-    api: `https://${name}.preview-api.tailos.app`,
+    web: `https://${name}.${previewDomains.web}`,
+    api: `https://${name}.${previewDomains.api}`,
   };
 }
 

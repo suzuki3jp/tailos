@@ -1,0 +1,39 @@
+name: Set up PR Preview resources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+
+jobs:
+  setup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview
+    concurrency:
+      group: tailos-previews
+      queue: max
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - name: Configure Preview domains and apply main migrations
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_SETUP_CLOUDFLARE_API_TOKEN }}
+          TAILOS_PREVIEW_D1_DATABASE_ID: ${{ vars.TAILOS_PREVIEW_D1_DATABASE_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: node tools/preview/setup.mjs

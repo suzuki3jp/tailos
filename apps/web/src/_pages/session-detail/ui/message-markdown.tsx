@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { memo } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -40,9 +41,9 @@ const conversationComponents: Components = {
   h5: "h6",
   a: ({ children, href, title }) =>
     href ? (
-      <a href={href} title={title}>
+      <Link href={href} title={title}>
         {children}
-      </a>
+      </Link>
     ) : (
       <>{children}</>
     ),

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { TimelineItem } from "@tailos/core/timeline";
 import { Disclosure } from "@/shared/ui/disclosure";
@@ -87,11 +88,11 @@ export function RunActivity({
           )}
           {plan && <span>{plan}</span>}
           {urls?.map((url) => (
-            <a key={url} className="underline" href={url}>
+            <Link key={url} className="underline" href={url}>
               {urls.length > 1
                 ? `Open pull request #${url.split("/").pop()}`
                 : "Open pull request"}
-            </a>
+            </Link>
           ))}
         </div>
       )}

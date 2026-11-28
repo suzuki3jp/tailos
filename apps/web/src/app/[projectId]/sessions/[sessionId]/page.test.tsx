@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
 import Page from "./page";
@@ -7,7 +7,8 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 vi.mock("next/link", () => ({
-  default: (props: ComponentProps<"a">) => <a {...props} />,
+  default: (props: ComponentProps<"a">) =>
+    createElement("a", { ...props, "data-next-link": true }),
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -81,6 +82,14 @@ test("renders prefetched session and execution history without waiting for the l
   });
   const { Providers } = await import("@/app/providers");
   const html = renderToStaticMarkup(<Providers>{page}</Providers>);
+  const skipLink = html.match(
+    /<a[^>]*href="#page-content"[^>]*>Skip to content<\/a>/,
+  );
+  const sidebar = html.indexOf('<aside aria-label="Project sidebar"');
+  expect(skipLink).not.toBeNull();
+  expect(skipLink?.[0]).not.toContain("data-next-link");
+  expect(sidebar).toBeGreaterThan(skipLink?.index ?? Infinity);
+  expect(html).toContain('id="page-content" tabindex="-1"');
   expect(html).toContain("Sample project");
   // The sidebar's Recent Sessions marks the open Session; no right panel lists them.
   expect(html).toMatch(

@@ -126,12 +126,29 @@ test("Oxlint rejects raw form tags outside the real design system", async (t) =>
   );
 });
 
-test("Oxlint allows form tags in the design system and components elsewhere", async (t) => {
+test("Oxlint rejects raw anchors in Web modules, including Design Systems", async (t) => {
   const result = await boundaryFixture(t, {
+    "src/app/page.tsx": 'export const link = <a href="/" />;',
+    "src/shared/ui/design-systems/link.tsx":
+      'export const link = <a href="https://example.com" />;',
+  });
+  assert.equal(result.status, 1, result.output);
+  assert.equal(
+    result.output.match(
+      /Raw <a> is not allowed in Web modules\. Use Link from next\/link\./g,
+    )?.length,
+    2,
+    result.output,
+  );
+});
+
+test("Oxlint allows form tags in the design system and Link elsewhere", async (t) => {
+  const result = await boundaryFixture(t, {
+    "apps/api/link.tsx": 'export const link = <a href="/" />;',
     "src/shared/ui/design-systems/fields.tsx":
       "export const controls = <><label><input /></label><select><option /></select><button /><textarea /></>;",
     "src/_pages/example/ui/fields.tsx":
-      'import { Button, Select } from "@/shared/ui/design-systems"; export const controls = <><Button /><Select /><form /></>;',
+      'import Link from "next/link"; import { Button, Select } from "@/shared/ui/design-systems"; export const controls = <><Link href="/" /><Button /><Select /><form /></>;',
   });
   assert.equal(result.status, 0, result.output);
 });

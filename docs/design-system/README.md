@@ -52,6 +52,8 @@ The root layout exposes the Worker's per-response CSP nonce through the `nonce` 
 
 Define shared controls in `apps/web/src/shared/ui/design-systems` and export them through its `index.ts`. Use React Aria at the component boundary and Tailos tokens and CVA for styling and variants. The workspace lint rule restricts direct React Aria imports and the JSX tags `select`, `button`, `label`, `option`, `input` and `textarea` to this directory. [Design system decision](../pdr/records/PDR-20261128-design-system-form-controls.md)
 
+Use `Link` from `next/link` for internal and external links in Web source. Oxlint disallows raw JSX `<a>` throughout Web source, including Design Systems and tests. The page shell’s skip link uses a native fragment anchor with a local lint suppression so the browser can focus the content. [Web link decision](../pdr/records/PDR-20261128-web-links.md)
+
 Use `Button` with `onPress` for actions or `type="submit"` for form submission. Give icon-only controls an accessible name. Use `Label` with `Input` or `Textarea`, and `Checkbox` for a boolean choice. Give `Select` a visible `label` or an accessible name, and options with stable IDs and labels. Options can carry a description or belong to a named group. Use `Dialog` with a trigger and either `DialogContent` or `SheetContent`, with a title for the overlay.
 
 Import individual icons from `@tabler/icons-react`. Use `currentColor` and explicit sizes, and hide decorative icons from assistive technology. [Icon decision](../pdr/records/PDR-20261127-design-system-icons.md)

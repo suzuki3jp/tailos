@@ -108,6 +108,7 @@ export function PageShell({
       )}
       lang="en"
     >
+      {/* oxlint-disable-next-line tailos-web/boundaries -- Use native fragment navigation to move keyboard focus to the content. */}
       <a
         href="#page-content"
         className="sr-only z-50 rounded-md bg-background p-3 focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
@@ -126,7 +127,11 @@ export function PageShell({
             <Sidebar {...navigation} />
           </MobileNavigation>
         </div>
-        <div id="page-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
+          id="page-content"
+          tabIndex={-1}
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+        >
           {children}
         </div>
       </div>

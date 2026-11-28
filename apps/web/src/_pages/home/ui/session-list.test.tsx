@@ -1,6 +1,6 @@
 import { projectsQueryOptions } from "@/features/select-project";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
 import { accountSessionsQueryOptions } from "@/entities/session";
@@ -9,9 +9,7 @@ import { ProjectStatus } from "./project-status";
 import { SessionList } from "./session-list";
 
 vi.mock("next/link", () => ({
-  default: ({ children, ...props }: ComponentProps<"a">) => (
-    <a {...props}>{children}</a>
-  ),
+  default: (props: ComponentProps<"a">) => createElement("a", props),
 }));
 
 afterEach(() => vi.unstubAllGlobals());

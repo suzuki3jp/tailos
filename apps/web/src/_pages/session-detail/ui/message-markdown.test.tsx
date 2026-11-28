@@ -1,7 +1,12 @@
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { highlightMessageCode } from "./highlight-message-code";
 import { MessageMarkdown } from "./message-markdown";
+
+vi.mock("next/link", () => ({
+  default: (props: ComponentProps<"a">) => createElement("a", props),
+}));
 
 test("renders headings, nested lists and soft line breaks in the conversation", () => {
   const body = [

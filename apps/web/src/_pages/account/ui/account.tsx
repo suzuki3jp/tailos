@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/shared/ui/design-systems";
 import { useQuery } from "@tanstack/react-query";
 import { browserApiBaseUrl } from "@/shared/config";
@@ -38,16 +39,16 @@ export function Account() {
     <div className="space-y-4">
       <p className="text-signal">GitHub でログイン済みです。</p>
       <div className="flex flex-wrap gap-3">
-        <a href="/projects" className="action">
+        <Link href="/projects" className="action">
           Project 設定を管理
-        </a>
-        <a href="/mcp" className="action">
+        </Link>
+        <Link href="/mcp" className="action">
           MCP キーを管理
-        </a>
+        </Link>
         {data.connectEnabled && (
-          <a href="/connect" className="action action-primary">
+          <Link href="/connect" className="action action-primary">
             Agent 接続を開く
-          </a>
+          </Link>
         )}
         <form method="post" action={`${browserApiBaseUrl}/auth/logout`}>
           <Button variant="outline" size="touch" type="submit">

@@ -171,8 +171,15 @@ export function createWebBoundaryRule(root) {
             report(node, "Place Web source in an FSD layer, app, or worker.");
         },
         JSXOpeningElement(node) {
-          if (inDesignSystems || node.name.type !== "JSXIdentifier") return;
+          if (node.name.type !== "JSXIdentifier") return;
           const tag = node.name.name;
+          if (from && tag === "a") {
+            report(
+              node.name,
+              "Raw <a> is not allowed in Web modules. Use Link from next/link.",
+            );
+          }
+          if (inDesignSystems) return;
           const replacement = formTagReplacements.get(tag);
           if (replacement) {
             report(

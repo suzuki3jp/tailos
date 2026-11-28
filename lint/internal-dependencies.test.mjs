@@ -26,13 +26,13 @@ test("includes types, re-exports and lazy imports in the internal graph", () => 
       ].join("\n"),
     ),
     [
-      { specifier: "./view", typeOnly: true },
-      { specifier: "./detail", typeOnly: true },
-      { specifier: "./model", typeOnly: true },
-      { specifier: "./button", typeOnly: false },
-      { specifier: "./query", typeOnly: true },
-      { specifier: "./loader", typeOnly: false },
-      { specifier: "./data.cjs", typeOnly: false },
+      { specifier: "./view", typeOnly: true, mode: "import" },
+      { specifier: "./detail", typeOnly: true, mode: "import" },
+      { specifier: "./model", typeOnly: true, mode: "import" },
+      { specifier: "./button", typeOnly: false, mode: "import" },
+      { specifier: "./query", typeOnly: true, mode: "import" },
+      { specifier: "./loader", typeOnly: false, mode: "import" },
+      { specifier: "./data.cjs", typeOnly: false, mode: "require" },
     ],
   );
 });
@@ -58,7 +58,7 @@ test("production internal imports are acyclic", () => {
   );
 });
 
-test("cross-workspace imports require a dependency declaration and a public export", (t) => {
+function repositoryFixture(t) {
   const root = mkdtempSync(join(tmpdir(), "tailos-dependencies-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -67,6 +67,11 @@ test("cross-workspace imports require a dependency declaration and a public expo
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);
   };
+  return { root, write };
+}
+
+test("cross-workspace imports require a dependency declaration and a public export", (t) => {
+  const { root, write } = repositoryFixture(t);
   write(
     "apps/api/package.json",
     JSON.stringify({
@@ -96,6 +101,56 @@ test("cross-workspace imports require a dependency declaration and a public expo
     buildInternalGraph(root).get("apps/web/src/client.ts"),
     new Map([["apps/api/src/http.ts", true]]),
   );
+  for (const source of [
+    'import "@tailos/api/browser";',
+    'export * from "@tailos/api/browser";',
+    'await import("@tailos/api/browser");',
+    'require("@tailos/api/browser");',
+  ]) {
+    write("apps/web/src/client.ts", source);
+    assert.throws(() => buildInternalGraph(root), /has no export for runtime/);
+  }
+  write(
+    "apps/api/package.json",
+    JSON.stringify({
+      name: "@tailos/api",
+      exports: {
+        "./browser": {
+          types: "./src/http.ts",
+          import: "./src/runtime.mjs",
+          require: "./src/runtime.cjs",
+        },
+      },
+    }),
+  );
+  write("apps/api/src/runtime.mjs", "export {};");
+  write("apps/api/src/runtime.cjs", "module.exports = {};");
+  write(
+    "apps/web/src/client.ts",
+    'import type { Api } from "@tailos/api/browser";\nimport "@tailos/api/browser";\nrequire("@tailos/api/browser");',
+  );
+  assert.deepEqual(
+    buildInternalGraph(root).get("apps/web/src/client.ts"),
+    new Map([
+      ["apps/api/src/http.ts", true],
+      ["apps/api/src/runtime.mjs", false],
+      ["apps/api/src/runtime.cjs", false],
+    ]),
+  );
+  write(
+    "apps/api/package.json",
+    JSON.stringify({
+      name: "@tailos/api",
+      exports: {
+        "./browser": { import: null, default: "./src/runtime.mjs" },
+      },
+    }),
+  );
+  write("apps/web/src/client.ts", 'import "@tailos/api/browser";');
+  assert.throws(
+    () => buildInternalGraph(root),
+    /has no export for runtime import/,
+  );
   write(
     "apps/web/src/client.ts",
     'import type { Api } from "@tailos/api/src/http.ts";',
@@ -106,4 +161,14 @@ test("cross-workspace imports require a dependency declaration and a public expo
     'import type { Api } from "../../api/src/http.ts";',
   );
   assert.throws(() => buildInternalGraph(root), /reaches into @tailos\/api/);
+});
+
+test("production imports cannot route around the graph through test modules", (t) => {
+  const { root, write } = repositoryFixture(t);
+  write("apps/runner/src/entry.ts", 'import "./testing";');
+  write("apps/runner/src/testing.ts", 'import "./entry";');
+  assert.throws(
+    () => buildInternalGraph(root),
+    /production imports cannot reference test module apps\/runner\/src\/testing\.ts/,
+  );
 });

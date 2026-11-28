@@ -6,7 +6,7 @@ import { parseSync, Visitor } from "vite";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const sourceFile = /\.[cm]?[jt]sx?$/;
-const testFile = /(?:\.(?:test|spec)|\/testing)\.[cm]?[jt]sx?$/;
+const testFile = /(?:\.(?:test|spec)|(?:^|\/)testing)\.[cm]?[jt]sx?$/;
 const workspaceManifest = /^(?:apps|packages)\/[^/]+\/package\.json$/;
 
 function literal(node) {
@@ -24,9 +24,10 @@ export function moduleImports(filename, source) {
     );
 
   const imports = [];
-  function record(target, typeOnly = false) {
+  function record(target, typeOnly = false, mode = "import") {
     const specifier = literal(target);
-    if (typeof specifier === "string") imports.push({ specifier, typeOnly });
+    if (typeof specifier === "string")
+      imports.push({ specifier, typeOnly, mode });
   }
   function declaration(node) {
     const typeOnly =
@@ -46,11 +47,15 @@ export function moduleImports(filename, source) {
     TSImportType: (node) => record(node.source, true),
     TSImportEqualsDeclaration(node) {
       if (node.moduleReference.type === "TSExternalModuleReference")
-        record(node.moduleReference.expression, node.importKind === "type");
+        record(
+          node.moduleReference.expression,
+          node.importKind === "type",
+          "require",
+        );
     },
     CallExpression(node) {
       if (node.callee.type === "Identifier" && node.callee.name === "require")
-        record(node.arguments[0]);
+        record(node.arguments[0], false, "require");
     },
   }).visit(program);
   return imports;
@@ -60,7 +65,18 @@ function workspaceRoot(file) {
   return file.split("/").slice(0, 2).join("/");
 }
 
-function internalPath(from, specifier, workspaces) {
+function exportTarget(entry, conditions) {
+  if (entry === null || typeof entry === "string") return entry;
+  if (typeof entry !== "object") return;
+  for (const [condition, value] of Object.entries(entry)) {
+    if (conditions.has(condition)) {
+      const target = exportTarget(value, conditions);
+      if (target !== undefined) return target;
+    }
+  }
+}
+
+function internalPath(from, { specifier, mode, typeOnly }, workspaces) {
   if (specifier.startsWith("."))
     return posix.join(posix.dirname(from), specifier);
   if (specifier.startsWith("@/"))
@@ -70,9 +86,15 @@ function internalPath(from, specifier, workspaces) {
   const [, name, subpath] = workspaceImport;
   const workspace = workspaces.byName.get(name);
   const entry = workspace?.exports?.[`.${subpath}`];
-  const target = typeof entry === "string" ? entry : entry?.types;
-  if (!target)
+  if (entry === undefined)
     throw new Error(`${from}: ${specifier} is not a workspace export.`);
+  const conditions = new Set(["default", mode]);
+  if (typeOnly) conditions.add("types");
+  const target = exportTarget(entry, conditions);
+  if (typeof target !== "string")
+    throw new Error(
+      `${from}: ${specifier} has no export for ${typeOnly ? "types" : `runtime ${mode}`}. Use a compatible public export.`,
+    );
   const importer = workspaces.byRoot.get(workspaceRoot(from));
   if (importer && importer !== workspace && !importer.dependencies.has(name))
     throw new Error(
@@ -81,8 +103,9 @@ function internalPath(from, specifier, workspaces) {
   return posix.join(workspace.root, target);
 }
 
-function resolveModule(from, specifier, workspaces, files) {
-  const base = internalPath(from, specifier, workspaces);
+function resolveModule(from, dependency, workspaces, files) {
+  const { specifier } = dependency;
+  const base = internalPath(from, dependency, workspaces);
   if (base === undefined) return;
   const target = [
     base,
@@ -94,6 +117,10 @@ function resolveModule(from, specifier, workspaces, files) {
   if (!target)
     throw new Error(
       `${from}: cannot resolve ${specifier} to a repository file.`,
+    );
+  if (testFile.test(target))
+    throw new Error(
+      `${from}: production imports cannot reference test module ${target}. Move shared code to a production module.`,
     );
   const importer = workspaces.byRoot.get(workspaceRoot(from));
   const imported = workspaces.byRoot.get(workspaceRoot(target));
@@ -146,12 +173,13 @@ export function buildInternalGraph(root = repository) {
   for (const file of files) {
     if (!sourceFile.test(file) || testFile.test(file)) continue;
     const edges = new Map();
-    for (const { specifier, typeOnly } of moduleImports(
+    for (const dependency of moduleImports(
       file,
       readFileSync(join(root, file), "utf8"),
     )) {
-      const target = resolveModule(file, specifier, workspaces, files);
-      if (target) edges.set(target, (edges.get(target) ?? true) && typeOnly);
+      const target = resolveModule(file, dependency, workspaces, files);
+      if (target)
+        edges.set(target, (edges.get(target) ?? true) && dependency.typeOnly);
     }
     graph.set(file, edges);
   }

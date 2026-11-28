@@ -37,12 +37,13 @@ export const commentPayload = v.object({
 });
 
 // Only an explicit command at the beginning of a new comment is executable.
-// Indentation, blockquotes and fenced examples are not commands.
-export function planningCommand(body: string) {
+// Indentation, blockquotes and fenced examples are not commands. A comment
+// naming a command word starts its Routine; any other continues a Session.
+export function issueCommand(body: string) {
   const match = /^@tailos(?:[ \t]+|\r?\n)([\s\S]*?)\s*$/i.exec(body);
   if (!match || !match[1].trim()) return null;
   const text = match[1].trim();
-  return { start: /^plan(?:\s|$)/i.test(text), text };
+  return { command: /^plan(?:\s|$)/i.test(text) ? ("plan" as const) : null };
 }
 
 export function parseGithubEvent(
@@ -60,7 +61,7 @@ export function parseGithubEvent(
     const parsed = v.safeParse(commentPayload, event);
     if (!parsed.success) return { kind: "invalid" } as const;
     const data = parsed.output;
-    const command = planningCommand(data.comment.body);
+    const command = issueCommand(data.comment.body);
     if (!command) return { kind: "ignored", reason: "command" } as const;
     if (
       data.sender.type === "Bot" ||

@@ -5,7 +5,7 @@ import {
   IconMessageReport,
 } from "@tabler/icons-react";
 import { sessionPath } from "@/shared/lib/session-path";
-import type { HomeSession } from "../api/queries";
+import { UnreadMark, type AccountSession } from "@/entities/session";
 import { updatedLabel } from "../model/session-presentation";
 
 const statusIcons = {
@@ -14,16 +14,19 @@ const statusIcons = {
   running: IconMessageDots,
   succeeded: IconMessage,
 } satisfies Record<
-  NonNullable<HomeSession["latestRun"]>["status"],
+  NonNullable<AccountSession["latestRun"]>["status"],
   typeof IconMessage
 >;
 
 export function SessionRow({
   session,
   now,
+  unread = false,
 }: {
-  session: HomeSession;
+  session: AccountSession;
   now: number;
+  /** No read state exists yet, so callers leave this unset. */
+  unread?: boolean;
 }) {
   const status = session.latestRun?.status;
   const failed = status === "failed";
@@ -32,21 +35,29 @@ export function SessionRow({
     <div className="space-y-1.5 p-3">
       <Link
         href={sessionPath(session.id, session.project?.id)}
-        className="flex items-start gap-3 rounded-sm text-foreground-strong hover:underline"
+        title={session.title}
+        className="flex items-center gap-3 rounded-sm text-foreground hover:underline"
       >
-        <Icon aria-hidden="true" size={20} className="shrink-0" />
-        <span className="min-w-0 text-body wrap-anywhere">{session.title}</span>
+        <span className="relative shrink-0">
+          <Icon
+            aria-hidden="true"
+            size={20}
+            className="text-foreground-strong"
+          />
+          {unread && <UnreadMark className="absolute top-0 left-4" />}
+        </span>
+        <span className="min-w-0 truncate text-body">{session.title}</span>
       </Link>
-      <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-8 text-caption text-muted-foreground">
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-9 text-caption text-muted-foreground">
         {session.trigger && (
-          <a
+          <Link
             href={session.trigger.url}
             className="rounded-sm hover:underline"
             title={session.trigger.repository}
           >
             Triggered by Issue #{session.trigger.number} ·{" "}
             {session.trigger.repository}
-          </a>
+          </Link>
         )}
         <time
           dateTime={new Date(session.updatedAt).toISOString()}

@@ -1,3 +1,4 @@
+import type { AgentConnected } from "@/application/auth/agent-connection.ts";
 import { Hono } from "hono";
 import { expect, test, vi } from "vitest";
 import { createRoutineRoutes } from "./routines.ts";
@@ -21,12 +22,11 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
       repository: "owner/repo",
       repositoryId: 42,
       installationId: 19,
-      allowedActors: ["planner"],
       maxRunMinutes: 30,
     },
     owner.id,
   );
-  const connected = vi.fn<() => Promise<boolean>>(async () => false);
+  const connected = vi.fn<AgentConnected>(async () => false);
   const app = new Hono<{ Bindings: Bindings }>().route(
     "/projects/:projectId/routines",
     createRoutineRoutes(
@@ -93,7 +93,19 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
     expect(invalid.status).toBe(status);
   }
 
+  // Each Model Provider has its own models.
   expect((await send("", { ...settings, engine: "claude" })).status).toBe(400);
+  expect((await send("", { ...settings, engine: "gemini" })).status).toBe(400);
+  const claude = {
+    ...settings,
+    engine: "claude",
+    model: "claude-opus-5-5",
+    effort: "max",
+  };
+  expect((await send("", claude)).status).toBe(201);
+  // Enabling checks the connection of the Routine's own provider.
+  expect((await send("", { ...claude, enabled: true })).status).toBe(503);
+  expect(connected).toHaveBeenLastCalledWith(owner.id, "claude");
   const created = await send("", settings);
   expect(created.status).toBe(201);
   const saved: { id: string; revision: number } = await created.json();

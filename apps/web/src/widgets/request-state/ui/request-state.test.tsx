@@ -1,7 +1,12 @@
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { RequestState as SharedRequestState } from "@/shared/ui/request-state";
 import { RequestState } from "./request-state";
+
+vi.mock("next/link", () => ({
+  default: (props: ComponentProps<"a">) => createElement("a", props),
+}));
 
 test("offers the same login action to every protected screen on 401", () => {
   const html = renderToStaticMarkup(

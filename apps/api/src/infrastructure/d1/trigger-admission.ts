@@ -24,17 +24,6 @@ export async function admitTrigger(
   const active = "concurrency_key = ? AND status IN ('queued', 'running')";
   const delivery = "source = ? AND idempotency_key = ?";
   const created = "EXISTS (SELECT 1 FROM sessions WHERE id = ?)";
-  const routineGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM routines r JOIN projects p ON p.id = r.project_id
-    WHERE r.id = ? AND r.revision = ? AND r.project_id = ? AND r.deleted_at IS NULL
-    AND json_extract(r.config, '$.enabled') = 1 AND p.owner_id = ? AND p.revision = ? AND p.deleted_at IS NULL))`;
-  const routineBindings = [
-    input.routineId ?? null,
-    input.routineId ?? null,
-    input.routineRevision ?? null,
-    input.projectId ?? null,
-    input.ownerId,
-    input.projectRevision ?? null,
-  ];
 
   const results = await db.batch<Admission | { projectCurrent: number }>([
     db
@@ -43,7 +32,7 @@ export async function admitTrigger(
        SELECT ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM trigger_events WHERE ${delivery})
          AND NOT EXISTS (SELECT 1 FROM runs WHERE ${active})
-         AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AND ${routineGuard}`,
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL))`,
       )
       .bind(
         sessionId,
@@ -59,7 +48,6 @@ export async function admitTrigger(
         input.projectRevision ?? null,
         input.projectId ?? null,
         input.projectRevision ?? null,
-        ...routineBindings,
       ),
     db
       .prepare(
@@ -104,9 +92,9 @@ export async function admitTrigger(
       .bind(runId),
     db
       .prepare(
-        `INSERT INTO trigger_events (id, run_id, source, idempotency_key, disposition, received_at, routine_id, routine_revision, delivery_id)
-       SELECT ?, id, ?, ?, CASE WHEN id = ? THEN 'started' ELSE 'coalesced' END, ?, ?, ?, ?
-       FROM runs WHERE ${active} AND ${routineGuard}
+        `INSERT INTO trigger_events (id, run_id, source, idempotency_key, disposition, received_at, delivery_id)
+       SELECT ?, id, ?, ?, CASE WHEN id = ? THEN 'started' ELSE 'coalesced' END, ?, ?
+       FROM runs WHERE ${active}
        ON CONFLICT (source, idempotency_key) DO NOTHING`,
       )
       .bind(
@@ -115,17 +103,9 @@ export async function admitTrigger(
         input.idempotencyKey,
         runId,
         now,
-        input.routineId ?? null,
-        input.routineRevision ?? null,
         input.deliveryId ?? null,
         scope,
-        ...routineBindings,
       ),
-    db
-      .prepare(`INSERT INTO issue_notifications (run_id, next_attempt_at)
-      SELECT id, ? FROM runs
-      WHERE id = ? AND ? = 'github.issue-label'`)
-      .bind(now, runId, input.source),
     // The winning run may have been admitted by the previous Worker after the
     // migration. Backfill only facts that are present in its business rows.
     db
@@ -214,13 +194,12 @@ export async function admitTrigger(
       .bind(input.source, input.idempotencyKey, input.ownerId),
     db
       .prepare(
-        `SELECT ((? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AND ${routineGuard}) AS projectCurrent`,
+        `SELECT (? IS NULL OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ? AND deleted_at IS NULL)) AS projectCurrent`,
       )
       .bind(
         input.projectRevision ?? null,
         input.projectId ?? null,
         input.projectRevision ?? null,
-        ...routineBindings,
       ),
   ]);
   const row = results.at(-2)?.results[0];

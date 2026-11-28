@@ -26,11 +26,26 @@ const input = {
   timeoutMs: 1000,
 };
 
+/** Admits a Run that shows its state on the issue, as Turns from an issue do. */
+async function admit(
+  db: Awaited<ReturnType<typeof createTestDb>>,
+  trigger: typeof input = input,
+) {
+  const run = await admitTrigger(db, trigger);
+  await db
+    .prepare(
+      "INSERT INTO issue_notifications (run_id, next_attempt_at) VALUES (?, ?) ON CONFLICT DO NOTHING",
+    )
+    .bind(run.runId, Date.now())
+    .run();
+  return run;
+}
+
 test("durable deduplication, exclusive lease, terminal race and separate reruns", async (t) => {
   const db = await createTestDb(t);
-  const run = await admitTrigger(db, input);
-  await admitTrigger(db, input);
-  await admitTrigger(db, { ...input, idempotencyKey: "two" });
+  const run = await admit(db, input);
+  await admit(db, input);
+  await admit(db, { ...input, idempotencyKey: "two" });
   expect(
     await db
       .prepare("SELECT count(*) AS n FROM issue_notifications")
@@ -50,11 +65,15 @@ test("durable deduplication, exclusive lease, terminal race and separate reruns"
   expect(finished?.comment_id).toBe(42);
   await store.complete(finished!, 42);
   expect(await store.claim()).toEqual([]);
-  const next = await admitTrigger(db, { ...input, idempotencyKey: "three" });
+  const next = await admit(db, { ...input, idempotencyKey: "three" });
   expect(next.runId).not.toBe(run.runId);
   await db
     .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
     .bind(next.runId)
+    .run();
+  await db
+    .prepare("UPDATE sessions SET project_id = ? WHERE id = ?")
+    .bind("project/id", next.sessionId)
     .run();
   await sendIssueNotifications(
     store,
@@ -62,7 +81,9 @@ test("durable deduplication, exclusive lease, terminal race and separate reruns"
     async (actualTarget, _marker, body, id) => {
       expect(actualTarget).toEqual(target);
       expect(body).toContain("tailos-failed-v1.png");
-      expect(body).toContain(`/sessions/${next.sessionId}`);
+      expect(body).toContain(
+        `https://tailos.app/project%2Fid/sessions/${next.sessionId})`,
+      );
       expect(id).toBeNull();
       return 43;
     },
@@ -72,7 +93,7 @@ test("durable deduplication, exclusive lease, terminal race and separate reruns"
 
 test("rate limits without a retry header back off for at least one minute", async (t) => {
   const db = await createTestDb(t);
-  const run = await admitTrigger(db, input);
+  const run = await admit(db, input);
   const store = issueNotificationStore(db);
   const before = Date.now();
   await sendIssueNotifications(store, "https://tailos.app", async () => {
@@ -101,7 +122,7 @@ test("rate limits without a retry header back off for at least one minute", asyn
 
 test("lease expiry recovers and permission failures stop retrying", async (t) => {
   const db = await createTestDb(t);
-  await admitTrigger(db, input);
+  await admit(db, input);
   const store = issueNotificationStore(db);
   const [stale] = await store.claim();
   await db.prepare("UPDATE issue_notifications SET lease_until = 0").run();
@@ -126,7 +147,7 @@ test.for(["permanent", "transient"] as const)(
   "stops %s failures without reviving retries when the run finishes",
   async (category, t) => {
     const db = await createTestDb(t);
-    const run = await admitTrigger(db, input);
+    const run = await admit(db, input);
     const store = issueNotificationStore(db);
     // A transient failure gets one more attempt before reaching the limit.
     await db.prepare("UPDATE issue_notifications SET attempts = 18").run();
@@ -168,6 +189,7 @@ test("comment renders only image and session link plus hidden marker", () => {
     commentBody("https://tailos.app", {
       run_id: "run",
       session_id: "session",
+      project_id: null,
       desired_state: "processing",
     }),
   ).toBe(
@@ -175,9 +197,22 @@ test("comment renders only image and session link plus hidden marker", () => {
   );
 });
 
+test("a guidance reply has no Session link and its own marker", () => {
+  expect(
+    commentBody("https://tailos.app", {
+      run_id: "guidance/42/100",
+      guidance_id: "42/100",
+      session_id: null,
+      project_id: null,
+      desired_state: "succeeded",
+      reply_body: "Send @tailos plan",
+    }),
+  ).toBe("Send @\u200btailos plan\n\n<!-- tailos:guidance:42/100:v1 -->");
+});
+
 test("rate limits persist their retry deadline independently of run recovery", async (t) => {
   const db = await createTestDb(t);
-  const run = await admitTrigger(db, input);
+  const run = await admit(db, input);
   const store = issueNotificationStore(db);
   const retryAt = Date.now() + 120_000;
   await sendIssueNotifications(store, "https://tailos.app", async () => {
@@ -197,18 +232,4 @@ test("rate limits persist their retry deadline independently of run recovery", a
   await db.prepare("UPDATE issue_notifications SET next_attempt_at = 0").run();
   const [n] = await store.claim();
   expect(n?.desired_state).toBe("failed");
-});
-
-test("notification insertion rolls back the run and session on failure", async (t) => {
-  const db = await createTestDb(t);
-  await db
-    .prepare(
-      "CREATE TRIGGER reject_notification BEFORE INSERT ON issue_notifications BEGIN SELECT RAISE(ABORT, 'notification failure'); END",
-    )
-    .run();
-  await expect(admitTrigger(db, input)).rejects.toThrow("notification failure");
-  expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(0);
-  expect(
-    await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
-  ).toBe(0);
 });

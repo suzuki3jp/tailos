@@ -1,3 +1,4 @@
+import type { AgentConnected } from "@/application/auth/agent-connection.ts";
 import { Hono } from "hono";
 import { expect, test, vi } from "vitest";
 import { ExecutionContext } from "@tailos/core/runner";
@@ -7,6 +8,10 @@ import { createTestDb } from "@/infrastructure/d1/testing.ts";
 import { d1Projects } from "@/infrastructure/d1/projects.ts";
 import { d1Sessions } from "@/infrastructure/d1/sessions.ts";
 import { admitTrigger } from "@/infrastructure/d1/trigger-admission.ts";
+import {
+  admitSessionMessage,
+  latestTurnContext,
+} from "@/infrastructure/d1/session-inbox.ts";
 import {
   createTestOperator,
   testLoginBindings,
@@ -21,7 +26,6 @@ const settings = {
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  allowedActors: ["planner"],
   maxRunMinutes: 3,
 };
 
@@ -30,7 +34,7 @@ async function setup(t: import("vitest").TestContext) {
   const env = testLoginBindings(DB);
   const owner = await createTestOperator(env);
   const project = await d1Projects(DB).create(settings, owner.id);
-  const connected = vi.fn(async () => true);
+  const connected = vi.fn<AgentConnected>(async () => true);
   const defaultBranch = vi.fn(async () => "trunk");
   const scheduled: string[] = [];
   const { projectSessionRoutes } = createSessionRoutes(
@@ -42,13 +46,22 @@ async function setup(t: import("vitest").TestContext) {
           (await d1Projects(env.DB).settings(ownerId)).find(
             (record) => record.project.id === projectId,
           ) ?? null,
-        codexConnected: connected,
+        connected,
         defaultBranch,
         admit: (input) => admitTrigger(env.DB, input),
       }),
       scheduleRun: () => async (id) => {
         scheduled.push(id);
       },
+      continueDeps: (env) => ({
+        project: async (ownerId, projectId) =>
+          (await d1Projects(env.DB).settings(ownerId)).find(
+            (record) => record.project.id === projectId,
+          ) ?? null,
+        connected,
+        latestTurn: (input) => latestTurnContext(env.DB, input),
+        admitMessage: (input) => admitSessionMessage(env.DB, input),
+      }),
     },
   );
   const app = new Hono<{ Bindings: Bindings }>().route(
@@ -60,10 +73,15 @@ async function setup(t: import("vitest").TestContext) {
     {
       projectId = project.project.id,
       headers = { Cookie: owner.cookie, Origin: env.TAILOS_WEB_ORIGIN },
-    }: { projectId?: string; headers?: Record<string, string> } = {},
+      path = "",
+    }: {
+      projectId?: string;
+      headers?: Record<string, string>;
+      path?: string;
+    } = {},
   ) =>
     app.request(
-      `${env.TAILOS_PUBLIC_ORIGIN}/projects/${projectId}/sessions`,
+      `${env.TAILOS_PUBLIC_ORIGIN}/projects/${projectId}/sessions${path}`,
       {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
@@ -203,6 +221,15 @@ test("a home message is rejected without saving anything when it cannot start", 
   const disconnected = await send(message());
   expect(disconnected.status).toBe(409);
   expect(await disconnected.json()).toEqual({ error: "codex_not_connected" });
+  connected.mockResolvedValueOnce(false);
+  const claude = await send({ ...message(), engine: "claude" });
+  expect(claude.status).toBe(409);
+  expect(await claude.json()).toEqual({ error: "claude_not_connected" });
+  expect(connected).toHaveBeenLastCalledWith(expect.any(String), "claude");
+  expect(
+    (await send({ ...message(), engine: "claude", model: "gpt-5.5" })).status,
+  ).toBe(400);
+  expect((await send({ ...message(), engine: "gemini" })).status).toBe(400);
 
   defaultBranch.mockRejectedValueOnce(new Error("GitHub unavailable"));
   expect((await send(message())).status).toBe(503);
@@ -237,4 +264,112 @@ test("the initial title is the first line within the title limit", () => {
   expect(initialSessionTitle("x".repeat(150))).toBe("x".repeat(100));
   expect(initialSessionTitle("😀".repeat(60))).toBe("😀".repeat(50));
   expect(initialSessionTitle("   ")).toBeUndefined();
+});
+
+test("the Session page sends the next message once the Session is idle, keeping its settings", async (t) => {
+  const { DB, env, scheduled, send } = await setup(t);
+  const started = (await (
+    await send({
+      requestId: crypto.randomUUID(),
+      message: "Add a health check",
+      model: "gpt-5.5",
+      effort: "high",
+    })
+  ).json()) as { sessionId: string; runId: string };
+  const path = `/${started.sessionId}/messages`;
+  const message = { requestId: crypto.randomUUID(), message: "Also log it" };
+  expect((await send({ ...message, message: " " }, { path })).status).toBe(400);
+  expect(
+    (await send(message, { path, headers: { Origin: env.TAILOS_WEB_ORIGIN } }))
+      .status,
+  ).toBe(401);
+  const busy = await send(message, { path });
+  expect(busy.status).toBe(409);
+  expect(await busy.json()).toEqual({ error: "session_busy" });
+  await DB.prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
+    .bind(started.runId)
+    .run();
+  const response = await send(message, { path });
+  expect(response.status).toBe(201);
+  const { runId } = (await response.json()) as { runId: string };
+  expect(scheduled).toEqual([started.runId, runId]);
+  const run = await DB.prepare(
+    "SELECT session_id, execution_context FROM runs WHERE id = ?",
+  )
+    .bind(runId)
+    .first<{ session_id: string; execution_context: string }>();
+  expect(run?.session_id).toBe(started.sessionId);
+  expect(JSON.parse(run!.execution_context)).toMatchObject({
+    model: "gpt-5.5",
+    effort: "high",
+    trigger: { kind: "web.message" },
+  });
+  expect(
+    (
+      await send(
+        { requestId: crypto.randomUUID(), message: "x" },
+        { path: `/${crypto.randomUUID()}/messages` },
+      )
+    ).status,
+  ).toBe(404);
+});
+
+test("a Session started on Claude continues on Claude only", async (t) => {
+  const { DB, send } = await setup(t);
+  const started = (await (
+    await send({
+      requestId: crypto.randomUUID(),
+      message: "Add a health check",
+      engine: "claude",
+      model: "claude-opus-5-5",
+      effort: "xhigh",
+    })
+  ).json()) as { sessionId: string; runId: string };
+  const first = await DB.prepare(
+    "SELECT execution_context FROM runs WHERE id = ?",
+  )
+    .bind(started.runId)
+    .first<string>("execution_context");
+  expect(JSON.parse(first!)).toMatchObject({
+    engine: "claude",
+    connectionId: expect.stringMatching(/^claude\//),
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+  });
+  await DB.prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
+    .bind(started.runId)
+    .run();
+  const path = `/${started.sessionId}/messages`;
+  const switched = await send(
+    { requestId: crypto.randomUUID(), message: "Next", engine: "codex" },
+    { path },
+  );
+  expect(switched.status).toBe(409);
+  expect(await switched.json()).toEqual({ error: "session_provider_fixed" });
+  const codexModel = await send(
+    { requestId: crypto.randomUUID(), message: "Next", model: "gpt-5.5" },
+    { path },
+  );
+  expect(codexModel.status).toBe(400);
+  expect(await codexModel.json()).toEqual({ error: "unsupported_model" });
+  const next = await send(
+    {
+      requestId: crypto.randomUUID(),
+      message: "Next",
+      engine: "claude",
+      model: "claude-haiku-5-5",
+    },
+    { path },
+  );
+  expect(next.status).toBe(201);
+  const { runId } = (await next.json()) as { runId: string };
+  const context = await DB.prepare(
+    "SELECT execution_context FROM runs WHERE id = ?",
+  )
+    .bind(runId)
+    .first<string>("execution_context");
+  expect(JSON.parse(context!)).toMatchObject({
+    engine: "claude",
+    model: "claude-haiku-5-5",
+  });
 });

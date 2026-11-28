@@ -4,11 +4,11 @@
 
 GitHub Issue に有効な Routine の起動ラベルを付けると、Tailos が設定されたプロンプトで Session と最初の依頼を作る。既存設定の移行では従来の `tailos:run` 等のラベルを引き継ぐ。Cloudflare のコンテナで Codex を実行し、作業ブランチにコミットして PR を作る。依頼と Agent の返答は Session の会話履歴に、PR はその Run の結果に保存する。Public / Private リポジトリを対象にし、プロジェクトの設定は D1 に保存し、運用者が Web の `/projects` で管理する。PR 作成後のレビューとマージは人が行う。
 
-GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。ホームの入力欄からは、選択した Project で新しい Session と Run を開始できる（[判断](pdr/records/PDR-20261122-home-message-start.md)）。Web チャットからの続行、実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
+GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。ホームの入力欄からは、選択した Project で新しい Session と Run を開始できる（[判断](pdr/records/PDR-20261122-home-message-start.md)）。Session 画面の入力欄からは、作業中でない Session に続きのメッセージを送れる（[判断](pdr/records/PDR-20261124-session-message.md)）。実行中の追加指示、未公開の作業の復元、CI 結果による自動修正、レビューループ、他の Agent、MCP・コネクタ、モデル通信のプロキシは後続とする。
 
 `prototype` ブランチは実行経路や外部 API との接続の参考にする。本実装では会話と実行状態を D1 に集約する。
 
-[トリガーと実行設定の抽象化計画](plans/trigger-run-abstraction.md) に従い、トリガー条件・許可ユーザー・prompt・model・effort を束ねる `Routine` を D1 に保存し、label 起動から共通の Run 受付へ接続する。初回デプロイは Run のない状態を運用で作って行う。Routine は現在 Codex に対応し、Claude・PR イベント・cron は後続とする。
+[トリガーと実行設定の抽象化計画](plans/trigger-run-abstraction.md) に従い、トリガー条件・許可ユーザー・prompt・model・effort を束ねる `Routine` を D1 に保存し、label 起動から共通の Run 受付へ接続する。初回デプロイは Run のない状態を運用で作って行う。Routine は Model Provider として Codex と Claude を選べる（[判断](pdr/records/PDR-20261126-agent-selection-claude.md)）。PR イベント・cron は後続とする。
 
 ## 構成と依存の境界
 
@@ -16,7 +16,7 @@ GitHub ログイン、ChatGPT 接続、Session 詳細は Web で提供する。�
 | --- | --- | --- |
 | `apps/web` | vinext、React、Tailwind CSS、TanStack Query | ログイン、ChatGPT 接続、Project 設定、Session 詳細の画面 |
 | `apps/api` | Hono、Cloudflare Workers、Wrangler、Drizzle ORM | トリガーの受付、Session と会話履歴の管理、Run の進行、コンテナ制御、プロバイダ認証、PR 作成 |
-| `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。MVP の実装は Codex app-server |
+| `apps/runner` | Node.js 22、`node:http`、esbuild、Docker | 内部 HTTP でジョブを受け取り、作業ディレクトリ内で Agent を実行する。Codex は app-server、Claude は Agent SDK で実行する |
 | `packages/core` | TypeScript、Valibot | ジョブ、イベント、結果など API と Runner の共有契約 |
 
 API の HTTP ハンドラーとテストは `presentation/http/handlers/<機能名>/`、認証や Origin 検証のミドルウェアは `presentation/http/middlewares/`、ユースケースとその契約は `application`、D1・R2・外部 API の実装は `infrastructure` に置く。`bootstrap` と `worker.ts` が依存を組み立て、Oxlint がレイヤーをまたぐ import を検査する。
@@ -27,12 +27,11 @@ flowchart LR
     Browser[ブラウザ] -->|画面・/api/v1| Web[apps/web · Workers]
     Web -->|Service Binding| API
     API --> D1[(D1 · Routine・Session・会話・Run・起動イベント)]
-    API --> DO[Run ごとの Durable Object]
+    API --> DO[Session ごとの Durable Object]
     DO -->|内部 HTTP| Runner[apps/runner · Cloudflare Containers]
     DO --> D1
     DO --> R2[(R2 · ログと成果物)]
-    Runner -->|公開用の差分を預ける| API
-    API -->|署名付きコミットと PR を作成| GitHub
+    Runner -->|Agent が git と gh で push・PR 作成| GitHub
 ```
 
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
@@ -42,7 +41,7 @@ flowchart LR
 
 ## Session と実行のデータモデル
 
-**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。PR 作成で Run は完了し、Session には会話と各 Run の結果が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。
+**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。Agent の返答で Run は完了し、Session には会話と各 Run の結果（push したブランチの PR を含む）が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。 Session の Run は Session ごとの Durable Object が 1 つずつ処理し、前の Run の状態を消してから次の Run を始める。
 
 ```mermaid
 erDiagram
@@ -90,7 +89,7 @@ erDiagram
 
 | テーブル | 保存する情報 |
 | --- | --- |
-| `routines` | Project に属する起動条件・許可ユーザー・prompt・Codex の model / effort・有効状態・revision・削除時刻を保存する |
+| `routines` | Project に属する起動条件・許可ユーザー・prompt・Model Provider（engine）と model / effort・有効状態・revision・削除時刻を保存する |
 | `routine_changes` | 設定の保存・変更・削除と同じトランザクションで操作者・時刻・変更前後を保存する |
 | `sessions` | 所有者は Tailos 上の ID で識別する。`project_id` は Project の安定した UUID を参照する。Project と作業対象は独立して任意とし、Issue 起動の `target` には GitHub リポジトリ ID と Issue 番号を入れる |
 | `session_messages` | 自動化が生成した依頼、ユーザーの発言、Agent の確定した返答を `(session_id, seq)` の順に保存する。起点は `runs.start_message_id` で参照し、返答や将来の追加指示はメッセージの `run_id` で関連づける |
@@ -118,7 +117,7 @@ label Webhook は D1 の Project と Routine を読み、Project のリポジト
 
 単発チャットは引き続き Project やリポジトリを指定せずに作成できる。label 起動の model・effort は Routine で指定し、未指定なら provider の既定を使う。リポジトリ・時間上限は Project の正式な設定とする。Agent の通信は常に許可し、設定項目にしない（[判断](pdr/records/PDR-20261122-agent-egress-credential-proxy.md)）。`Project.triggerLabel` は現行設定から削除し、過去の変更履歴にだけ残す。未移行の plan は従来の Project の許可ユーザー設定と会話経路を維持する。
 
-Routine は `/projects` の「Routine を管理」から追加・編集・削除する。新規作成は無効であり、接続やモデル情報を検証できなくても無効状態なら保存できる。有効化時に所有者の Codex 接続とモデル・effort の対応を確認する。変更は新規受付に適用し、受付済み Run のプロンプトや実行設定を変更しない。本番の設定 API は `/api/v1/projects/:projectId/routines` に置き、履歴は `/history` で取得する。
+Routine は `/projects` の「Routine を管理」から追加・編集・削除する。新規作成は無効であり、接続やモデル情報を検証できなくても無効状態なら保存できる。有効化時に、Routine の Provider についての所有者の接続とモデル・effort の対応を確認する。変更は新規受付に適用し、受付済み Run のプロンプトや実行設定を変更しない。本番の設定 API は `/api/v1/projects/:projectId/routines` に置き、履歴は `/history` で取得する。
 
 ## 実行と復旧
 
@@ -132,11 +131,11 @@ Run 完了時は、確定した Agent の返答と Run の結果を一緒に保�
 
 ## 認証と GitHub の権限
 
-ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Tailos が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には必要なアクセストークンと、Run に紐づく短命の更新用リースを渡す。リースは実行中の接続に対する更新に限定する。
+ChatGPT 接続は Web のボタンからデバイスコード認証を始める。ユーザーはブラウザでコードを入力し、Tailos が接続完了を検知する。長期の認証情報はクラウドの API 側で暗号化して保持し、接続単位で更新の競合を防ぐ。Runner には置き換え用のトークンだけを渡す。Codex がモデル API（`chatgpt.com`）へ送る通信は Workers 側で横取りし、Run の接続の現在のアクセストークンを差し込む。モデル API がトークンを拒否したら、次の通信で更新してから差し込む（[判断](pdr/records/PDR-20261126-model-credentials-claude.md)）。
 
-Claude 接続は、利用者が手元で `claude setup-token` を実行して得た長期トークンを Web の接続画面に貼り付けて保存する。保存時は形式だけを確かめ、ChatGPT 接続と同じ方式で暗号化して保持する。保存した値は応答やログに出さない。トークンは更新できないので、接続画面は保存日と有効期限の目安を示し、期限の 30 日前から発行し直しを案内する。
+Claude 接続は、利用者が手元で `claude setup-token` を実行して得た長期トークンを Web の接続画面に貼り付けて保存する。保存時は形式だけを確かめ、ChatGPT 接続と同じ方式で暗号化して保持する。保存した値は応答やログに出さない。トークンは更新できないので、接続画面は保存日と有効期限の目安を示し、期限の 30 日前から発行し直しを案内する。Runner には置き換え用のトークンだけを渡し、Claude Code がモデル API（`api.anthropic.com` の `/v1/messages`）へ送る通信を Workers 側で横取りして、Run の接続のトークンを差し込む。
 
-GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命の読み取りトークンを渡す。Agent はリポジトリの指示と CI 設定に沿って整形・lint・テストなどのコマンドを作業ディレクトリで実行し、結果を返答に記載する。Runner は差分が公開可能な形式かを確認して API に預ける。API は GitHub App で署名付きコミットを作り、署名・親・tree を照合してから PR を作る。公開されたコミットの検証は対象リポジトリの CI が担う。英語の Conventional Commits の見出しをコミットと PR で共有する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
+GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Agent の GitHub への通信はコンテナの外で受け、対象リポジトリに限定した短命のトークンを Turn の間だけ差し込む。Agent はリポジトリの指示と CI 設定に沿って整形・lint・テストなどのコマンドを作業ディレクトリで実行し、結果を返答に記載する。ブランチ・コミット・PR は Agent が git と gh で直接扱い、作者は GitHub App の bot とする（[作業の公開の判断](pdr/records/PDR-20261128-agent-git-publication.md)）。Tailos は push されたブランチ名を記録し、その PR を Run の結果として表示する。公開されたコミットの検証は対象リポジトリの CI が担う。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 
 ## ローカル開発とデプロイ
 
@@ -167,25 +166,19 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 | フェーズ | 作るもの | 完了条件 |
 | --- | --- | --- |
 | 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
-| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチに署名付きコミットを作成し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
+| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。Agent が作業ブランチに push し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
 | 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `tailos.app` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |
 
 ### Issue コメントによる計画会話
 
-許可されたユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、タイトル・本文だけで調査を開始できる。追加依頼文と `tailos:run` ラベルは不要。同じ Issue の `@tailos <回答・修正依頼>` と再度の `@tailos plan` は同じ Session の次の Run になる。開始前の回答には開始方法を返信する。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。コメントから実装・公開を起動する経路はない。
+計画会話は Project の plan Routine として動く（[計画会話の判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。Routine の許可ユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、その Routine と Issue の Session にメッセージが届く。同じ Issue のコマンド語のない `@tailos <回答・修正依頼>` は、その Issue で最後に使われたコメント起動の Session に続く。続ける Session がなければ、アプリが開始方法を一度だけ返信する（`issue_guidance`）。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。plan Routine は読み取り専用で、作業ツリーに書き込まない。
 
-`planning_issues` は owner / project / repository ID / Issue 番号を一意キーとして Session に対応付ける。リポジトリ名を会話の識別子にしない。`planning_inbox` は comment ID、投稿者、元 URL、本文、受理時の実行設定、受付時刻と状態を保存し、連番 ID を受付順とする。`planning_deliveries` で delivery の再送も区別する。同じコメントが別 delivery で届いても再割当しない。最初の開始コメントより先に永続化された回答は案内だけになり、後から過去の結果を変更しない。
+Issue を起点にする Routine（label と計画）は、Routine と Issue の組ごとに 1 つの Session を持つ（`routine_sessions`、[Routine の受付の判断](pdr/records/PDR-20261124-issue-routine-dispatch.md)）。届いたメッセージは `session_inbox` に届いた順に保存し、Session に進行中の Turn がなければその場で Turn（Run）にする。進行中なら待ち、Turn の終わり（Durable Object）と Cron が次のメッセージを Turn にする。Turn の時間上限は Turn を作った時点から数える。label は delivery、コメントはコメント ID で重複を除く。受付と最初の Turn の作成は一つの D1 batch で行い、Session 単位の active Run 一意制約を維持する。
 
-Session、初回 inbox と delivery の受付は一つの D1 batch で保存する。最古の pending 入力の message / queued Run 作成・assigned への更新・状態通知の登録も一つの batch とし、既存の Session 単位の active Run 一意制約を維持する。実行中の入力は pending として残る。Cron と Run 終了時が次入力を割り当てる。作成済み queued Run は既存の Run 復旧が起動するため、Run 作成後・起動前と終了後・次入力処理前の停止から回収できる。
+コメントは Session のメッセージになり、Routine のプロンプトは実行設定の `instructions` として受付時に保存する。Runner には Routine のプロンプトを `prompt`、コメントを `message` として渡す。会話の続きは他の Session と同じく Session の引き継ぎで再開し、会話全体をジョブに埋め込まない。ジョブが 32 KiB を超えるほど長いコメントは `message_too_large` で失敗する。計画も label と同じく、受付時のイベントにある Issue のタイトル・本文から内容ハッシュを作り、`githubContext: { kind: "issue", number, contentHash }` で渡す（[Issue の参照の判断](pdr/records/PDR-20261124-routine-github-context.md)）。Agent が取得した内容が一致しない場合は指示として返さないため、起動後の未確認の編集を使用しない。
 
-Run 開始時の checkout で確認したタイトル・本文、base SHA、対象 input ID と受理済み会話を `planning_snapshots` に不変保存する。Runner にはタイトル・本文を埋め込まず、`githubContext: { kind: "issue", number, contentHash }` と、基準 SHA・受理済み会話だけを含む `planningContext` を渡す。計画の contentHash は保存済みスナップショットから計算する。実装ラベルの開始 prompt は Routine の保存値を使い、Webhook 受付時のタイトル・本文の SHA-256 を実行コンテキストに保存して同じ JSON で渡す。Agent が取得した内容が一致しない場合は指示として返さないため、ラベル付与後の未確認の編集を実装に使用しない。
-
-Agent は対象リポジトリに限定された `tailos_github_get` を呼び、Issue のタイトル・本文を取得する。本文は既存の 16,000 UTF-16 単位を一回の上限として、`nextBodyOffset` を `bodyOffset` に指定して最後まで読む。サロゲートペアを分割せず、対象 Issue のページは最初の取得結果を保持して返す。対象本文を取得しきらない成功結果は `agent_failed` とする。診断が有効ならツールの入力・取得結果を既存経路へ記録する。Agent に GitHub の資格情報を直接公開せず、任意のコメントを自動で指示に取り込まない。
-
-prompt の 4,000 UTF-16 コード単位と、最終ジョブ全体の UTF-8 サイズの 32 KiB 上限は維持する。Issue 本文はジョブのサイズを消費しなくなるが、受理済み会話は引き続き全文を渡すため、会話の超過時は `planning_input_too_large`、スナップショット保存失敗は `planning_snapshot_failed`、checkout・Issue 確認失敗は `repository_unavailable` として返信待ちを残す。`githubContext` を持たない旧ジョブも引き続き受け付ける。
+Agent は対象リポジトリに限定された `tailos_github_get` を呼び、Issue のタイトル・本文を取得する。本文は既存の 16,000 UTF-16 単位を一回の上限として、`nextBodyOffset` を `bodyOffset` に指定して最後まで読む。サロゲートペアを分割せず、対象 Issue のページは最初の取得結果を保持して返す。対象本文を取得しきらない成功結果は `agent_failed` とする。診断が有効ならツールの入力・取得結果を既存経路へ記録する。任意のコメントを自動で指示に取り込まない。
 
 Tailos は `wrangler.jsonc` の `scheduling_policy: durable_object` と名前付きイメージを使う。この方式では `ctx.container.images` は DO を実行する Worker バージョンの不変なイメージ参照を持つ。[Cloudflare の Image Management](https://developers.cloudflare.com/containers/guides/image-management/) を根拠に、Worker と Runner イメージを同じリリースとして扱う。コード上も `runStarter` は Run ID ごとの DO を選び、`startRunner` はその DO の `images.runner` を明示して新しいジョブのコンテナを起動するため、新ジョブを application-wide rollout 中の任意の旧コンテナへ送る構成ではない。既存の実行中 Run は同じコンテナを poll し、更新時にジョブを再送・強制再起動しない。Worker 更新全般が無停止であることを保証するものではなく、イメージを削除すると旧版の起動もできなくなるため、ロールバックに必要なイメージは保持する。
 
-結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。`planning_issues.latest_run_id` は最新試行、`latest_plan_run_id` は計画提示に成功した最新 Run を指す。質問のみ・失敗は後者を更新しないため、後続の実装引継ぎでは両 ID・結果フラグと未処理 inbox の確認が必要になる。最新試行の ID は queued Run 作成時点で更新する。質問は正常終了し、コンテナを停止する。
-
-`planning_replies` は Run 終了の SQL trigger により結果・会話と同じトランザクションで保存される。画像の `issue_notifications` と別のコメントにし、Run / input / reply のマーカーで識別する。共通の通知リース・再試行を使い、前の返信が送信済みか恒久失敗になるまで同じ会話の次の返信を送らない。権限不足・恒久失敗は failed と error_category を残して後続を解放する。期限切れリースと未送信返信は Cron で回収する。GitHub 投稿結果不明時は全ページで Bot と App ID とマーカーを照合するため、exactly-once 配送を前提にしない。本文中のメンションと予約マーカーは無効化し、投稿の書き込み資格情報は API だけが持つ。
+結果は Agent メッセージと `kind: plan` / `planPresented` / `needsAnswer` に保存する。計画の返信は Agent が gh で Issue にコメントし、アプリは本文を投稿しない。アプリは他の Issue 起点の Turn と同じく、Turn ごとの状態コメント（`issue_notifications`）だけを付ける。計画会話専用だった `planning_*` のテーブルは、移行後のマイグレーション 0014 で DROP した。

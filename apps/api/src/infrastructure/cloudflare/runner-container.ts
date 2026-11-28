@@ -1,17 +1,4 @@
-import {
-  dispatchPlanningInputs,
-  savePlanningSnapshot,
-} from "@/infrastructure/d1/planning.ts";
-import {
-  beginPublicationReconciliation,
-  stageRunPublication,
-} from "@/infrastructure/d1/run-publication.ts";
-import {
-  pendingPublication,
-  publicationDeadline,
-  type LegacyPublication,
-  type PendingPublication,
-} from "@/application/runs/publication.ts";
+import { dispatchSessionInbox } from "@/infrastructure/d1/session-inbox.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import {
   seal,
@@ -25,15 +12,13 @@ import {
 } from "@/infrastructure/auth/run-lease.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
-  FileChanges,
+  continuitySaveMs,
+  ExecutionContext,
+  githubJobContext,
+  maxContinuityBytes,
   maxRunnerJobBytes,
   RunnerStatus,
-  type CheckedPublication,
-  type ExecutionContext,
   type RunnerJob,
-  type RepositoryTarget,
-  type RunTrigger,
-  triggerIssue,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Bindings } from "@/bindings.ts";
@@ -57,8 +42,15 @@ import {
   registerDiagnosticProducer,
 } from "@/infrastructure/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
+import { currentInstructions } from "@/application/routines/routines.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
+import { runStarter } from "./run-start.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
+import {
+  modelEgressHosts,
+  type ModelAccess,
+  type ModelEgressProps,
+} from "./model-egress.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -68,9 +60,11 @@ type RepositoryGrant = {
   attempts: number;
 };
 
+/** Names the model connection the Run's Agent may use while it works. */
 type RefreshLease = {
-  digest: string;
   runId: string;
+  /** The Model Provider of the connection; leases without it are Codex's. */
+  engine?: "codex" | "claude";
   connectionId: string;
   connectionVersion: string;
   expiresAt: number;
@@ -85,33 +79,118 @@ type DiagnosticLease = {
 
 type RunnerExports = {
   GitHubEgress(options: { props: GitHubEgressProps }): Fetcher;
+  ModelEgress(options: { props: ModelEgressProps }): Fetcher;
 };
 
 /**
- * Set once the Agent's work is over. Publication runs before the container is
- * destroyed, so the egress Worker must stop adding the Run's token first:
- * otherwise a process the Agent left behind could push to the work branch.
+ * Set once the Turn is over, before its work is saved and the container goes:
+ * the egress Workers stop adding the Run's credentials, so that a process the
+ * Agent left behind cannot use GitHub or the model connection afterwards.
  */
-const githubEgressClosed = "githubEgressClosed";
+const agentEgressClosed = "agentEgressClosed";
+/** The access version that the model API last rejected, forcing a refresh. */
+const rejectedModelAccess = "rejectedModelAccess";
+/** The shortest time between refreshes that a rejected token forces. */
+const forcedRefreshInterval = 5_000;
+
+/**
+ * Stands in for the Codex access token inside the container. Codex reads the
+ * account and plan claims; the model egress Worker replaces the whole token.
+ */
+export function placeholderAccessToken(
+  accountId: string,
+  planType: string | undefined,
+  expiresAt: number,
+) {
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replace(/=+$/, "");
+  return [
+    encode({ alg: "none", typ: "JWT" }),
+    encode({
+      exp: Math.ceil(expiresAt / 1000),
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+        ...(planType && { chatgpt_plan_type: planType }),
+      },
+    }),
+    "tailos-placeholder",
+  ].join(".");
+}
+
+/**
+ * Stands in for the Claude OAuth token inside the container. It has the
+ * token's shape and nothing of the user's: the model egress Worker replaces it.
+ */
+export const placeholderClaudeToken = "sk-ant-oat01-tailos-placeholder";
 
 /** Authorizes the Run's controller on the Runner's HTTP server. */
 const runnerKeyStorage = "runnerKey";
+/**
+ * Where the Session's work stands for its next Turn: saved in R2 on top of
+ * its base commit, or lost because the last Turn's work could not be saved.
+ * It belongs to the Session, so it outlives each Run.
+ */
+type ContinuityRecord =
+  | { key: string; baseSha: string; snapshot?: ContainerSnapshotRecord }
+  | { lost: true };
+/**
+ * A snapshot of the container that holds the saved work in place, and the
+ * image it was taken from: it only restarts that image.
+ */
+type ContainerSnapshotRecord = { id: string; image: string };
+/**
+ * How long a container waits for the Session's next Turn before it is
+ * destroyed. At 0 it never waits: the next Turn restores its snapshot.
+ */
+export const sessionIdleMs = 0;
+const idleUntilStorage = "idleUntil";
+const continuityStorage = "continuity";
+/** The Run whose work is saved when it ends, and the base it works on. */
+type ContinuityRun = { runId: string; baseSha: string };
+const continuityRunStorage = "continuityRun";
+const continuityKey = (sessionId: string, runId: string) =>
+  `sessions/v1/${sessionId}/continuity/${runId}`;
+
+/**
+ * The branches the current Run pushed, and the repository of each, which the
+ * egress Worker records: the Run's result shows the pull requests of those in
+ * its target repository.
+ */
+type PushedBranch = { repository: string; branch: string };
+const pushedBranchesStorage = "pushedBranches";
+/** The most branches one Run records. */
+export const maxPushedBranches = 20;
+
+/** Runs of this Session that wait for the current one to finish. */
+const queuedRuns = "queuedRuns";
+/**
+ * Diagnostics leases outlive their Run for late telemetry, so each Run of the
+ * Session has its own.
+ */
+const diagnosticLeasePrefix = "diagnosticLease/";
+const diagnosticLeaseKey = (runId: string) => diagnosticLeasePrefix + runId;
+/** What a Run leaves in storage, cleared before the next Run of the Session. */
+const runStorage = [
+  "runId",
+  "refreshLease",
+  rejectedModelAccess,
+  agentEgressClosed,
+  continuityRunStorage,
+  pushedBranchesStorage,
+] as const;
 const runnerHeaders = (key: string | undefined) =>
   key ? { Authorization: `Bearer ${key}` } : undefined;
 
-const publicationKey = (runId: string, digest: string) =>
-  `tailos-api/v1/runs/${runId}/publication-${digest}.json`;
-
-async function publicationDigest(content: string) {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(content),
-  );
-  return Buffer.from(bytes).toString("hex");
-}
-
+/**
+ * Processes the Turns of one Session, one at a time, in a container of its
+ * own. The Durable Object is named after the Session; a Turn is a Run.
+ */
 export class RunnerContainer extends DurableObject<Bindings> {
   private pollUnavailable = false;
+  protected idleMs = sessionIdleMs;
   async cleanupDiagnostics() {
     await expireDiagnostics(this.env.DB, this.env.RUN_ARTIFACTS);
     const bucket = this.env.RUN_ARTIFACTS;
@@ -144,14 +223,30 @@ export class RunnerContainer extends DurableObject<Bindings> {
     }
   }
 
-  async schedule(runId: string): Promise<void> {
-    await this.ctx.storage.put("runId", runId);
+  /**
+   * Starts a Run of this Session, or queues it behind the Run in progress:
+   * the container and its storage belong to one Run at a time.
+   */
+  async schedule(runId: string, sessionId: string): Promise<void> {
+    await this.ctx.storage.transaction(async (storage) => {
+      await storage.put("sessionId", sessionId);
+      const current = await storage.get<string>("runId");
+      if (!current) await storage.put("runId", runId);
+      else if (current !== runId) {
+        const queue = (await storage.get<string[]>(queuedRuns)) ?? [];
+        if (!queue.includes(runId))
+          await storage.put(queuedRuns, [...queue, runId]);
+      }
+    });
     await this.ctx.storage.setAlarm(Date.now());
   }
 
   async alarm(): Promise<void> {
     const runId = await this.ctx.storage.get<string>("runId");
-    if (!runId) return;
+    if (!runId) {
+      await this.endIdle();
+      return;
+    }
 
     const driver: RunnerDriver = {
       start: (job) =>
@@ -162,9 +257,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
           () => this.submitJob(job),
           (result) => (result.status === "failed" ? "failed" : "succeeded"),
         ),
-      poll: async (id, context, deadlineAt, stepState) => {
+      poll: async (id, context) => {
         try {
-          const result = await this.pollJob(id, context, deadlineAt, stepState);
+          const result = await this.pollJob(id, context);
           if (this.pollUnavailable) {
             this.pollUnavailable = false;
             await recordRunDiagnostic(
@@ -203,57 +298,287 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return;
     }
 
-    await this.ctx.storage.delete("refreshLease");
-    await this.ctx.storage.delete(runnerKeyStorage);
-    const digest = await this.ctx.storage.get<string>("publicationDigest");
-    if (digest && this.env.RUN_ARTIFACTS?.delete) {
-      try {
-        await this.env.RUN_ARTIFACTS.delete(publicationKey(runId, digest));
-        await this.ctx.storage.delete("publicationDigest");
-      } catch {
-        // oxlint-disable-next-line no-console -- Record cleanup failures without artifact data.
-        console.warn("Checked publication cleanup failed", { runId });
-      }
-    }
+    // The Run is over: nothing may use its credentials while the rest of the
+    // cleanup, including revocation retries, is still pending.
+    await this.closeGitHubEgress();
+    await this.ctx.storage.delete(["refreshLease", rejectedModelAccess]);
     try {
       const container = this.ctx.container;
-      if (container?.running)
+      // Keep the Turn's work for the Session before the container goes.
+      const continuing =
+        await this.ctx.storage.get<ContinuityRun>(continuityRunStorage);
+      if (continuing?.runId === runId)
+        try {
+          await this.saveContinuity(container, continuing);
+        } catch {
+          // oxlint-disable-next-line no-console -- Record save failures without work data.
+          console.warn("Saving the Session's work failed", { runId });
+          await this.ctx.storage.put(continuityStorage, {
+            lost: true,
+          } satisfies ContinuityRecord);
+        } finally {
+          // Saved once: a cleanup that is retried, for instance while the
+          // GitHub token is revoked, must not save again after the container
+          // is gone and record the saved work as lost.
+          await this.ctx.storage.delete(continuityRunStorage);
+        }
+      // Its work is saved: the container may wait for the Session's next
+      // Turn, or go. A retried cleanup keeps the wait the first one chose.
+      const idleUntil =
+        continuing?.runId === runId
+          ? Date.now() + this.idleMs
+          : await this.ctx.storage.get<number>(idleUntilStorage);
+      if (this.idleMs > 0 && idleUntil && container?.running)
+        await this.ctx.storage.put(idleUntilStorage, idleUntil);
+      else if (container?.running)
         await observeRun(this.env.DB, runId, "cleanup", () =>
           container.destroy(),
         );
     } finally {
-      await this.revokeRepositoryGrant(runId);
-      const next = await dispatchPlanningInputs(this.env.DB);
-      await Promise.all(
-        next.map((id) => this.env.RUNNER?.getByName(id).schedule(id)),
-      );
+      // A revocation that will be retried keeps the Run current until then.
+      if (await this.revokeRepositoryGrant(runId)) await this.finishRun();
+      // The Session's next message, or another Session's, may start now.
+      const next = await dispatchSessionInbox(this.env.DB);
+      const schedule = runStarter(this.env);
+      if (schedule) await Promise.all(next.map((id) => schedule(id)));
+      const idleUntil = await this.ctx.storage.get<number>(idleUntilStorage);
+      if (idleUntil && !(await this.ctx.storage.get<string>("runId")))
+        await this.ctx.storage.setAlarm(idleUntil);
     }
   }
 
+  /** Destroys a container that waited for the next Turn long enough. */
+  private async endIdle() {
+    const idleUntil = await this.ctx.storage.get<number>(idleUntilStorage);
+    if (!idleUntil) return;
+    if (idleUntil > Date.now()) {
+      await this.ctx.storage.setAlarm(idleUntil);
+      return;
+    }
+    await this.ctx.container?.destroy().catch(() => {});
+    await this.ctx.storage.delete(idleUntilStorage);
+  }
+
+  /** Clears what the finished Run left and starts the next queued Run. */
+  private async finishRun() {
+    const now = Date.now();
+    const leases = await this.ctx.storage.list<DiagnosticLease>({
+      prefix: diagnosticLeasePrefix,
+    });
+    const next = await this.ctx.storage.transaction(async (storage) => {
+      await storage.delete([...runStorage]);
+      await storage.delete(
+        [...leases]
+          .filter(([, lease]) => lease.expiresAt <= now)
+          .map(([key]) => key),
+      );
+      const [first, ...rest] = (await storage.get<string[]>(queuedRuns)) ?? [];
+      if (rest.length) await storage.put(queuedRuns, rest);
+      else await storage.delete(queuedRuns);
+      if (first) await storage.put("runId", first);
+      return first;
+    });
+    if (next) await this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /**
+   * Collects the Turn's work from the Runner and keeps it in R2 for the next
+   * Turn, retrying a few times within the save window. When it cannot be
+   * kept, the Session records that its work was lost; when the Turn never
+   * worked on it, the previous saved work stays current.
+   */
+  private async saveContinuity(
+    container: Container | undefined,
+    run: ContinuityRun,
+  ) {
+    const bucket = this.env.RUN_ARTIFACTS;
+    const sessionId = await this.ctx.storage.get<string>("sessionId");
+    const runnerKey = await this.ctx.storage.get<string>(runnerKeyStorage);
+    const key = sessionId && continuityKey(sessionId, run.runId);
+    const until = Date.now() + continuitySaveMs;
+    const outcome = await observeRun(
+      this.env.DB,
+      run.runId,
+      "continuity",
+      async () => {
+        // The Runner took the job, so its work may have changed: when it is
+        // gone, the Session must not silently go back to older work.
+        if (!bucket || !key || !container?.running) return "lost" as const;
+        let failures = 0;
+        while (failures < 3 && Date.now() < until) {
+          try {
+            const response = await container
+              .getTcpPort(8080)
+              .fetch(`http://runner/job/${run.runId}/continuity`, {
+                headers: runnerHeaders(runnerKey),
+                signal: AbortSignal.timeout(
+                  Math.max(0, Math.min(60_000, until - Date.now())),
+                ),
+              });
+            if (response.status === 202) {
+              await response.body?.cancel();
+              await pause();
+              continue;
+            }
+            // Only the Runner can tell that the Agent never started.
+            if (response.status === 204) {
+              await response.body?.cancel();
+              return "skipped" as const;
+            }
+            const size = Number(response.headers.get("Content-Length"));
+            if (
+              response.status !== 200 ||
+              !response.body ||
+              !(size > 0 && size <= maxContinuityBytes)
+            ) {
+              await response.body?.cancel();
+              return "lost" as const;
+            }
+            // R2 takes a stream of known length, as this response is.
+            await (
+              bucket.put as (key: string, value: unknown) => Promise<unknown>
+            ).call(bucket, key, response.body);
+            return "saved" as const;
+          } catch {
+            failures += 1;
+            await pause();
+          }
+        }
+        return "lost" as const;
+      },
+      (result) => (result === "lost" ? "failed" : "succeeded"),
+    );
+    if (outcome === "skipped") return;
+    // The saved work is the source of truth; the snapshot only restores it
+    // faster, so a failed snapshot leaves the Turn as it is.
+    const snapshot =
+      outcome === "saved" && container?.running
+        ? await this.snapshot(container, run.runId)
+        : undefined;
+    const previous =
+      await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
+    await this.ctx.storage.put(
+      continuityStorage,
+      outcome === "saved" && key
+        ? ({
+            key,
+            baseSha: run.baseSha,
+            ...(snapshot && { snapshot }),
+          } satisfies ContinuityRecord)
+        : ({ lost: true } satisfies ContinuityRecord),
+    );
+    if (previous && "key" in previous && previous.key !== key)
+      await bucket?.delete?.(previous.key).catch(() => {});
+  }
+
+  /** Snapshots the container with the Turn's work, for the next Turn. */
+  private async snapshot(
+    container: Container,
+    runId: string,
+  ): Promise<ContainerSnapshotRecord | undefined> {
+    const image = container.images.runner;
+    if (!image) return undefined;
+    return observeRun(this.env.DB, runId, "container", async () => {
+      const taken = await container.snapshotContainer({ name: runId });
+      return { id: taken.id, image };
+    }).catch(() => undefined);
+  }
+
+  /**
+   * Starts the Runner: from the Session's snapshot when it was taken from
+   * the current image, otherwise from the image itself. A container kept
+   * waiting for this Session is used as it is.
+   */
   private async startRunner(
     deadlineAt: number,
     instance: "lite" | "standard-3",
-    githubRunId?: string,
+    egress?: { sessionId: string; github: boolean },
+    snapshot?: ContainerSnapshotRecord,
   ) {
     const container = this.ctx.container;
     const image = container?.images.runner;
     if (!container || !image) throw new Error("Runner binding unavailable");
+    // A wait from an earlier Turn ends here, whether or not its container is
+    // kept, so a later retried cleanup cannot mistake it for this Turn's.
+    const waited =
+      this.idleMs > 0
+        ? await this.ctx.storage.get<number>(idleUntilStorage)
+        : undefined;
+    if (waited) await this.ctx.storage.delete(idleUntilStorage);
+    if (waited && container.running) {
+      // A Runner image deployed while it waited must not keep running. When
+      // the image cannot be told, the container is started again.
+      const kept = await container.inspect().catch(() => null);
+      if (kept?.image === image) {
+        await container.setInactivityTimeout(this.inactivity(deadlineAt));
+        return this.ready(container, deadlineAt);
+      }
+      await container.destroy().catch(() => {});
+    }
 
-    // Intercepts last until the container stops. HTTPS ones must exist before
-    // it starts, so that its CA certificate is in place for the entrypoint.
-    if (githubRunId) {
-      const exports = this.ctx.exports as unknown as RunnerExports;
+    // Agent commands may always reach the internet: credentials stay outside.
+    // A snapshot of an older image would silently run the older Runner.
+    if (snapshot?.image === image) {
+      await this.intercept(container, egress);
+      container.start({
+        containerSnapshot: { id: snapshot.id },
+        instance,
+        enableInternet: true,
+      });
+      await container.setInactivityTimeout(this.inactivity(deadlineAt));
+      const restored = await this.ready(container, deadlineAt).catch(
+        () => undefined,
+      );
+      const running = await container.inspect().catch(() => null);
+      if (restored && (!running?.image || running.image === image))
+        return restored;
+      await container.destroy().catch(() => {});
+    }
+    // The intercepts of a destroyed container are gone with it.
+    await this.intercept(container, egress);
+    container.start({ image, instance, enableInternet: true });
+    await container.setInactivityTimeout(this.inactivity(deadlineAt));
+    return this.ready(container, deadlineAt);
+  }
+
+  /**
+   * Sends the container's GitHub and model API traffic to the egress Workers.
+   * Intercepts last until the container stops. HTTPS ones must exist before
+   * it starts, so that its CA certificate is in place for the entrypoint.
+   */
+  private async intercept(
+    container: Container,
+    egress?: { sessionId: string; github: boolean },
+  ) {
+    if (!egress) return;
+    const exports = this.ctx.exports as unknown as RunnerExports;
+    // A kept container serves the Session's later Runs too, so the egress
+    // Workers ask for the Run that is current then.
+    const props = { props: { sessionId: egress.sessionId } };
+    if (egress.github)
       for (const host of githubEgressHosts)
         await container.interceptOutboundHttps(
           host,
-          exports.GitHubEgress({ props: { runId: githubRunId } }),
+          exports.GitHubEgress(props),
         );
-    }
-    // Agent commands may always reach the internet: credentials stay outside.
-    container.start({ image, instance, enableInternet: true });
-    await container.setInactivityTimeout(
-      Math.max(30_000, deadlineAt - Date.now() + 30_000),
+    // Both providers' hosts: the egress Worker adds credentials only for the
+    // provider of the Run that is current then.
+    for (const host of modelEgressHosts)
+      await container.interceptOutboundHttps(host, exports.ModelEgress(props));
+  }
+
+  /**
+   * How long the container may go without requests: the Turn, saving its
+   * work, and waiting for the next Turn.
+   */
+  private inactivity(deadlineAt: number) {
+    return Math.max(
+      30_000,
+      deadlineAt - Date.now() + 30_000 + continuitySaveMs + this.idleMs,
     );
+  }
+
+  private async ready(container: Container, deadlineAt: number) {
     const startupDeadline = Math.min(deadlineAt, Date.now() + 15_000);
     while (Date.now() < startupDeadline) {
       try {
@@ -287,8 +612,9 @@ export class RunnerContainer extends DurableObject<Bindings> {
     bearer: string,
     batch: DiagnosticBatch,
   ) {
-    const lease =
-      await this.ctx.storage.get<DiagnosticLease>("diagnosticLease");
+    const lease = await this.ctx.storage.get<DiagnosticLease>(
+      diagnosticLeaseKey(runId),
+    );
     if (
       !lease ||
       lease.runId !== runId ||
@@ -340,7 +666,7 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const bearer = newRunLease();
     const expiresAt = deadlineAt + diagnosticGraceMs;
     await registerDiagnosticProducer(this.env.DB, runId, producerId);
-    await this.ctx.storage.put("diagnosticLease", {
+    await this.ctx.storage.put(diagnosticLeaseKey(runId), {
       runId,
       producerId,
       expiresAt,
@@ -357,9 +683,11 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   /** The Run's GitHub token, for the egress Worker that adds it to requests. */
-  async githubToken(runId: string): Promise<string | null> {
-    if ((await this.ctx.storage.get<string>("runId")) !== runId) return null;
-    if (await this.ctx.storage.get<boolean>(githubEgressClosed)) return null;
+  async githubToken(runId?: string): Promise<string | null> {
+    const current = await this.ctx.storage.get<string>("runId");
+    if (!current || (runId !== undefined && current !== runId)) return null;
+    runId = current;
+    if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
     const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
@@ -371,105 +699,111 @@ export class RunnerContainer extends DurableObject<Bindings> {
   }
 
   private async closeGitHubEgress() {
-    await this.ctx.storage.put(githubEgressClosed, true);
+    await this.ctx.storage.put(agentEgressClosed, true);
   }
 
-  async refreshAccess(runId: string, bearer: string, accessVersion: string) {
-    const digest = await hashRunLease(bearer);
-    const active = await this.env.DB.prepare(
-      "SELECT 1 AS active FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?",
-    )
-      .bind(runId, Date.now())
-      .first();
-    if (!active) return null;
-
-    const lease = await this.ctx.storage.transaction(async (storage) => {
-      const current = await storage.get<RefreshLease>("refreshLease");
-      const now = Date.now();
-      if (
-        !current ||
-        current.runId !== runId ||
-        current.expiresAt <= now ||
-        !matchRunLease(digest, current.digest) ||
-        now - current.lastRefreshAt < 5_000
-      )
-        return null;
-      await storage.put("refreshLease", { ...current, lastRefreshAt: now });
-      return current;
-    });
-    if (!lease) return null;
-
-    return observeRun(
-      this.env.DB,
-      runId,
-      "refresh",
-      async () =>
-        this.env.CREDENTIALS?.getByName(lease.connectionId).issueAccess({
-          accessVersion,
-          connectionVersion: lease.connectionVersion,
-        }),
-      (result) => (result ? "succeeded" : "failed"),
-    );
-  }
-
-  async stagePublication(
-    runId: string,
-    bearer: string,
-    work: CheckedPublication | LegacyPublication,
-  ) {
-    const execution = await this.env.DB.prepare(
-      "SELECT execution_context FROM runs WHERE id = ?",
-    )
-      .bind(runId)
-      .first<{ execution_context: string }>();
-    if (!execution || JSON.parse(execution.execution_context).mode === "plan")
-      return false;
+  /** The lease of the current Run on a Model Provider, while its Agent works. */
+  private async agentLease(
+    engine: "codex" | "claude",
+    runId?: string,
+  ): Promise<RefreshLease | null> {
+    if (await this.ctx.storage.get<boolean>(agentEgressClosed)) return null;
     const lease = await this.ctx.storage.get<RefreshLease>("refreshLease");
     if (
       !lease ||
-      lease.runId !== runId ||
-      lease.expiresAt <= Date.now() ||
-      !matchRunLease(await hashRunLease(bearer), lease.digest)
+      (lease.engine ?? "codex") !== engine ||
+      (runId !== undefined && lease.runId !== runId) ||
+      lease.expiresAt <= Date.now()
     )
-      return false;
-    if (work.kind !== "checked")
-      return stageRunPublication(this.env.DB, runId, work);
-    const assigned = await this.env.DB.prepare(
-      `SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND deadline_at > ?
-       AND json_extract(step_state, '$.branch') = ?
-       AND json_extract(step_state, '$.baseSha') = ?`,
-    )
-      .bind(runId, Date.now(), work.branch, work.baseSha)
-      .first();
-    if (!assigned) return false;
-    const bucket = this.env.RUN_ARTIFACTS;
-    if (!bucket) throw new Error("Checked publication storage unavailable");
-    const { changes, ...checkpoint } = work;
-    const content = JSON.stringify(changes);
-    const digest = await publicationDigest(content);
-    const reserved = await this.ctx.storage.transaction(async (storage) => {
-      const current = await storage.get<string>("publicationDigest");
-      if (current) return current === digest;
-      await storage.put("publicationDigest", digest);
-      return true;
-    });
-    if (!reserved) return false;
-    await bucket.put(publicationKey(runId, digest), content);
-    // The Agent is done once its work is checked: nothing may add to it.
-    await this.closeGitHubEgress();
-    const staged = await stageRunPublication(this.env.DB, runId, {
-      ...checkpoint,
-      digest,
-    });
-    if (!staged) {
-      const running = await this.env.DB.prepare(
-        "SELECT 1 FROM runs WHERE id = ? AND status = 'running'",
+      return null;
+    return lease;
+  }
+
+  /** The Run's Claude token, for the egress Worker that adds it to requests. */
+  async claudeAccess(runId?: string): Promise<string | null> {
+    const lease = await this.agentLease("claude", runId);
+    if (!lease) return null;
+    const access = await this.env.CREDENTIALS?.getByName(
+      lease.connectionId,
+    ).issueClaudeAccess();
+    if (!access || access.connectionVersion !== lease.connectionVersion)
+      return null;
+    return access.token;
+  }
+
+  /** The Run's Codex access, for the egress Worker that adds it to requests. */
+  async modelAccess(runId?: string): Promise<ModelAccess | null> {
+    const lease = await this.agentLease("codex", runId);
+    if (!lease) return null;
+    const rejected = await this.ctx.storage.get<string>(rejectedModelAccess);
+    const access = await this.env.CREDENTIALS?.getByName(
+      lease.connectionId,
+    ).issueAccess(
+      rejected
+        ? {
+            accessVersion: rejected,
+            connectionVersion: lease.connectionVersion,
+          }
+        : undefined,
+    );
+    if (rejected) await this.ctx.storage.delete(rejectedModelAccess);
+    if (!access || access.connectionVersion !== lease.connectionVersion)
+      return null;
+    return {
+      accessToken: access.accessToken,
+      accountId: access.accountId,
+      accessVersion: access.accessVersion,
+    };
+  }
+
+  /**
+   * Records that the model API refused an access token of this Run, so the
+   * next request refreshes it. Any process in the container can cause a 401,
+   * so a forced refresh happens at most once per `forcedRefreshInterval`.
+   */
+  async rejectModelAccess(runId: string | undefined, accessVersion: string) {
+    await this.ctx.storage.transaction(async (storage) => {
+      const lease = await storage.get<RefreshLease>("refreshLease");
+      const now = Date.now();
+      if (
+        !lease ||
+        (runId !== undefined && lease.runId !== runId) ||
+        now - lease.lastRefreshAt < forcedRefreshInterval
       )
-        .bind(runId)
-        .first();
-      if (!running) await bucket.delete?.(publicationKey(runId, digest));
-    }
-    return staged;
+        return;
+      await storage.put("refreshLease", { ...lease, lastRefreshAt: now });
+      await storage.put(rejectedModelAccess, accessVersion);
+    });
+  }
+
+  /**
+   * Records the branches the current Run pushed, as the egress Worker reads
+   * them from the push. Nothing is recorded once the Run's work is over.
+   */
+  async recordPush(
+    runId: string | undefined,
+    repository: string,
+    branches: string[],
+  ) {
+    await this.ctx.storage.transaction(async (storage) => {
+      const current = await storage.get<string>("runId");
+      if (!current || (runId !== undefined && current !== runId)) return;
+      if (await storage.get<boolean>(agentEgressClosed)) return;
+      const pushed =
+        (await storage.get<PushedBranch[]>(pushedBranchesStorage)) ?? [];
+      const next = [...pushed];
+      for (const branch of branches)
+        if (
+          next.length < maxPushedBranches &&
+          !next.some(
+            (known) =>
+              known.repository === repository && known.branch === branch,
+          )
+        )
+          next.push({ repository, branch });
+      if (next.length !== pushed.length)
+        await storage.put(pushedBranchesStorage, next);
+    });
   }
 
   private async prepareJob(request: RunRequest): Promise<RunnerJob | null> {
@@ -477,44 +811,77 @@ export class RunnerContainer extends DurableObject<Bindings> {
     const diagnostics = await this.diagnosticContext(runId, deadlineAt).catch(
       () => undefined,
     );
+    // A Routine's message is what someone wrote; its prompt says what to do.
+    const instructions = currentInstructions(
+      context.engine === "fake" ? undefined : context.instructions,
+    );
     const base = {
       version: 1 as const,
       ...(context.mode === "plan" && { mode: "plan" as const }),
       runId,
-      prompt,
+      prompt: instructions ?? prompt,
+      ...(instructions && { message: prompt }),
       deadlineAt,
       ...(diagnostics && { diagnostics }),
     };
     if (context.engine === "fake") return { ...base, engine: "fake" };
-    // Claude connections cannot start a Run yet: there is nothing to issue.
-    if (context.engine !== "codex") return null;
 
     const origin = this.env.TAILOS_PUBLIC_ORIGIN;
     if (!origin || !this.env.CREDENTIALS) return null;
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin) return null;
+    const connection = this.env.CREDENTIALS.getByName(context.connectionId);
+    // The egress Workers add the connection's credentials while this lease
+    // lasts.
+    const lease = async (connectionVersion: string) => {
+      await this.ctx.storage.put("refreshLease", {
+        runId,
+        engine: context.engine,
+        connectionId: context.connectionId,
+        connectionVersion,
+        expiresAt: deadlineAt,
+        lastRefreshAt: 0,
+      } satisfies RefreshLease);
+    };
+    const selection = {
+      ...(context.model && { model: context.model }),
+      ...(context.effort && { effort: context.effort }),
+    };
 
-    const access = await this.env.CREDENTIALS.getByName(
-      context.connectionId,
-    ).issueAccess();
+    if (context.engine === "claude") {
+      const access = await connection.issueClaudeAccess();
+      if (!access) return null;
+      await lease(access.connectionVersion);
+      return {
+        ...base,
+        engine: "claude",
+        ...selection,
+        // The container never receives the token: the model egress Worker
+        // adds it to Claude Code's requests.
+        access: {
+          token: placeholderClaudeToken,
+          connectionVersion: access.connectionVersion,
+        },
+      };
+    }
+
+    const access = await connection.issueAccess();
     if (!access) return null;
-    const bearer = newRunLease();
-    await this.ctx.storage.put("refreshLease", {
-      digest: await hashRunLease(bearer),
-      runId,
-      connectionId: context.connectionId,
-      connectionVersion: access.connectionVersion,
-      expiresAt: deadlineAt,
-      lastRefreshAt: 0,
-    } satisfies RefreshLease);
-
+    await lease(access.connectionVersion);
     return {
       ...base,
       engine: "codex",
-      ...(context.model && { model: context.model }),
-      ...(context.effort && { effort: context.effort }),
-      access,
-      refresh: { url: origin + `/_runner/runs/${runId}/credentials`, bearer },
+      ...selection,
+      // The container never receives the token: the model egress Worker adds
+      // it to Codex's requests.
+      access: {
+        ...access,
+        accessToken: placeholderAccessToken(
+          access.accountId,
+          access.planType,
+          deadlineAt,
+        ),
+      },
     };
   }
 
@@ -524,13 +891,14 @@ export class RunnerContainer extends DurableObject<Bindings> {
     return appId && privateKey ? new GitHubApp({ appId, privateKey }) : null;
   }
 
+  /** Revokes the Run's GitHub token; false while a retry is scheduled. */
   private async revokeRepositoryGrant(runId: string) {
     const grant =
       await this.ctx.storage.get<RepositoryGrant>("repositoryGrant");
-    if (!grant) return;
+    if (!grant) return true;
     if (grant.expiresAt <= Date.now()) {
       await this.ctx.storage.delete("repositoryGrant");
-      return;
+      return true;
     }
 
     try {
@@ -551,12 +919,55 @@ export class RunnerContainer extends DurableObject<Bindings> {
         await this.ctx.storage.setAlarm(
           Math.min(grant.expiresAt, Date.now() + 15_000),
         );
-        return;
+        return false;
       }
       // oxlint-disable-next-line no-console -- Record revocation exhaustion without token data.
       console.warn("Repository grant revocation failed; relying on expiry");
     }
     await this.ctx.storage.delete("repositoryGrant");
+    return true;
+  }
+
+  /**
+   * What the Session's previous Turn left for this one: its saved work and
+   * base, a record that it was lost, or nothing for a first Turn. Null when
+   * the saved work cannot be read now, so that this Turn does not replace it.
+   */
+  private async previousWork(runId: string): Promise<{
+    restore?: "saved" | "lost";
+    baseSha?: string;
+    archive?: { body?: unknown };
+    snapshot?: ContainerSnapshotRecord;
+  } | null> {
+    const record =
+      await this.ctx.storage.get<ContinuityRecord>(continuityStorage);
+    // Earlier Turns left nothing, as before Sessions kept their work: the
+    // Agent hears that the conversation is gone.
+    if (!record)
+      return (await this.hadEarlierTurns(runId)) ? { restore: "lost" } : {};
+    if (!("key" in record)) return { restore: "lost" };
+    const bucket = this.env.RUN_ARTIFACTS;
+    if (!bucket) return null;
+    const archive = await bucket.get(record.key).catch(() => undefined);
+    if (archive === undefined) return null;
+    return archive?.body
+      ? {
+          restore: "saved",
+          baseSha: record.baseSha,
+          archive,
+          ...(record.snapshot && { snapshot: record.snapshot }),
+        }
+      : { restore: "lost" };
+  }
+
+  private async hadEarlierTurns(runId: string) {
+    const row = await this.env.DB.prepare(
+      `SELECT 1 AS earlier FROM runs r JOIN runs current ON current.session_id = r.session_id
+      WHERE current.id = ? AND r.id != current.id AND r.created_at < current.created_at LIMIT 1`,
+    )
+      .bind(runId)
+      .first<{ earlier: number }>();
+    return !!row;
   }
 
   private async submitJob(request: RunRequest) {
@@ -565,21 +976,22 @@ export class RunnerContainer extends DurableObject<Bindings> {
       return { status: "failed", errorCode: "provider_unavailable" } as const;
 
     const target =
-      request.context.engine === "codex"
-        ? request.context.repository
-        : undefined;
+      request.context.engine === "fake"
+        ? undefined
+        : request.context.repository;
     const trigger =
-      request.context.engine === "codex" ? request.context.trigger : undefined;
-    if (target && trigger && job.engine === "codex") {
-      const issue = triggerIssue(trigger);
-      if (issue)
-        job.githubContext = {
-          kind: "issue",
-          number: issue.issueNumber,
-          ...(issue.issueContentHash && {
-            contentHash: issue.issueContentHash,
-          }),
-        };
+      request.context.engine === "fake" ? undefined : request.context.trigger;
+    const previous =
+      target && trigger && job.engine !== "fake"
+        ? await this.previousWork(request.runId)
+        : undefined;
+    if (previous === null)
+      return { status: "failed", errorCode: "runner_unavailable" } as const;
+    if (previous && job.engine !== "fake")
+      job.continuity = previous.restore ? { restore: previous.restore } : {};
+    if (target && trigger && job.engine !== "fake") {
+      const githubContext = githubJobContext(request.context);
+      if (githubContext) job.githubContext = githubContext;
       const github = this.github;
       const key = this.env.CREDENTIAL_ENCRYPTION_KEY;
       if (!github || !key)
@@ -588,39 +1000,16 @@ export class RunnerContainer extends DurableObject<Bindings> {
           errorCode: "repository_unavailable",
         } as const;
       const checkout = await github
-        .checkout(target, trigger, request.runId, request.context.mode)
+        .checkout(target, trigger, request.context.mode)
         .catch(() => null);
       if (!checkout)
         return {
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
-      try {
-        if (
-          request.context.mode === "plan" &&
-          checkout.issueSnapshot &&
-          job.githubContext
-        ) {
-          const snapshot = await savePlanningSnapshot(
-            this.env.DB,
-            request.runId,
-            checkout.issueSnapshot,
-            checkout.baseSha,
-          );
-          if (snapshot) {
-            checkout.baseSha = snapshot.baseSha;
-            job.prompt = snapshot.prompt;
-            job.planningContext = snapshot.context;
-            job.githubContext.contentHash = snapshot.contentHash;
-          }
-        }
-      } catch {
-        await github.revoke(checkout.token).catch(() => {});
-        return {
-          status: "failed",
-          errorCode: "planning_snapshot_failed",
-        } as const;
-      }
+      // The Session's work stays on the base it started from; the Agent moves
+      // it to newer commits itself.
+      if (previous?.baseSha) checkout.baseSha = previous.baseSha;
       try {
         await this.ctx.storage.put("repositoryGrant", {
           value: await seal(
@@ -631,18 +1020,6 @@ export class RunnerContainer extends DurableObject<Bindings> {
           expiresAt: checkout.expiresAt,
           attempts: 0,
         } satisfies RepositoryGrant);
-        await this.env.DB.prepare(
-          "UPDATE runs SET step_state = ? WHERE id = ? AND status = 'running'",
-        )
-          .bind(
-            JSON.stringify({
-              version: 2,
-              baseSha: checkout.baseSha,
-              branch: checkout.branch,
-            }),
-            request.runId,
-          )
-          .run();
       } catch {
         await github.revoke(checkout.token).catch(() => {});
         return {
@@ -654,29 +1031,61 @@ export class RunnerContainer extends DurableObject<Bindings> {
       job.checkout = {
         repository: target.repository,
         baseSha: checkout.baseSha,
-        branch: checkout.branch,
+        defaultBranch: target.defaultBranch,
+        author: checkout.author,
       };
     }
+    // A long message, such as an issue comment, may not fit in a job.
     if (
-      job.mode === "plan" &&
       new TextEncoder().encode(JSON.stringify(job)).byteLength >
-        maxRunnerJobBytes
+      maxRunnerJobBytes
     )
       return {
         status: "failed",
-        errorCode: "planning_input_too_large",
+        errorCode: "message_too_large",
       } as const;
+    const sessionId = await this.ctx.storage.get<string>("sessionId");
+    if (!sessionId)
+      return { status: "failed", errorCode: "runner_unavailable" } as const;
     const port = await observeRun(this.env.DB, request.runId, "container", () =>
       this.startRunner(
         job.deadlineAt,
         job.engine === "fake" ? "lite" : "standard-3",
-        job.engine !== "fake" && job.checkout ? request.runId : undefined,
+        job.engine === "fake"
+          ? undefined
+          : { sessionId, github: !!job.checkout },
+        previous?.snapshot,
       ),
     );
     let key = await this.ctx.storage.get<string>(runnerKeyStorage);
     if (!key) {
       key = newRunLease();
       await this.ctx.storage.put(runnerKeyStorage, key);
+    }
+    const continuing = job.engine !== "fake" && job.continuity && job.checkout;
+    if (continuing) {
+      if (previous?.archive?.body) {
+        const upload = await port.fetch("http://runner/continuity", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            ...runnerHeaders(key),
+          },
+          body: previous.archive.body as ReadableStream,
+          signal: AbortSignal.timeout(
+            Math.max(0, Math.min(60_000, job.deadlineAt - Date.now())),
+          ),
+        });
+        await upload.body?.cancel();
+        // Never start over silently: the saved work stays for a later Turn.
+        if (upload.status !== 204)
+          return { status: "failed", errorCode: "runner_unavailable" } as const;
+      }
+      // Set before the job: a job whose acknowledgement is lost still saves.
+      await this.ctx.storage.put(continuityRunStorage, {
+        runId: request.runId,
+        baseSha: job.checkout!.baseSha,
+      } satisfies ContinuityRun);
     }
     const response = await port.fetch("http://runner/job", {
       method: "POST",
@@ -688,163 +1097,51 @@ export class RunnerContainer extends DurableObject<Bindings> {
     });
     await response.body?.cancel();
     if (response.status !== 202) {
+      // The Runner refused the job: the previous work stays as it was.
+      if (continuing) await this.ctx.storage.delete(continuityRunStorage);
       return { status: "failed", errorCode: "runner_unavailable" } as const;
     }
     return { status: "running" } as const;
   }
 
-  private async pollJob(
-    runId: string,
-    context: ExecutionContext,
-    deadlineAt: number,
-    stepState: string | null,
-  ) {
+  private async pollJob(runId: string, context: ExecutionContext) {
     const repository =
-      context.engine === "codex" ? context.repository : undefined;
-    const trigger = context.engine === "codex" ? context.trigger : undefined;
-    const target = repository && trigger ? { repository, trigger } : undefined;
-    if (context.mode === "plan") {
-      const status = await this.readRunnerStatus(runId);
-      if (status.status !== "running") await this.closeGitHubEgress();
-      if (status.status !== "succeeded") return status;
-      if (!status.plan || status.publication)
-        return {
-          status: "failed",
-          errorCode: "agent_failed",
-          events: status.events,
-        } as const;
-      return status;
-    }
-    const pending = target ? pendingPublication(stepState) : null;
-    if (pending) await this.closeGitHubEgress();
-    if (target && pending?.kind === "checked") {
-      const recoveryDeadline = publicationDeadline(stepState, deadlineAt);
-      const github = this.github;
-      if (!github) throw new Error("GitHub verification unavailable");
-      const object = await this.env.RUN_ARTIFACTS?.get(
-        publicationKey(runId, pending.digest),
-      );
-      const content = await object?.text();
-      if (!content || (await publicationDigest(content)) !== pending.digest)
-        throw new Error("Checked publication unavailable");
-      const changes = v.parse(FileChanges, JSON.parse(content));
-      const sha = await observeRun(
-        this.env.DB,
-        runId,
-        "commit",
-        () =>
-          github.commitCheckedWork(
-            target.repository,
-            target.trigger,
-            runId,
-            { ...pending, changes },
-            recoveryDeadline,
-          ),
-        (result) => (result ? "succeeded" : "unknown"),
-      );
-      if (!sha)
-        return {
-          status: "failed",
-          errorCode: "publication_unconfirmed",
-          events: pending.events,
-        } as const;
-      return this.publish(runId, target, recoveryDeadline, pending, sha);
-    }
-    if (target && pending?.kind === "pushed")
-      return this.publish(
-        runId,
-        target,
-        publicationDeadline(stepState, deadlineAt),
-        pending,
-      );
-
-    const status = await this.readRunnerStatus(runId).catch(
-      (error: unknown) => {
-        if (!pending || Date.now() < deadlineAt) throw error;
-        // Once Agent time is over, a failed status request must not skip the
-        // remote-ref check for a push whose response may have been lost.
-        return { status: "failed", errorCode: "runner_lost" } as const;
-      },
-    );
+      context.engine === "fake" ? undefined : context.repository;
+    const trigger = context.engine === "fake" ? undefined : context.trigger;
+    const status = await this.readRunnerStatus(runId);
     if (status.status !== "running") await this.closeGitHubEgress();
-    if (target && pending && pending.kind !== "checked") {
-      if (status.status === "running" && Date.now() < deadlineAt) return status;
-      if (
-        !(await beginPublicationReconciliation(
-          this.env.DB,
-          runId,
-          pending,
-          false,
-        ))
-      )
-        throw new Error("Publication checkpoint changed");
-
-      const pushed =
-        status.status === "succeeded" &&
-        status.publication?.kind === "pushed" &&
-        status.publication.branch === pending.branch &&
-        status.publication.sha === pending.sha;
-      if (!pushed) {
-        const github = this.github;
-        if (!github) throw new Error("GitHub verification unavailable");
-        if (
-          !(await github.hasCommit(
-            target.repository,
-            target.trigger,
-            runId,
-            pending,
-          ))
-        ) {
-          return status.status === "failed"
-            ? status
-            : ({
-                status: "failed",
-                errorCode: "repository_unavailable",
-              } as const);
-        }
-      }
-      if (
-        !(await beginPublicationReconciliation(
-          this.env.DB,
-          runId,
-          pending,
-          true,
-        ))
-      )
-        throw new Error("Publication checkpoint changed");
-      return { status: "running" } as const;
-    }
-    if (status.status !== "succeeded" || !target) return status;
-    if (!status.publication)
-      return { status: "failed", errorCode: "repository_unavailable" } as const;
-    if (status.publication.kind === "no_changes") {
-      return { ...status, publicationResult: { kind: "no_changes" as const } };
-    }
-
-    if (status.publication.kind !== "pushed")
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-      } as const;
-
-    const pendingWork = {
-      reply: status.reply,
-      ...(status.sessionTitle && { sessionTitle: status.sessionTitle }),
-      events: status.events,
-      ...status.publication,
-    };
-    // An older Runner may report a pushed commit without a checkpoint.
-    if (
-      !(await stageRunPublication(this.env.DB, runId, pendingWork)) ||
-      !(await beginPublicationReconciliation(
-        this.env.DB,
-        runId,
-        pendingWork,
-        true,
-      ))
+    if (status.status !== "succeeded") return status;
+    if (context.mode === "plan")
+      return status.plan
+        ? status
+        : ({
+            status: "failed",
+            errorCode: "agent_failed",
+            events: status.events,
+          } as const);
+    if (!repository || !trigger) return status;
+    // The Agent pushes and opens pull requests itself: the Run's result shows
+    // those of the branches it pushed. They are only shown, so a lookup that
+    // fails leaves them out.
+    // GitHub names repositories without regard to case.
+    const target = repository.repository.toLowerCase();
+    const branches = (
+      (await this.ctx.storage.get<PushedBranch[]>(pushedBranchesStorage)) ?? []
     )
-      return { status: "failed", errorCode: "repository_unavailable" } as const;
-    return { status: "running" } as const;
+      .filter((pushed) => pushed.repository.toLowerCase() === target)
+      .map((pushed) => pushed.branch);
+    const pullRequests = branches.length
+      ? await (
+          this.github?.branchPullRequests(repository, branches) ??
+          Promise.resolve([])
+        ).catch(() => [])
+      : [];
+    return pullRequests.length
+      ? {
+          ...status,
+          publicationResult: { kind: "pull_requests" as const, pullRequests },
+        }
+      : status;
   }
 
   private async readRunnerStatus(runId: string) {
@@ -867,56 +1164,5 @@ export class RunnerContainer extends DurableObject<Bindings> {
       throw new Error("Runner status unavailable");
     }
     return v.parse(RunnerStatus, await reply.json());
-  }
-
-  private async publish(
-    runId: string,
-    target: { repository: RepositoryTarget; trigger: RunTrigger },
-    deadlineAt: number,
-    work: PendingPublication,
-    sha = work.kind === "checked" ? undefined : work.sha,
-  ) {
-    const github = this.github;
-    if (!github || !sha)
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-      } as const;
-    const publication =
-      work.kind === "checked"
-        ? { branch: work.branch, sha, headline: work.headline }
-        : work;
-    const url = await observeRun(
-      this.env.DB,
-      runId,
-      "pull_request",
-      () =>
-        github.publish(
-          target.repository,
-          target.trigger,
-          runId,
-          publication,
-          deadlineAt,
-        ),
-      (result) => (result ? "succeeded" : "unknown"),
-    );
-    if (!url)
-      return {
-        status: "failed",
-        errorCode: "publication_unconfirmed",
-        events: work.events,
-      } as const;
-    return {
-      status: "succeeded" as const,
-      reply: work.reply,
-      ...(work.sessionTitle && { sessionTitle: work.sessionTitle }),
-      events: work.events,
-      publicationResult: {
-        kind: "pull_request" as const,
-        url,
-        branch: work.branch,
-        sha,
-      },
-    };
   }
 }

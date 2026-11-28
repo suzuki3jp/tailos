@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  Button,
+  Select,
+  TextArea,
+  TextField,
+} from "@/shared/ui/design-systems";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
@@ -73,13 +79,14 @@ export function McpKeysPage() {
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <code className="break-all font-mono text-sm">{data.endpoint}</code>
-            <button
+            <Button
               type="button"
-              className="action"
-              onClick={() => void copy(data.endpoint, "URL")}
+              variant="outline"
+              size="touch"
+              onPress={() => void copy(data.endpoint, "URL")}
             >
               URL をコピー
-            </button>
+            </Button>
           </div>
           <p className="text-sm text-muted-foreground">
             認証は Bearer token / API key
@@ -96,32 +103,34 @@ export function McpKeysPage() {
               このキーはこの画面を閉じると再表示できません。Agent
               の設定にコピーしてください。
             </p>
-            <textarea
+            <TextArea
               aria-label="発行した API key"
-              readOnly
-              spellCheck={false}
+              isReadOnly
+              spellCheck="false"
               rows={2}
               value={issued.token}
-              className="w-full resize-none rounded-md border border-rule bg-paper p-3 font-mono text-sm"
+              textAreaClassName="resize-none font-mono"
             />
             <div className="flex flex-wrap gap-3">
-              <button
+              <Button
                 type="button"
-                className="action action-primary"
-                onClick={() => void copy(issued.token, "キー")}
+                variant="default"
+                size="touch"
+                onPress={() => void copy(issued.token, "キー")}
               >
                 キーをコピー
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="action"
-                onClick={() => {
+                variant="outline"
+                size="touch"
+                onPress={() => {
                   setIssued(null);
                   setCopied("");
                 }}
               >
                 保存しました
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -131,39 +140,35 @@ export function McpKeysPage() {
             権限は Session・会話・実行記録の読み取り専用です。
           </p>
           <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
-            <label className="space-y-2 text-sm">
-              キー名
-              <input
-                required
-                maxLength={80}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="例: 手元の AI Agent"
-                className="block w-full rounded-md border border-rule bg-paper px-3 py-2"
-              />
-            </label>
-            <label className="space-y-2 text-sm">
-              有効期間
-              <select
-                value={lifetimeDays}
-                onChange={(event) =>
-                  setLifetimeDays(Number(event.target.value))
-                }
-                className="block w-full rounded-md border border-rule bg-paper px-3 py-2"
-              >
-                <option value={7}>7日</option>
-                <option value={30}>30日</option>
-                <option value={90}>90日</option>
-              </select>
-            </label>
+            <TextField
+              label="キー名"
+              isRequired
+              maxLength={80}
+              value={name}
+              onChange={setName}
+              placeholder="例: 手元の AI Agent"
+            />
+            <Select
+              label="有効期間"
+              size="lg"
+              options={[7, 30, 90].map((days) => ({
+                id: String(days),
+                label: `${days}日`,
+              }))}
+              value={String(lifetimeDays)}
+              onValueChange={(id) => {
+                if (id !== null) setLifetimeDays(Number(id));
+              }}
+            />
           </div>
-          <button
+          <Button
             type="submit"
-            className="action action-primary"
-            disabled={create.isPending || !name.trim() || Boolean(issued)}
+            variant="default"
+            size="touch"
+            isDisabled={create.isPending || !name.trim() || Boolean(issued)}
           >
             {create.isPending ? "発行しています…" : "キーを発行"}
-          </button>
+          </Button>
           {issued && (
             <p className="text-sm text-muted-foreground">
               発行したキーを保存してから、次のキーを発行できます。
@@ -202,11 +207,12 @@ export function McpKeysPage() {
                           new Date(key.expiresAt).toLocaleDateString("ja-JP")}
                     </p>
                   </div>
-                  <button
+                  <Button
                     type="button"
-                    className="action text-danger"
-                    disabled={revoke.isPending}
-                    onClick={() => {
+                    variant="destructive"
+                    size="touch"
+                    isDisabled={revoke.isPending}
+                    onPress={() => {
                       if (
                         window.confirm(
                           `「${key.name}」のキーを失効しますか？このキーでの接続はすぐに使えなくなります。`,
@@ -216,7 +222,7 @@ export function McpKeysPage() {
                     }}
                   >
                     失効
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>

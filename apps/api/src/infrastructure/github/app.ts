@@ -7,7 +7,6 @@ import { importPKCS8, SignJWT } from "jose";
 import {
   gitSha,
   triggerIssue,
-  type CheckedPublication,
   type RepositoryTarget,
   type RunTrigger,
 } from "@tailos/core/runner";
@@ -27,19 +26,6 @@ const issueSchema = v.object({
 });
 const grantSchema = v.object({ token: v.string(), expires_at: v.string() });
 const refSchema = v.object({ object: v.object({ sha: gitSha }) });
-const commitSchema = v.object({
-  sha: gitSha,
-  tree: v.object({ sha: gitSha }),
-  parents: v.array(v.object({ sha: gitSha })),
-  message: v.string(),
-  verification: v.object({ verified: v.literal(true) }),
-});
-const commitMutationSchema = v.object({
-  data: v.object({
-    createCommitOnBranch: v.object({ commit: v.object({ oid: gitSha }) }),
-  }),
-  errors: v.optional(v.tuple([])),
-});
 const pullSchema = v.object({
   html_url: v.pipe(
     v.string(),
@@ -53,7 +39,20 @@ const pullSchema = v.object({
     sha: gitSha,
     repo: v.nullable(repoSchema),
   }),
+  state: v.optional(v.string()),
+  merged_at: v.optional(v.nullable(v.string())),
 });
+const appSchema = v.object({
+  slug: v.pipe(v.string(), v.regex(/^[A-Za-z0-9-]{1,100}$/)),
+});
+const userSchema = v.object({
+  id: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+});
+
+/** Who the Agent's commits are by: the GitHub App's bot account. */
+export type GitAuthor = { name: string; email: string };
+// The App's bot never changes: look it up once per Worker.
+const authors = new Map<string, GitAuthor>();
 
 type GitHubConfig = { appId: string; privateKey: string };
 export class GitHubRequestError extends Error {
@@ -104,15 +103,7 @@ export type GitHubCheckout = {
   token: string;
   expiresAt: number;
   baseSha: string;
-  branch: string;
-  issueSnapshot?: { title: string; body: string };
-};
-
-export const workBranchFor = (trigger: RunTrigger, runId: string) => {
-  const issue = triggerIssue(trigger);
-  return issue
-    ? `tailos/issue-${issue.issueNumber}/${runId}`
-    : `tailos/run/${runId}`;
+  author: GitAuthor;
 };
 
 export class GitHubApp {
@@ -421,7 +412,6 @@ export class GitHubApp {
   async checkout(
     target: RepositoryTarget,
     trigger: RunTrigger,
-    runId: string,
     mode?: "plan" | "implement",
   ): Promise<GitHubCheckout> {
     const issueTrigger = triggerIssue(trigger);
@@ -456,8 +446,6 @@ export class GitHubApp {
             !issue.labels.some((label) => label.name === trigger.label)))
       )
         throw new Error("GitHub issue no longer matches the trigger");
-      if (workBranchFor(trigger, runId) === target.defaultBranch)
-        throw new Error("The work branch cannot be the default branch");
       const branch = encodeURIComponent(target.defaultBranch);
       if (mode !== "plan") {
         const rules = v.parse(
@@ -476,29 +464,17 @@ export class GitHubApp {
             "The default branch must have active creation, update and deletion restrictions",
           );
       }
-      const issueSnapshot =
-        mode === "plan" && issue
-          ? v.parse(
-              v.object({ title: v.string(), body: v.nullable(v.string()) }),
-              issue,
-            )
-          : undefined;
       const base = v.parse(
         refSchema,
         await this.json(`${repo}/git/ref/heads/${branch}`, token),
       );
+      const author = await this.author(token);
       return {
         // The Run's token, added to the Agent's GitHub requests outside the
         // container. It is limited to the target repository only.
         ...(await this.token(target)),
-        ...(issueSnapshot && {
-          issueSnapshot: {
-            title: issueSnapshot.title,
-            body: issueSnapshot.body ?? "",
-          },
-        }),
         baseSha: base.object.sha,
-        branch: workBranchFor(trigger, runId),
+        author,
       };
     } finally {
       await this.revoke(token).catch(() => {});
@@ -511,191 +487,61 @@ export class GitHubApp {
       throw new Error("GitHub token revocation failed");
   }
 
-  async hasCommit(
-    target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    work: { branch: string; sha: string },
-  ) {
-    if (work.branch !== workBranchFor(trigger, runId))
-      throw new Error("Unexpected work branch");
-    const { token } = await this.token(target, { contents: "read" });
-    try {
-      const response = await this.request(
-        `/repos/${target.repository}/git/ref/heads/${encodeURIComponent(work.branch)}`,
-        token,
-      );
-      if (response.status === 404) return false;
-      if (!response.ok) throw new Error("GitHub ref verification unavailable");
-      return v.parse(refSchema, await response.json()).object.sha === work.sha;
-    } finally {
-      await this.revoke(token).catch(() => {});
-    }
+  /** The App's bot account, as git names an author. */
+  private async author(token: string): Promise<GitAuthor> {
+    const known = authors.get(this.config.appId);
+    if (known) return known;
+    const { slug } = v.parse(
+      appSchema,
+      await this.json("/app", await this.appToken()),
+    );
+    const name = `${slug}[bot]`;
+    const { id } = v.parse(
+      userSchema,
+      await this.json(`/users/${encodeURIComponent(name)}`, token),
+    );
+    const author = { name, email: `${id}+${name}@users.noreply.github.com` };
+    authors.set(this.config.appId, author);
+    return author;
   }
 
-  async commitCheckedWork(
+  /**
+   * The newest pull request whose head is each branch, in the target
+   * repository. A branch whose pull requests cannot be read is left out.
+   */
+  async branchPullRequests(
     target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    work: Pick<
-      CheckedPublication,
-      "branch" | "baseSha" | "tree" | "headline" | "changes"
-    >,
-    deadlineAt: number,
-  ): Promise<string | null> {
-    const branch = workBranchFor(trigger, runId);
-    if (work.branch !== branch || branch === target.defaultBranch)
-      throw new Error("Unexpected work branch");
-    const repo = "/repos/" + target.repository;
-    const { token } = await this.token(target, { contents: "write" });
-    const ref = "refs/heads/" + branch;
-    const refPath = `${repo}/git/ref/heads/${encodeURIComponent(branch)}`;
-    const readHead = async () => {
-      const response = await this.request(refPath, token);
-      if (response.status === 404) return null;
-      if (!response.ok) throw new Error("GitHub ref verification unavailable");
-      return v.parse(refSchema, await response.json()).object.sha;
-    };
-    const body = `Tailos run: ${runId}`;
-    try {
-      let sha = await readHead();
-      if (sha === null) {
-        if (Date.now() >= deadlineAt) return null;
-        const created = await this.request(`${repo}/git/refs`, token, "POST", {
-          ref,
-          sha: work.baseSha,
-        });
-        if (created.ok) {
-          sha = v.parse(refSchema, await created.json()).object.sha;
-          if (sha !== work.baseSha)
-            throw new Error("Unexpected work branch head");
-        } else if (created.status === 422) {
-          await created.body?.cancel();
-          sha = await readHead();
-        } else {
-          await created.body?.cancel();
-        }
-        if (sha === null)
-          throw new Error("GitHub work branch creation unavailable");
-      }
-      if (sha === work.baseSha) {
-        if (Date.now() >= deadlineAt) return null;
-        const created = v.parse(
-          commitMutationSchema,
-          await this.json("/graphql", token, "POST", {
-            query: `mutation TailosCommit($input: CreateCommitOnBranchInput!) {
-              createCommitOnBranch(input: $input) { commit { oid } }
-            }`,
-            variables: {
-              input: {
-                branch: {
-                  repositoryNameWithOwner: target.repository,
-                  branchName: branch,
-                },
-                expectedHeadOid: work.baseSha,
-                message: { headline: work.headline, body },
-                fileChanges: work.changes,
-              },
-            },
-          }),
-        );
-        sha = created.data.createCommitOnBranch.commit.oid;
-      }
-
-      // A timed-out mutation can already have advanced the ref. Only adopt the
-      // exact signed commit for this run and verified snapshot.
-      const commit = v.parse(
-        commitSchema,
-        await this.json(`${repo}/git/commits/${sha}`, token),
-      );
-      if (
-        commit.sha !== sha ||
-        commit.tree.sha !== work.tree ||
-        commit.parents.length !== 1 ||
-        commit.parents[0]?.sha !== work.baseSha ||
-        commit.message.trimEnd() !== `${work.headline}\n\n${body}`
-      )
-        throw new Error("GitHub commit does not match checked work");
-      return sha;
-    } finally {
-      await this.revoke(token).catch(() => {});
-    }
-  }
-
-  async publish(
-    target: RepositoryTarget,
-    trigger: RunTrigger,
-    runId: string,
-    publication: { branch: string; sha: string; headline?: string },
-    deadlineAt = Infinity,
-  ) {
-    const branch = workBranchFor(trigger, runId);
-    const issue = triggerIssue(trigger);
-    if (publication.branch !== branch)
-      throw new Error("Unexpected work branch");
-
+    branches: string[],
+  ): Promise<{ branch: string; url: string }[]> {
+    if (!branches.length) return [];
     const repo = "/repos/" + target.repository;
     const owner = target.repository.split("/")[0];
-    const { token } = await this.token(target, {
-      contents: "read",
-      pull_requests: "write",
-    });
+    const { token } = await this.token(target, { pull_requests: "read" });
     try {
-      const existing = v.parse(
-        v.array(pullSchema),
-        await this.json(
-          `${repo}/pulls?state=all&head=${encodeURIComponent(owner + ":" + branch)}`,
-          token,
-        ),
-      );
-      const previous = existing.find(
-        (pull) =>
-          pull.base.repo.id === target.repositoryId &&
-          pull.head.repo?.id === target.repositoryId &&
-          pull.base.ref === target.defaultBranch &&
-          pull.head.ref === branch &&
-          pull.head.sha === publication.sha,
-      );
-      if (previous) return previous.html_url;
-      if (Date.now() >= deadlineAt) return null;
-      if (existing.length)
-        throw new Error(
-          "Work branch is already associated with another pull request",
-        );
-
-      const head = v.parse(
-        refSchema,
-        await this.json(
-          `${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
-          token,
-        ),
-      );
-      if (head.object.sha !== publication.sha)
-        throw new Error("Work branch changed before publication");
-      if (Date.now() >= deadlineAt) return null;
-      const pull = v.parse(
-        pullSchema,
-        await this.json(`${repo}/pulls`, token, "POST", {
-          title:
-            publication.headline ??
-            (issue
-              ? `Implement issue #${issue.issueNumber}`
-              : `Tailos run ${runId}`),
-          head: branch,
-          base: target.defaultBranch,
-          // Without an issue, the PR wording is left to the prompt.
-          body: `${issue ? `Closes #${issue.issueNumber}\n\n` : ""}Created by Tailos run \`${runId}\`.`,
+      const found = await Promise.all(
+        branches.map(async (branch) => {
+          try {
+            const pull = v
+              .parse(
+                v.array(pullSchema),
+                await this.json(
+                  `${repo}/pulls?state=all&sort=created&direction=desc&per_page=10&head=${encodeURIComponent(owner + ":" + branch)}`,
+                  token,
+                ),
+              )
+              .find(
+                (pull) =>
+                  pull.base.repo.id === target.repositoryId &&
+                  pull.head.repo?.id === target.repositoryId &&
+                  pull.head.ref === branch,
+              );
+            return pull ? [{ branch, url: pull.html_url }] : [];
+          } catch {
+            return [];
+          }
         }),
       );
-      if (
-        pull.base.repo.id !== target.repositoryId ||
-        pull.head.repo?.id !== target.repositoryId ||
-        pull.base.ref !== target.defaultBranch ||
-        pull.head.ref !== branch ||
-        pull.head.sha !== publication.sha
-      )
-        throw new Error("Published pull request does not match the run");
-      return pull.html_url;
+      return found.flat();
     } finally {
       await this.revoke(token).catch(() => {});
     }

@@ -2,12 +2,13 @@
 
 import { useId, useState, type ReactNode } from "react";
 import { IconSend } from "@tabler/icons-react";
+import type { AgentEngine } from "@tailos/core/models";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupTextarea,
-} from "@/shared/ui/input-group";
+} from "@/shared/ui/design-systems";
 import { ModelEffortSelect } from "./model-effort-select";
 import {
   defaultModelEffort,
@@ -20,13 +21,18 @@ export type LoopMessage = ModelEffort & { message: string };
 export function LoopComposer({
   mode,
   projectSelect,
+  message,
+  onMessageChange,
   onSubmit,
   pending = false,
   disabled = false,
   status,
+  engine,
 }: {
   mode: "home" | "session";
   projectSelect?: ReactNode;
+  message: string;
+  onMessageChange: (message: string) => void;
   /** Sends the message; without it the composer cannot send. */
   onSubmit?: (input: LoopMessage) => void;
   pending?: boolean;
@@ -34,8 +40,9 @@ export function LoopComposer({
   disabled?: boolean;
   /** Feedback about the last send, shown below the input. */
   status?: ReactNode;
+  /** The only Model Provider offered, such as a Session's own. */
+  engine?: AgentEngine;
 }) {
-  const [message, setMessage] = useState("");
   const [modelEffort, setModelEffort] = useState(defaultModelEffort);
   const statusId = useId();
   const home = mode === "home";
@@ -56,7 +63,7 @@ export function LoopComposer({
           aria-describedby={status ? statusId : undefined}
           placeholder="Start loooooping..."
           value={message}
-          onChange={(event) => setMessage(event.target.value)}
+          onChange={(event) => onMessageChange(event.target.value)}
           readOnly={pending}
           required
           rows={3}
@@ -72,10 +79,11 @@ export function LoopComposer({
               value={modelEffort}
               onValueChange={setModelEffort}
               disabled={pending}
+              engine={engine}
             />
             <InputGroupButton
               type="submit"
-              disabled={!canSend}
+              isDisabled={!canSend}
               aria-label={home ? "Start loop" : "Send message"}
               className="h-5.5 w-9 rounded-md px-2 py-0 text-muted-foreground"
             >

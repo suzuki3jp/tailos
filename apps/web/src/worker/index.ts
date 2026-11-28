@@ -32,7 +32,7 @@ export default {
       `script-src 'self' ${scriptSource}`,
       `style-src 'self' ${styleSource}`,
       "style-src-attr 'unsafe-inline'",
-      "img-src 'self'",
+      "img-src 'self' https://avatars.githubusercontent.com",
       "font-src 'self'",
       `connect-src 'self' ${apiOrigin} ${apiOrigin.replace(/^http/, "ws")}${import.meta.env.DEV ? " ws: wss:" : ""}`,
       `form-action 'self' ${apiOrigin} https://github.com`,

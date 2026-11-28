@@ -1,5 +1,5 @@
 import { maxPromptLength } from "@tailos/core/runner";
-import { supportsCodexSelection } from "@tailos/core/models";
+import { agentEngines, supportsSelection } from "@tailos/core/models";
 import {
   createSession,
   type SessionStore,
@@ -8,6 +8,10 @@ import {
   startSessionFromMessage,
   type StartSessionDeps,
 } from "@/application/sessions/start-session.ts";
+import {
+  continueSession,
+  type ContinueSessionDeps,
+} from "@/application/sessions/continue-session.ts";
 import type {
   createOperatorAuth,
   OperatorEnv,
@@ -51,9 +55,16 @@ const startInput = v.strictObject({
     v.minLength(1),
     v.maxLength(maxPromptLength),
   ),
+  engine: v.optional(v.picklist(agentEngines)),
   model: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(100))),
   effort: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
 });
+
+/** What a send answers when the owner has not connected the provider. */
+const notConnected = {
+  codex: "codex_not_connected",
+  claude: "claude_not_connected",
+} as const;
 
 export function createSessionRoutes<Detail>(
   store: (env: Bindings) => SessionStore<Detail> &
@@ -64,6 +75,8 @@ export function createSessionRoutes<Detail>(
   start?: {
     deps(env: Bindings): StartSessionDeps;
     scheduleRun(env: Bindings): ((id: string) => Promise<void>) | undefined;
+    /** Sending to an existing Session from its page. */
+    continueDeps?(env: Bindings): ContinueSessionDeps;
   },
 ) {
   const sessionRoutes = new Hono<{ Bindings: Bindings }>();
@@ -116,7 +129,8 @@ export function createSessionRoutes<Detail>(
         const parsed = v.safeParse(startInput, value);
         if (!parsed.success)
           return c.json({ error: "invalid_input" as const }, 400);
-        const unsupported = supportsCodexSelection(
+        const unsupported = supportsSelection(
+          parsed.output.engine ?? "codex",
           parsed.output.model,
           parsed.output.effort,
         );
@@ -141,8 +155,8 @@ export function createSessionRoutes<Detail>(
           return c.json({ error: "session_unavailable" as const }, 503);
         if (result.status === "project_not_found")
           return c.json({ error: "not_found" as const }, 404);
-        if (result.status === "codex_not_connected")
-          return c.json({ error: "codex_not_connected" as const }, 409);
+        if (result.status === "not_connected")
+          return c.json({ error: notConnected[result.engine] }, 409);
         await start
           .scheduleRun(c.env)?.(result.runId)
           .catch(() => {
@@ -152,6 +166,52 @@ export function createSessionRoutes<Detail>(
           { sessionId: result.sessionId, runId: result.runId, projectId },
           201,
         );
+      },
+    )
+    .post(
+      "/:id/messages",
+      operatorAuth,
+      bodyLimit({ maxSize: 32 * 1024 }),
+      validator("json", (value: v.InferInput<typeof startInput>, c) => {
+        const parsed = v.safeParse(startInput, value);
+        if (!parsed.success)
+          return c.json({ error: "invalid_input" as const }, 400);
+        // The Session's own Model Provider decides what may be chosen.
+        return parsed.output;
+      }),
+      async (c) => {
+        const projectId = c.req.param("projectId");
+        const deps = start?.continueDeps?.(c.env);
+        if (!projectId || !start || !deps)
+          return c.json({ error: "not_found" as const }, 404);
+        const result = await continueSession(
+          {
+            ...c.req.valid("json"),
+            ownerId: c.var.operatorUserId,
+            projectId,
+            sessionId: c.req.param("id"),
+          },
+          deps,
+        ).catch(() => null);
+        if (!result)
+          return c.json({ error: "session_unavailable" as const }, 503);
+        if (result.status === "not_found")
+          return c.json({ error: "not_found" as const }, 404);
+        if (result.status === "not_connected")
+          return c.json({ error: notConnected[result.engine] }, 409);
+        if (result.status === "provider_fixed")
+          return c.json({ error: "session_provider_fixed" as const }, 409);
+        if (result.status === "unsupported_selection")
+          return c.json({ error: result.error }, 400);
+        // Messages wait for nothing here: a working Session cannot take one.
+        if (result.status === "busy")
+          return c.json({ error: "session_busy" as const }, 409);
+        await start
+          .scheduleRun(c.env)?.(result.runId)
+          .catch(() => {
+            // The committed D1 row remains due for the scheduled recovery sweep.
+          });
+        return c.json({ runId: result.runId }, 201);
       },
     )
     .get(

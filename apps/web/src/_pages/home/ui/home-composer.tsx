@@ -1,23 +1,26 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { sessionPath } from "@/shared/lib/session-path";
-import { homeSessionsQueryOptions } from "../api/queries";
+import { accountSessionsQueryOptions } from "@/entities/session";
 import { startSession, StartSessionError } from "../api/start-session";
-import { HomeProjectSelect } from "./project-select";
-import { useProjectSelection } from "./project-selection";
+import {
+  CurrentProjectSelect,
+  useProjectSelection,
+} from "@/features/select-project";
 
 function failureMessage(error: unknown) {
   const status = error instanceof StartSessionError ? error.status : undefined;
   const code = error instanceof StartSessionError ? error.code : undefined;
-  if (code === "codex_not_connected")
+  if (code === "codex_not_connected" || code === "claude_not_connected")
     return (
       <>
-        Connect Codex to start a loop.{" "}
+        Connect {code === "claude_not_connected" ? "Claude" : "Codex"} to start
+        a loop.{" "}
         <Link href="/connect" className="underline">
           Connect
         </Link>
@@ -40,6 +43,7 @@ function failureMessage(error: unknown) {
 
 export function HomeComposer() {
   const router = useRouter();
+  const [message, setMessage] = useState("");
   const queryClient = useQueryClient();
   const { selection } = useProjectSelection();
   // One ID per draft, so resending the same message returns the same Session.
@@ -49,7 +53,7 @@ export function HomeComposer() {
       startSession(input),
     onSuccess: async ({ sessionId, projectId }) => {
       await queryClient.invalidateQueries({
-        queryKey: homeSessionsQueryOptions().queryKey,
+        queryKey: accountSessionsQueryOptions().queryKey,
       });
       router.push(sessionPath(sessionId, projectId));
     },
@@ -65,7 +69,9 @@ export function HomeComposer() {
   return (
     <LoopComposer
       mode="home"
-      projectSelect={<HomeProjectSelect compact />}
+      message={message}
+      onMessageChange={setMessage}
+      projectSelect={<CurrentProjectSelect compact />}
       onSubmit={submit}
       pending={start.isPending || start.isSuccess}
       disabled={!selection.value}

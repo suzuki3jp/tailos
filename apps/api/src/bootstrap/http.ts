@@ -1,11 +1,19 @@
 import {
   d1Routines,
-  replayLabelDelivery,
+  replayIssueDelivery,
 } from "@/infrastructure/d1/routines.ts";
 import { createRoutineRoutes } from "@/presentation/http/handlers/routines/routines.ts";
-import { codexConnectionId } from "@/application/auth/device.ts";
-import { acceptPlanningInput } from "@/infrastructure/d1/planning.ts";
-import { processPlanningInputs } from "@/bootstrap/planning.ts";
+import {
+  agentConnectionId,
+  type AgentConnected,
+} from "@/application/auth/agent-connection.ts";
+import {
+  admitIssueMessage,
+  admitSessionMessage,
+  latestCommentSession,
+  latestTurnContext,
+} from "@/infrastructure/d1/session-inbox.ts";
+import { queueIssueGuidance } from "@/infrastructure/d1/issue-guidance.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { validSignature } from "@/infrastructure/github/webhook-signature.ts";
 import { createOperatorAuth } from "@/presentation/http/middlewares/operator.ts";
@@ -14,7 +22,6 @@ import {
   findOperatorUserId,
   getOperatorSession,
 } from "@/infrastructure/auth/login.ts";
-import { findActiveRun } from "@/infrastructure/d1/active-run.ts";
 import { findOwnedRun } from "@/infrastructure/d1/owned-runs.ts";
 import { readRunArtifact } from "@/infrastructure/r2/run-artifacts.ts";
 import { checkRunnerHealth } from "@/infrastructure/cloudflare/runner-health.ts";
@@ -27,7 +34,6 @@ import { cors } from "hono/cors";
 import { createGithubWebhook } from "@/presentation/http/handlers/github-webhook/github-webhook.ts";
 import { createConnectRoutes } from "@/presentation/http/handlers/connect/connect.ts";
 import { createLoginRoutes } from "@/presentation/http/handlers/login/login.ts";
-import { createRefreshRoutes } from "@/presentation/http/handlers/refresh/refresh.ts";
 import { type Bindings } from "@/bindings.ts";
 import { createRunRoutes } from "@/presentation/http/handlers/runs/runs.ts";
 import { createSessionRoutes } from "@/presentation/http/handlers/sessions/sessions.ts";
@@ -38,7 +44,7 @@ import { createTriggerRoutes } from "@/presentation/http/handlers/triggers/trigg
 import { requestDiagnostics } from "@/presentation/http/middlewares/request-diagnostics.ts";
 import {
   diagnosticReader,
-  canIngestDiagnostics,
+  diagnosticRunSession,
   recordTriggerDecision,
 } from "@/infrastructure/diagnostics/store.ts";
 import { createDiagnosticRoutes } from "@/presentation/http/handlers/diagnostics/diagnostics.ts";
@@ -53,6 +59,8 @@ import { d1Projects } from "@/infrastructure/d1/projects.ts";
 import { GitHubApp } from "@/infrastructure/github/app.ts";
 import { createProjectRoutes } from "@/presentation/http/handlers/projects/projects.ts";
 import { directBrowserApiPath, webBrowserApiPath } from "@tailos/core/auth";
+import { createAccountProfileRoutes } from "@/presentation/http/handlers/account/profile.ts";
+import { readAccountProfile } from "@/infrastructure/d1/account.ts";
 
 const operatorAuth = createOperatorAuth(getOperatorSession);
 
@@ -65,11 +73,19 @@ function githubApp(env: Bindings) {
   });
 }
 
-const codexConnected = (env: Bindings) => async (ownerId: string) =>
-  !!env.CREDENTIALS &&
-  !!env.CREDENTIAL_ENCRYPTION_KEY &&
-  (await env.CREDENTIALS.getByName(codexConnectionId(ownerId)).status())
-    .state === "connected";
+const agentConnected =
+  (env: Bindings): AgentConnected =>
+  async (ownerId, engine) => {
+    if (!env.CREDENTIALS || !env.CREDENTIAL_ENCRYPTION_KEY) return false;
+    const connection = env.CREDENTIALS.getByName(
+      agentConnectionId(engine, ownerId),
+    );
+    const status =
+      engine === "claude"
+        ? await connection.claudeStatus()
+        : await connection.status();
+    return status.state === "connected";
+  };
 
 const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
   createSessionRoutes((env) => d1Sessions(env.DB), operatorAuth, {
@@ -78,45 +94,51 @@ const { sessionRoutes, userSessionRoutes, projectSessionRoutes } =
         (await d1Projects(env.DB).settings(ownerId)).find(
           (record) => record.project.id === projectId,
         ) ?? null,
-      codexConnected: codexConnected(env),
+      connected: agentConnected(env),
       defaultBranch: (project) => githubApp(env).defaultBranch(project),
       admit: (input) => admitTrigger(env.DB, input),
     }),
-    scheduleRun: (env) => runStarter(env.RUNNER),
+    scheduleRun: runStarter,
+    continueDeps: (env) => ({
+      project: async (ownerId, projectId) =>
+        (await d1Projects(env.DB).settings(ownerId)).find(
+          (record) => record.project.id === projectId,
+        ) ?? null,
+      connected: agentConnected(env),
+      latestTurn: (input) => latestTurnContext(env.DB, input),
+      admitMessage: (input) => admitSessionMessage(env.DB, input),
+    }),
   });
 
 const triggerRoutes = createTriggerRoutes(
-  (env) => runStarter(env.RUNNER),
+  runStarter,
   (env) => (input) => admitTrigger(env.DB, input),
   findOperatorUserId,
 );
 
 const githubWebhook = createGithubWebhook(
-  (env) => runStarter(env.RUNNER),
-  (env) => (input) => admitTrigger(env.DB, input),
+  runStarter,
+  (env) => (input) => admitIssueMessage(env.DB, input),
   findOperatorUserId,
   validSignature,
   (env) => d1Projects(env.DB).list(),
   (env, event) => recordTriggerDecision(env.DB, event),
   deliverIssueNotifications,
-  (env, input) => acceptPlanningInput(env.DB, input),
-  processPlanningInputs,
   (env, id) => d1Routines(env.DB).candidates(id),
-  (env, delivery, owner, diagnostics) =>
-    replayLabelDelivery(env.DB, delivery, owner, diagnostics),
+  (env, source, delivery, owner, diagnostics) =>
+    replayIssueDelivery(env.DB, source, delivery, owner, diagnostics),
+  async (env, scope) =>
+    (await latestCommentSession(env.DB, scope))?.routineId ?? null,
+  (env, guidance) => queueIssueGuidance(env.DB, guidance),
 );
 
 const runRoutes = createRunRoutes(
-  (env) => runStarter(env.RUNNER),
+  runStarter,
   (env, id, ownerId) => findOwnedRun(env.DB, id, ownerId),
   (env, id, file, result) =>
     env.RUN_ARTIFACTS
       ? readRunArtifact(env.RUN_ARTIFACTS, id, file, result)
       : Promise.resolve(null),
-);
-
-const refreshRoutes = createRefreshRoutes((env, runId, now) =>
-  findActiveRun(env.DB, runId, now),
 );
 
 const loginRoutes = createLoginRoutes(createLoginAuth);
@@ -148,6 +170,13 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
       ),
     }),
   )
+  .route(
+    "/account",
+    createAccountProfileRoutes(
+      (env, id) => readAccountProfile(env.DB, id),
+      operatorAuth,
+    ),
+  )
   .route("/connect", connectRoutes)
   .route("/projects/:projectId/sessions", projectSessionRoutes)
   .route(
@@ -162,7 +191,7 @@ const browserApi = new Hono<{ Bindings: Bindings }>()
     "/projects/:projectId/routines",
     createRoutineRoutes(
       (env) => d1Routines(env.DB),
-      codexConnected,
+      agentConnected,
       operatorAuth,
     ),
   )
@@ -215,11 +244,10 @@ app.route(directBrowserApiPath, browserApi);
 app.route(`${directBrowserApiPath}/auth`, loginRoutes);
 app.route("/mcp", createMcpRoutes(authenticateMcpKey, inspectionStore));
 app.route("/webhooks/github", githubWebhook);
-app.route("/_runner/runs", refreshRoutes);
 app.route(
   "/_runner/runs",
   createDiagnosticIngestRoutes((env, id, now) =>
-    canIngestDiagnostics(env.DB, id, now),
+    diagnosticRunSession(env.DB, id, now),
   ),
 );
 app.get("/health", (c) => c.json({ status: "ok", service: "tailos-api" }));

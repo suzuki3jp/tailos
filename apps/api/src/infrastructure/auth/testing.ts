@@ -1,9 +1,9 @@
 import { assert } from "vitest";
-import { makeSignature } from "better-auth/crypto";
 import { drizzle } from "drizzle-orm/d1";
 import { authAccounts, users } from "@/infrastructure/d1/schema.ts";
 import type { Bindings } from "@/bindings.ts";
 import { createLoginAuth } from "@/infrastructure/auth/login.ts";
+import { createLoginSessionCookie } from "./session-cookie.ts";
 
 export function testLoginBindings(DB: Bindings["DB"]) {
   return {
@@ -43,14 +43,6 @@ export async function createTestOperator(
   ]);
   const auth = createLoginAuth(env);
   assert(auth);
-  const context = await auth.$context;
-  const session = await context.internalAdapter.createSession(id);
-  const signature = await makeSignature(session.token, context.secret);
-  return {
-    id,
-    cookie:
-      context.authCookies.sessionToken.name +
-      "=" +
-      encodeURIComponent(session.token + "." + signature),
-  };
+  const { name, value } = await createLoginSessionCookie(auth, id);
+  return { id, cookie: `${name}=${value}` };
 }

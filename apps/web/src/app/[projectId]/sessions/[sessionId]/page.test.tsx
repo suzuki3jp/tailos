@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
 import Page from "./page";
@@ -7,7 +7,8 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 vi.mock("next/link", () => ({
-  default: (props: ComponentProps<"a">) => <a {...props} />,
+  default: (props: ComponentProps<"a">) =>
+    createElement("a", { ...props, "data-next-link": true }),
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -15,6 +16,12 @@ afterEach(() => vi.unstubAllGlobals());
 test("renders prefetched session and execution history without waiting for the live connection", async () => {
   const http = vi.fn<typeof fetch>(async (input) => {
     const path = new URL(String(input)).pathname;
+    if (path === "/v1/account/profile")
+      return Response.json({
+        name: "Session Operator",
+        email: "session@example.test",
+        image: null,
+      });
     if (path.endsWith("/timeline"))
       return Response.json({
         items: [],
@@ -22,9 +29,16 @@ test("renders prefetched session and execution history without waiting for the l
         cursor: 0,
         before: null,
       });
-    if (path === "/v1/projects/project/sessions")
+    if (path === "/v1/sessions")
       return Response.json({
-        items: [{ id: "session", title: "Sample session" }],
+        items: [
+          {
+            id: "session",
+            title: "Sample session",
+            project: { id: "project" },
+          },
+          { id: "other", title: "Other session", project: { id: "project" } },
+        ],
         nextCursor: null,
       });
     if (path === "/v1/projects/project/sessions/session")
@@ -33,7 +47,12 @@ test("renders prefetched session and execution history without waiting for the l
         detail: {
           session: { id: "session", title: "Sample session" },
           messages: [
-            { id: "prompt", authorKind: "user", body: "**Prompt**" },
+            {
+              id: "prompt",
+              authorKind: "automation",
+              body: "**Prompt**",
+              jobContext: { github: { kind: "issue", number: 166 } },
+            },
             {
               id: "reply",
               authorKind: "agent",
@@ -46,6 +65,7 @@ test("renders prefetched session and execution history without waiting for the l
               id: "run",
               startMessageId: "prompt",
               status: "succeeded",
+              engine: "claude",
               agentDurationMs: 752_000,
               result: null,
               errorCode: null,
@@ -62,16 +82,34 @@ test("renders prefetched session and execution history without waiting for the l
   });
   const { Providers } = await import("@/app/providers");
   const html = renderToStaticMarkup(<Providers>{page}</Providers>);
-  expect(html).toContain("Sample project");
-  expect(html).toContain('href="/project/sessions/session"');
-  expect(html).toMatch(
-    /<div[^>]*aria-label="Resize session list"[^>]*role="separator"/,
+  const skipLink = html.match(
+    /<a[^>]*href="#page-content"[^>]*>Skip to content<\/a>/,
   );
-  expect(html).toMatch(/id="project-sessions"[^>]*flex-basis:240px/);
-  expect(html).toContain("**Prompt**");
+  const sidebar = html.indexOf('<aside aria-label="Project sidebar"');
+  expect(skipLink).not.toBeNull();
+  expect(skipLink?.[0]).not.toContain("data-next-link");
+  expect(sidebar).toBeGreaterThan(skipLink?.index ?? Infinity);
+  expect(html).toContain('id="page-content" tabindex="-1"');
+  expect(html).toContain("Sample project");
+  // The sidebar's Recent Sessions marks the open Session; no right panel lists them.
+  expect(html).toMatch(
+    /<a[^>]*href="\/project\/sessions\/session"[^>]*aria-current="page"[^>]*>/,
+  );
+  expect(html).toContain('href="/project/sessions/other"');
+  expect(html).not.toContain("Resize session list");
+  expect(html).not.toContain('id="project-sessions"');
+  expect(html).toContain("<strong>Prompt</strong>");
+  expect(html).toMatch(
+    /<strong>Prompt<\/strong><\/p><\/div><div[^>]*><p[^>]*>Structured Job Context[\s\S]*?&quot;number&quot;: 166[\s\S]*?<\/pre><\/div><\/div><\/li>/,
+  );
   expect(html).toContain("&lt;b&gt;Reply&lt;/b&gt;");
+  // The reply is named after its Run's Model Provider, which the composer keeps.
+  expect(html).toContain('<span class="sr-only">Claude</span>');
+  expect(html).toContain("Claude / Default model / effort");
   expect(html).toContain("Worked for 12m 32s");
   expect(html).toContain("<summary");
   expect(html).not.toContain("Execution history could not be loaded.");
-  expect(http).toHaveBeenCalledTimes(2);
+  expect(html).toContain("Session Operator");
+  expect(html).toContain("session@example.test");
+  expect(http).toHaveBeenCalledTimes(3);
 });

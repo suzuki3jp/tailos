@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { TimelineItem } from "@tailos/core/timeline";
 import { Disclosure } from "@/shared/ui/disclosure";
@@ -24,11 +25,12 @@ export function RunActivity({
 }) {
   const active = isActiveRun(run);
   const [open, setOpen] = useState(active);
-  const { url, plan } = runResult(run.result);
+  const { urls, plan } = runResult(run.result);
   return (
     <div className="space-y-2">
       <Disclosure
         inlineChevron
+        summaryClassName="rounded-none border-b border-muted-foreground pb-1"
         open={open}
         onOpenChange={setOpen}
         label={
@@ -77,7 +79,7 @@ export function RunActivity({
             )}
         </div>
       </Disclosure>
-      {(run.errorCode || plan || url) && (
+      {(run.errorCode || plan || urls) && (
         <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {run.errorCode && (
             <span className="wrap-anywhere text-destructive">
@@ -85,11 +87,13 @@ export function RunActivity({
             </span>
           )}
           {plan && <span>{plan}</span>}
-          {url && (
-            <a className="underline" href={url}>
-              Open pull request
-            </a>
-          )}
+          {urls?.map((url) => (
+            <Link key={url} className="underline" href={url}>
+              {urls.length > 1
+                ? `Open pull request #${url.split("/").pop()}`
+                : "Open pull request"}
+            </Link>
+          ))}
         </div>
       )}
     </div>

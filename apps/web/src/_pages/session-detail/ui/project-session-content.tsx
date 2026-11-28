@@ -1,17 +1,24 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import type { AgentEngine } from "@tailos/core/models";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/shared/ui/button";
-import { LoopComposer } from "@/features/compose-loop";
+import { Button } from "@/shared/ui/design-systems";
+import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { RequestState } from "@/widgets/request-state";
-import { projectSessionQueryOptions, sessionErrorStatus } from "../api/queries";
+import {
+  isActiveRun,
+  projectSessionQueryOptions,
+  sessionErrorStatus,
+} from "../api/queries";
+import { sendMessage, SendMessageError } from "../api/send-message";
 import { SessionConversation } from "./session-conversation";
 import { useSessionTimeline } from "../api/use-session-timeline";
+import { sessionEngine } from "../model/agent-engine";
 
 type Props = { projectId: string; sessionId: string };
 const connectionLabels = {
-  live: "Live",
   unauthorized: "Sign in again to receive live updates.",
   reconnecting: "Reconnecting… Saved history remains available.",
   connecting: "Connecting…",
@@ -20,6 +27,93 @@ function olderLabel(loading: boolean, failed: boolean) {
   if (loading) return "Loading…";
   if (failed) return "Retry earlier activity";
   return "Load earlier activity";
+}
+
+function sendFailure(error: unknown) {
+  const status = error instanceof SendMessageError ? error.status : undefined;
+  const code = error instanceof SendMessageError ? error.code : undefined;
+  if (code === "codex_not_connected" || code === "claude_not_connected")
+    return (
+      <>
+        Connect {code === "claude_not_connected" ? "Claude" : "Codex"} to
+        continue.{" "}
+        <Link href="/connect" className="underline">
+          Connect
+        </Link>
+      </>
+    );
+  if (code === "session_provider_fixed")
+    return "This session keeps its model provider. Start a new loop to use another one.";
+  if (code === "session_busy")
+    return "The loop is still working. Send once it finishes.";
+  if (status === 401)
+    return (
+      <>
+        Your sign-in has expired.{" "}
+        <Link href="/login" className="underline">
+          Sign in
+        </Link>
+      </>
+    );
+  if (status === 404) return "This session can no longer take messages.";
+  if (status === 400) return "Check the message and model, then try again.";
+  return "Try again.";
+}
+
+function composerStatus(error: unknown, working: boolean) {
+  if (error) return <>Your message wasn’t sent. {sendFailure(error)}</>;
+  if (working) return "The loop is working. You can send once it finishes.";
+  return undefined;
+}
+
+/**
+ * Sends the next message of the Session, which continues with the settings
+ * of its latest Turn. A working Session takes none.
+ */
+function SessionComposer({
+  projectId,
+  sessionId,
+  working,
+  engine,
+}: Props & { working: boolean; engine?: AgentEngine }) {
+  const queryClient = useQueryClient();
+  // One ID per draft, so resending the same message starts one Turn.
+  const draft = useRef<{ key: string; requestId: string } | null>(null);
+  const [message, setMessage] = useState("");
+  const send = useMutation({
+    mutationFn: (input: Parameters<typeof sendMessage>[0]) =>
+      sendMessage(input),
+    onSuccess: async () => {
+      draft.current = null;
+      setMessage("");
+      await queryClient.invalidateQueries({
+        queryKey: projectSessionQueryOptions(projectId, sessionId).queryKey,
+      });
+    },
+  });
+  const submit = (input: LoopMessage) => {
+    const key = JSON.stringify(input);
+    if (draft.current?.key !== key)
+      draft.current = { key, requestId: crypto.randomUUID() };
+    send.mutate({
+      ...input,
+      projectId,
+      sessionId,
+      requestId: draft.current.requestId,
+    });
+  };
+  return (
+    <LoopComposer
+      mode="session"
+      message={message}
+      onMessageChange={setMessage}
+      onSubmit={submit}
+      pending={send.isPending}
+      disabled={working}
+      engine={engine}
+      status={composerStatus(send.isError ? send.error : undefined, working)}
+    />
+  );
 }
 
 export function SessionProjectName({ projectId, sessionId }: Props) {
@@ -31,7 +125,7 @@ export function SessionProjectName({ projectId, sessionId }: Props) {
   return (
     <span
       title={name}
-      className="min-w-0 flex-1 truncate rounded-lg border px-2.5 py-1.5 text-control"
+      className="flex h-8 min-w-0 flex-1 items-center truncate rounded-lg border px-2.5 text-control"
     >
       {name}
     </span>
@@ -82,14 +176,18 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto w-full max-w-172 px-7.5 pt-4 text-control-xs text-muted-foreground">
-          <p role="status">{connectionLabels[timeline.connection]}</p>
+          <p role="status">
+            {timeline.connection === "live"
+              ? null
+              : connectionLabels[timeline.connection]}
+          </p>
           {timeline.isError && (
             <div>
               <p>Execution history could not be loaded.</p>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void timeline.refetch()}
+                onPress={() => void timeline.refetch()}
               >
                 Retry
               </Button>
@@ -100,8 +198,8 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
               <Button
                 variant="ghost"
                 size="sm"
-                disabled={timeline.loadingOlder}
-                onClick={() => void timeline.loadOlder()}
+                isDisabled={timeline.loadingOlder}
+                onPress={() => void timeline.loadOlder()}
               >
                 {olderLabel(timeline.loadingOlder, timeline.olderError)}
               </Button>
@@ -118,7 +216,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
+            onPress={() => {
               pinned.current = true;
               setNewActivity(false);
               if (scroll.current)
@@ -130,7 +228,12 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         </div>
       )}
       <div className="mx-auto w-full max-w-166 shrink-0 px-3 pb-3">
-        <LoopComposer mode="session" />
+        <SessionComposer
+          projectId={projectId}
+          sessionId={sessionId}
+          working={result.detail.runs.some(isActiveRun)}
+          engine={sessionEngine(result.detail.runs)}
+        />
       </div>
     </>
   );

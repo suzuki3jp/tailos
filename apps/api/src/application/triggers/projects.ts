@@ -5,12 +5,16 @@ const repository = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
 );
-// Legacy imports retain their original configuration shape.
+/** Users allowed to start a Routine. */
+export const allowedActors = v.pipe(
+  v.array(v.string()),
+  v.minLength(1),
+  v.maxLength(100),
+);
 const configuration = v.strictObject({
   repository,
   repositoryId: id,
   installationId: id,
-  allowedActors: v.pipe(v.array(v.string()), v.minLength(1), v.maxLength(100)),
   maxRunMinutes: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(30)),
     30,
@@ -26,6 +30,9 @@ const legacyProject = v.pipe(
   v.strictObject({
     id: v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/)),
     ...configuration.entries,
+    // Legacy imports retain their original configuration shape: the users
+    // move to the Project's Routines.
+    allowedActors,
     triggerLabel: v.pipe(v.string(), v.minLength(1), v.maxLength(50)),
     // Agent egress is always allowed now; old exports still carry the setting.
     agentNetworkAccess: v.optional(v.boolean()),
@@ -57,4 +64,5 @@ export const projectSettings = v.strictObject({
 });
 
 export type Project = v.InferOutput<typeof projectSchema>;
+export type LegacyProject = v.InferOutput<typeof legacyProjectsSchema>[number];
 export type ProjectSettings = v.InferOutput<typeof projectSettings>;

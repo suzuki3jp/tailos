@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createSdkMcpServer,
   type Options,
@@ -19,14 +28,18 @@ import {
 
 type ClaudeJob = Extract<RunnerJob, { engine: "claude" }>;
 type Call = { prompt: string; options: Options };
-type GitHubRead = Parameters<ClaudeRuntime["githubServer"]>[0];
+type TailosTools = Parameters<ClaudeRuntime["tailosServer"]>[0];
+type GitHubRead = NonNullable<TailosTools["read"]>;
 
 const token = "claude-oauth-token";
-const bearer = "b".repeat(64);
 const checkout = {
   repository: "acme/widgets",
   baseSha: "a".repeat(40),
-  branch: `tailos/issue-1/${randomUUID()}`,
+  defaultBranch: "main",
+  author: {
+    name: "tailos-app[bot]",
+    email: "1+tailos-app[bot]@users.noreply.github.com",
+  },
 };
 const job = (overrides: Partial<ClaudeJob> = {}): ClaudeJob => ({
   version: 1,
@@ -35,7 +48,6 @@ const job = (overrides: Partial<ClaudeJob> = {}): ClaudeJob => ({
   prompt: "Fix the bug",
   deadlineAt: Date.now() + 600_000,
   access: { token, connectionVersion: randomUUID() },
-  lease: { url: "https://tailos.example/_runner/runs/1/credentials", bearer },
   ...overrides,
 });
 const success = (structured: unknown, sessionId = "session-1") => ({
@@ -80,8 +92,8 @@ function runtime(
       })();
     },
     sandboxAvailable: async () => sandboxAvailable,
-    githubServer(handler) {
-      read = handler;
+    tailosServer(tools) {
+      read = tools.read;
       return createSdkMcpServer({ name: "tailos" });
     },
   };
@@ -143,11 +155,7 @@ test("runs an implementation turn inside the workspace with only the Run's crede
     cwd,
   );
 
-  expect(result).toEqual({
-    reply: "Done",
-    headline: "fix: repair the widget",
-    sessionTitle: "Widget repair",
-  });
+  expect(result).toEqual({ reply: "Done", sessionTitle: "Widget repair" });
   const { prompt, options } = calls[0]!;
   expect(prompt).toContain("Fix the bug");
   expect(prompt).toContain("Use mcp__tailos__github_get to look up");
@@ -458,8 +466,8 @@ test("asks the same session to shorten an oversized answer without tools", async
     cwd,
   );
 
-  // The first headline describes the verified work; secrets never reach the reply.
-  expect(result).toEqual({ reply: "Short [REDACTED]", headline: "fix: a" });
+  // Secrets never reach the reply.
+  expect(result).toEqual({ reply: "Short [REDACTED]" });
   expect(calls[1]!.prompt).toContain("Rewrite only the previous answer");
   expect(calls[1]!.options).toMatchObject({
     resume: "session-9",
@@ -485,7 +493,6 @@ test("keeps completed implementation work when the shortened answer fails", asyn
     cwd,
   );
 
-  expect(result.headline).toBe("fix: a");
   expect(result.reply).toContain("要約を取得できませんでした");
 });
 
@@ -555,9 +562,193 @@ test("keeps file tools inside the workspace", async (t) => {
   expect(await decide("Read", "not an object")).toBe("deny");
 });
 
-test("builds the GitHub tool server with the installed Agent SDK", async () => {
+test("builds the Tailos tool server with the installed Agent SDK", async () => {
   const read = vi.fn<GitHubRead>();
-  const server = (await loadClaudeRuntime()).githubServer(read);
+  const server = (await loadClaudeRuntime()).tailosServer({ read });
 
   expect(server).toMatchObject({ type: "sdk", name: "tailos" });
+});
+
+const sessionId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const transcript = `projects/-work-repo/${sessionId}.jsonl`;
+
+// Writes the transcript where Claude Code keeps it, as Claude Code does.
+async function keepTranscript(call: Call, id: string, content: string) {
+  const path = join(
+    call.options.env!.CLAUDE_CONFIG_DIR!,
+    `projects/-work-repo/${id}.jsonl`,
+  );
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content);
+}
+
+test("lets an implementation write its git directory, and offers no publication tool", async (t) => {
+  const cwd = await workspace(t);
+  const gitDir = join(cwd, "..", "git");
+  const { calls, agent } = runtime([[success({ reply: "Done" })]]);
+
+  await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    undefined,
+    gitDir,
+  );
+
+  const { prompt, options } = calls[0]!;
+  expect(options.sandbox?.filesystem?.allowWrite).toContain(gitDir);
+  expect(options.allowedTools).not.toContain("mcp__tailos__publish");
+  expect(prompt).toContain("git and gh are signed in");
+  expect(prompt).not.toContain("publish");
+});
+
+test("keeps the conversation for the next Turn and resumes it there", async (t) => {
+  const cwd = await workspace(t);
+  const save = vi.fn();
+  const first = runtime([
+    async (call) => {
+      await keepTranscript(call, sessionId, "first turn\n");
+      return [
+        { type: "system", subtype: "init", session_id: sessionId },
+        success({ reply: "Started" }, sessionId),
+      ];
+    },
+  ]);
+  await first
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      save,
+    });
+  expect(save).toHaveBeenCalledOnce();
+  const [saved] = save.mock.calls[0]!;
+  expect(saved).toMatchObject({ threadId: sessionId, path: transcript });
+  expect(saved.content.toString()).toBe("first turn\n");
+
+  let restored: string | undefined;
+  const next = runtime([
+    async (call) => {
+      restored = await readFile(
+        join(call.options.env!.CLAUDE_CONFIG_DIR!, transcript),
+        "utf8",
+      );
+      await keepTranscript(call, sessionId, "first turn\nsecond turn\n");
+      return [success({ reply: "Continued" }, sessionId)];
+    },
+  ]);
+  const resave = vi.fn();
+  await next
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      resume: saved,
+      save: resave,
+    });
+  expect(restored).toBe("first turn\n");
+  expect(next.calls[0]!.options.resume).toBe(sessionId);
+  expect(next.calls[0]!.prompt).not.toContain("could not be restored");
+  expect(resave.mock.calls[0]![0].content.toString()).toBe(
+    "first turn\nsecond turn\n",
+  );
+});
+
+test("starts a new conversation and says so when the transcript cannot be resumed", async (t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([
+    [
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        session_id: sessionId,
+        errors: [`No conversation found with session ID: ${sessionId}`],
+      },
+    ],
+    [success({ reply: "Fresh" }, "1b4e28ba-2fa1-41d2-883f-0016d3cca427")],
+  ]);
+
+  const result = await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    {
+      resume: {
+        threadId: sessionId,
+        path: transcript,
+        content: Buffer.from("broken"),
+      },
+      save: () => {},
+    },
+  );
+
+  expect(result.reply).toBe("Fresh");
+  expect(calls[0]!.options.resume).toBe(sessionId);
+  expect(calls[1]!.options.resume).toBeUndefined();
+  expect(calls[1]!.prompt).toMatch(
+    /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+  );
+});
+
+test.for([
+  {
+    name: "another Model Provider's conversation",
+    path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread.jsonl",
+  },
+  { name: "a path outside its sessions", path: "../settings.json" },
+])("does not restore $name", async ({ path }, t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([[success({ reply: "Fresh" })]]);
+
+  await agent().run(
+    job({ checkout }),
+    new AbortController().signal,
+    cwd,
+    undefined,
+    {
+      resume: { threadId: sessionId, path, content: Buffer.from("{}") },
+      save: () => {},
+    },
+  );
+
+  expect(calls[0]!.options.resume).toBeUndefined();
+  expect(calls[0]!.prompt).toMatch(
+    /^Note: the conversation from this Session's previous turn could not be restored/,
+  );
+});
+
+test("tells the Agent when the previous work is lost", async (t) => {
+  const cwd = await workspace(t);
+  const lost = runtime([[success({ reply: "Done" })]]);
+  await lost
+    .agent()
+    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
+      lost: true,
+      save: () => {},
+    });
+  expect(lost.calls[0]!.prompt).toMatch(
+    /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
+  );
+});
+
+test("runs the chosen model and effort, and refuses ones Claude does not offer", async (t) => {
+  const cwd = await workspace(t);
+  const { calls, agent } = runtime([[success({ reply: "Done" })]]);
+
+  await agent().run(
+    job({ checkout, model: "claude-opus-5-5", effort: "xhigh" }),
+    new AbortController().signal,
+    cwd,
+  );
+  expect(calls[0]!.options).toMatchObject({
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+  });
+
+  await expect(
+    agent().run(
+      job({ checkout, model: "gpt-5.5" }),
+      new AbortController().signal,
+      cwd,
+    ),
+  ).rejects.toThrow("Requested model or effort is unavailable");
 });

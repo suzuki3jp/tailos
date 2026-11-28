@@ -1,10 +1,13 @@
-import type { ReactNode } from "react";
+import { createElement, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test, vi } from "vitest";
 import { Providers } from "./providers";
 import HomePage from "./page";
 
 // Exercise the route and real account error UI without loading Vinext's link/image shims.
+vi.mock("next/link", () => ({
+  default: (props: ComponentProps<"a">) => createElement("a", props),
+}));
 vi.mock("./home", () => ({
   Home: () => <div data-home />,
 }));

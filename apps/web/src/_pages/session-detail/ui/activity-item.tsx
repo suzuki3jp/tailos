@@ -9,7 +9,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import type { TimelineItem } from "@tailos/core/timeline";
-import { Button } from "@/shared/ui/button";
+import { Button } from "@/shared/ui/design-systems";
 import { Disclosure } from "@/shared/ui/disclosure";
 import { timelineOutputOptions, TimelineRequestError } from "../api/timeline";
 import { timelineInput, timelineOutput } from "../model/timeline";
@@ -24,6 +24,7 @@ const kinds = {
 };
 const stages: Record<string, string> = {
   checkout: "Checking out repository",
+  continuity: "Carrying over work",
   agent: "Agent",
   publication: "Publishing",
   commit: "Creating commit",
@@ -93,7 +94,7 @@ export function ActivityItem({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void output.refetch()}
+            onPress={() => void output.refetch()}
           >
             Retry
           </Button>

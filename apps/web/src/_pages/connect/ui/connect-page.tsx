@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { Button } from "@/shared/ui/design-systems";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
 import { connectionQueryOptions, connectionKey } from "../api/queries";
@@ -45,14 +47,14 @@ export function ConnectPage() {
               {status.userCode}
             </code>
           </p>
-          <a
+          <Link
             className="action action-primary"
             href={status.verificationUrl}
             target="_blank"
             rel="noopener noreferrer"
           >
             ChatGPT を開く
-          </a>
+          </Link>
           <p role="status" className="text-sm text-muted-foreground">
             接続が完了すると自動で更新します。
           </p>
@@ -61,20 +63,19 @@ export function ConnectPage() {
     return (
       <>
         <p>{messages[status.state]}</p>
-        <button
-          className={
-            status.state === "connected" ? "action" : "action action-primary"
-          }
+        <Button
+          variant={status.state === "connected" ? "outline" : "default"}
+          size="touch"
           type="button"
-          disabled={update.isPending}
-          onClick={() => {
+          isDisabled={update.isPending}
+          onPress={() => {
             if (status.state !== "connected") update.mutate("start");
             else if (window.confirm("ChatGPT 接続を解除しますか？"))
               update.mutate("disconnect");
           }}
         >
           {status.state === "connected" ? "接続を解除" : "ChatGPT に接続"}
-        </button>
+        </Button>
         {update.isError && (
           <p role="alert" className="text-danger">
             {update.error.message}

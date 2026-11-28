@@ -1,8 +1,21 @@
 "use client";
+import {
+  Button,
+  Checkbox,
+  Select,
+  TextArea,
+  TextField,
+  type SelectOption,
+} from "@/shared/ui/design-systems";
 import { RequestState } from "@/widgets/request-state";
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { codexModels, type AgentModel } from "@tailos/core/models";
+import {
+  agentEngineLabels,
+  agentEngines,
+  agentModels,
+  type AgentModel,
+} from "@tailos/core/models";
 import {
   RoutineRequestError,
   routinesQueryOptions,
@@ -24,28 +37,85 @@ function availableEfforts(models: readonly AgentModel[], model?: string) {
   );
 }
 
-const field = "block w-full rounded-md border border-rule bg-paper px-3 py-2";
+const defaultCatalogChoice = "default";
+
+function catalogChoiceId(value: string | undefined) {
+  return value === undefined ? defaultCatalogChoice : `catalog:${value}`;
+}
+
+function catalogChoices(
+  values: readonly string[],
+  saved?: string,
+): SelectOption[] {
+  const options: SelectOption[] = [{ id: defaultCatalogChoice, label: "既定" }];
+  if (saved && !values.includes(saved)) {
+    options.push({
+      id: catalogChoiceId(saved),
+      label: `${saved}（保存済み）`,
+      disabled: true,
+    });
+  }
+  options.push(
+    ...values.map((value) => ({ id: catalogChoiceId(value), label: value })),
+  );
+  return options;
+}
+
+function readCatalogChoice(id: string | null) {
+  return id?.startsWith("catalog:") ? id.slice("catalog:".length) : undefined;
+}
+
+const triggerChoices = [
+  { id: "github.issue-label", label: "Issue のラベル" },
+  {
+    id: "github.issue-comment",
+    label: "Issue のコメント @tailos plan（読み取り専用の計画）",
+  },
+] as const;
+const implementationPrompt =
+  "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, and run relevant checks. Commit the changes on a new branch, push it, and open a pull request with gh whose body includes Closes #<issue number>. Summarize the result with the pull request URL.";
+const planningPrompt =
+  "Plan the GitHub issue identified by the structured job context, answering the new message from a permitted user. Read the issue using tailos_github_get. Do not implement or publish changes. Post your reply on the issue as a comment with gh issue comment, without mentioning anyone with @, and give the same reply in your answer.";
+const triggers = {
+  "github.issue-label": {
+    trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
+    prompt: implementationPrompt,
+  },
+  "github.issue-comment": {
+    trigger: { version: 1, type: "github.issue-comment", command: "plan" },
+    prompt: planningPrompt,
+  },
+} as const satisfies Record<
+  RoutineSettings["trigger"]["type"],
+  Pick<RoutineSettings, "trigger" | "prompt">
+>;
 const empty: RoutineSettings = {
   name: "",
   enabled: false,
-  trigger: { version: 1, type: "github.issue-label", label: "tailos:run" },
   allowedActors: [],
   engine: "codex",
-  prompt:
-    "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, run relevant checks, and summarize the result. Tailos handles publishing.",
+  ...triggers["github.issue-label"],
 };
+function TriggerSummary({ trigger }: { trigger: RoutineSettings["trigger"] }) {
+  return trigger.type === "github.issue-label" ? (
+    <p>ラベル: {trigger.label}</p>
+  ) : (
+    <p>コメント: @tailos {trigger.command}（読み取り専用）</p>
+  );
+}
 export function RoutinePanel({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-3">
-      <button
-        className="action"
+      <Button
+        variant="outline"
+        size="touch"
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onPress={() => setOpen(!open)}
       >
         {open ? "Routine を閉じる" : "Routine を管理"}
-      </button>
+      </Button>
       {open && <RoutineEditor projectId={projectId} />}
     </div>
   );
@@ -57,11 +127,11 @@ function Snapshot({ settings }: { settings: RoutineSettings | null }) {
       <p>
         {settings.name} · {settings.enabled ? "有効" : "無効"}
       </p>
-      <p>ラベル: {settings.trigger.label}</p>
+      <TriggerSummary trigger={settings.trigger} />
       <p>許可ユーザー: {settings.allowedActors.join(", ")}</p>
       <p>
-        {settings.engine} · model: {settings.model ?? "既定"} · effort:{" "}
-        {settings.effort ?? "既定"}
+        {agentEngineLabels[settings.engine]} · model: {settings.model ?? "既定"}{" "}
+        · effort: {settings.effort ?? "既定"}
       </p>
       <p className="whitespace-pre-wrap">{settings.prompt}</p>
     </div>
@@ -75,7 +145,7 @@ function RoutineEditor({ projectId }: { projectId: string }) {
   const [editing, setEditing] = useState<Routine>();
   const [settings, setSettings] = useState<RoutineSettings>(empty);
   const [actors, setActors] = useState("");
-  const models = codexModels;
+  const models = agentModels(settings.engine);
   const modelIds = models.map(({ model }) => model);
   const efforts = availableEfforts(models, settings.model);
   const reset = () => {
@@ -152,22 +222,24 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           </details>
         ))}
         {before !== undefined && (
-          <button
-            className="action"
+          <Button
+            variant="outline"
+            size="touch"
             type="button"
-            onClick={() => setBefore(undefined)}
+            onPress={() => setBefore(undefined)}
           >
             最新の履歴
-          </button>
+          </Button>
         )}
         {history.data.nextCursor !== null && (
-          <button
-            className="action"
+          <Button
+            variant="outline"
+            size="touch"
             type="button"
-            onClick={() => setBefore(history.data.nextCursor ?? undefined)}
+            onPress={() => setBefore(history.data.nextCursor ?? undefined)}
           >
             以前の履歴
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -193,11 +265,12 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           <li className="rounded border border-rule p-3" key={item.id}>
             <Snapshot settings={item} />
             <div className="mt-2 flex gap-2">
-              <button
-                className="action"
+              <Button
+                variant="outline"
+                size="touch"
                 type="button"
-                disabled={busy}
-                onClick={() => {
+                isDisabled={busy}
+                onPress={() => {
                   const {
                     id: _id,
                     revision: _revision,
@@ -212,12 +285,13 @@ function RoutineEditor({ projectId }: { projectId: string }) {
                 }}
               >
                 編集
-              </button>
-              <button
-                className="action text-danger"
+              </Button>
+              <Button
+                variant="destructive"
+                size="touch"
                 type="button"
-                disabled={busy}
-                onClick={() => {
+                isDisabled={busy}
+                onPress={() => {
                   if (
                     window.confirm(
                       `「${item.name}」を削除しますか？受付済みの Run は続行し、履歴は残ります。`,
@@ -227,7 +301,7 @@ function RoutineEditor({ projectId }: { projectId: string }) {
                 }}
               >
                 削除
-              </button>
+              </Button>
             </div>
           </li>
         ))}
@@ -238,18 +312,21 @@ function RoutineEditor({ projectId }: { projectId: string }) {
     <section className="space-y-4 border-t border-rule pt-4">
       <h3 className="text-lg font-medium">Routine</h3>
       <p className="text-sm text-muted-foreground">
-        Issue にラベルが付くと実行します。一致する有効な Routine
-        はすべて起動し、複数の PR や通知が作られる場合があります。同じ
-        Routine・Issue の実行中の起動は、その Run にまとめられます。
+        Issue にラベルが付いたときか、Issue に @tailos plan
+        とコメントされたときに実行します。一致する有効な Routine
+        はすべて起動し、複数の PR や通知が作られる場合があります。Routine は
+        Issue ごとに 1 つの Session を続け、2 回目以降の起動や @tailos
+        の続きのコメントはその Session に届いた順に処理されます。
       </p>
       {renderRoutines()}
-      <button
-        className="action"
+      <Button
+        variant="outline"
+        size="touch"
         type="button"
-        onClick={() => void list.refetch()}
+        onPress={() => void list.refetch()}
       >
         一覧を更新
-      </button>
+      </Button>
       <form
         onSubmit={submit}
         className="space-y-3 rounded border border-rule p-3"
@@ -257,141 +334,130 @@ function RoutineEditor({ projectId }: { projectId: string }) {
         <h4 className="font-medium">
           {editing ? "Routine を編集" : "Routine を追加"}
         </h4>
-        <label className="block">
-          名前
-          <input
-            required
-            maxLength={100}
-            className={field}
-            value={settings.name}
-            onChange={(e) => setSettings({ ...settings, name: e.target.value })}
-          />
-        </label>
-        <label className="block">
-          起動ラベル
-          <input
-            required
+        <TextField
+          label="名前"
+          isRequired
+          maxLength={100}
+          value={settings.name}
+          onChange={(name) => setSettings({ ...settings, name })}
+        />
+        <Select
+          label="起動"
+          size="lg"
+          options={triggerChoices}
+          value={settings.trigger.type}
+          disabled={!!editing}
+          onValueChange={(id) => {
+            const choice = triggerChoices.find((option) => option.id === id);
+            if (choice) setSettings({ ...settings, ...triggers[choice.id] });
+          }}
+        />
+        {settings.trigger.type === "github.issue-label" && (
+          <TextField
+            label="起動ラベル"
+            isRequired
             maxLength={50}
-            className={field}
             value={settings.trigger.label}
-            onChange={(e) =>
+            onChange={(label) =>
               setSettings({
                 ...settings,
-                trigger: { ...settings.trigger, label: e.target.value },
+                trigger: { version: 1, type: "github.issue-label", label },
               })
             }
           />
-        </label>
-        <label className="block">
-          起動を許可する GitHub ユーザー
-          <input
-            required
-            className={field}
-            value={actors}
-            onChange={(e) => setActors(e.target.value)}
-            placeholder="login1, login2"
-          />
-        </label>
-        <label className="block">
-          プロンプト
-          <textarea
-            required
-            maxLength={4000}
-            rows={5}
-            className={field}
-            value={settings.prompt}
-            onChange={(e) =>
-              setSettings({ ...settings, prompt: e.target.value })
-            }
-          />
-        </label>
-        <p className="text-sm text-muted-foreground">
-          Agent は Codex。変更がある場合は既存の検証・PR 公開経路で処理します。
-        </p>
-        <label className="block">
-          モデル
-          <select
-            className={field}
-            value={settings.model ?? ""}
-            onChange={(e) => {
-              const model = e.target.value || undefined;
+        )}
+        <TextField
+          label="起動を許可する GitHub ユーザー"
+          isRequired
+          value={actors}
+          onChange={setActors}
+          placeholder="login1, login2"
+        />
+        <TextArea
+          label="プロンプト"
+          isRequired
+          maxLength={4000}
+          rows={5}
+          value={settings.prompt}
+          onChange={(prompt) => setSettings({ ...settings, prompt })}
+        />
+        <Select
+          label="Model Provider"
+          size="lg"
+          options={agentEngines.map((engine) => ({
+            id: engine,
+            label: agentEngineLabels[engine],
+          }))}
+          value={settings.engine}
+          onValueChange={(id) => {
+            const engine = agentEngines.find((item) => item === id);
+            // Each provider has its own models: start from its defaults.
+            if (engine && engine !== settings.engine)
               setSettings({
                 ...settings,
-                model,
-                effort: availableEfforts(models, model).find(
-                  (effort) => effort === settings.effort,
-                ),
+                engine,
+                model: undefined,
+                effort: undefined,
               });
-            }}
-          >
-            <option value="">既定</option>
-            {settings.model && !modelIds.includes(settings.model) && (
-              <option value={settings.model} disabled>
-                {settings.model}（保存済み）
-              </option>
-            )}
-            {modelIds.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          effort
-          <select
-            className={field}
-            value={settings.effort ?? ""}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                effort: e.target.value || undefined,
-              })
-            }
-          >
-            <option value="">既定</option>
-            {settings.effort && !efforts.includes(settings.effort) && (
-              <option value={settings.effort} disabled>
-                {settings.effort}（保存済み）
-              </option>
-            )}
-            {efforts.map((effort) => (
-              <option key={effort} value={effort}>
-                {effort}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={settings.enabled}
-            onChange={(e) =>
-              setSettings({ ...settings, enabled: e.target.checked })
-            }
-          />
+          }}
+        />
+        <p className="text-sm text-muted-foreground">
+          変更がある場合は既存の検証・PR 公開経路で処理します。Provider
+          の接続がないと有効にできません。
+        </p>
+        <Select
+          label="モデル"
+          size="lg"
+          options={catalogChoices(modelIds, settings.model)}
+          value={catalogChoiceId(settings.model)}
+          onValueChange={(id) => {
+            const model = readCatalogChoice(id);
+            setSettings({
+              ...settings,
+              model,
+              effort: availableEfforts(models, model).find(
+                (effort) => effort === settings.effort,
+              ),
+            });
+          }}
+        />
+        <Select
+          label="effort"
+          size="lg"
+          options={catalogChoices(efforts, settings.effort)}
+          value={catalogChoiceId(settings.effort)}
+          onValueChange={(id) =>
+            setSettings({ ...settings, effort: readCatalogChoice(id) })
+          }
+        />
+        <Checkbox
+          isSelected={settings.enabled}
+          onChange={(enabled) => setSettings({ ...settings, enabled })}
+        >
           有効にする
-        </label>
+        </Checkbox>
         <p className="text-sm text-muted-foreground">
           無効状態なら、接続やモデル情報を確認できなくても保存できます。有効化には接続とモデル設定の検証が必要です。
         </p>
         <div className="flex gap-2">
-          <button
-            className="action action-primary"
-            disabled={busy}
+          <Button
+            variant="default"
+            size="touch"
+            isDisabled={busy}
             type="submit"
           >
             {save.isPending ? "保存しています…" : "保存"}
-          </button>
+          </Button>
           {editing && (
-            <button
-              className="action"
+            <Button
+              variant="outline"
+              size="touch"
               type="button"
-              disabled={busy}
-              onClick={reset}
+              isDisabled={busy}
+              onPress={reset}
             >
               編集をやめる
-            </button>
+            </Button>
           )}
         </div>
       </form>

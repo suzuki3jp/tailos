@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261121-project-session-timeline
 key: web.project.session-detail
-status: accepted
+status: superseded
 decided_by: suzuki3jp
 date: "2026-11-21"
 areas: [web, sessions, design-system]

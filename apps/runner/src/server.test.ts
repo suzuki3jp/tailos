@@ -148,11 +148,14 @@ test("does not let an unresponsive diagnostic endpoint hold the business result 
   expect((await terminalStatus(origin, job.runId)).status).toBe("succeeded");
 });
 
-test("executes the selected agent once and rejects a different job", async (t) => {
+test("executes the selected agent once and rejects a different job while it runs", async (t) => {
   let calls = 0;
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
   const origin = await listen(t, {
     async run(job) {
       calls++;
+      if (calls === 1) await released;
       return { reply: `Received ${job.prompt}` };
     },
   });
@@ -166,10 +169,14 @@ test("executes the selected agent once and rejects a different job", async (t) =
   expect((await sendJob(origin, { ...job, prompt: "" })).status).toBe(400);
   expect((await sendJob(origin, job)).status).toBe(202);
   expect((await sendJob(origin, job)).status).toBe(202);
-  expect((await sendJob(origin, { ...job, runId: randomUUID() })).status).toBe(
-    409,
-  );
+  const next = { ...job, runId: randomUUID() };
+  expect((await sendJob(origin, next)).status).toBe(409);
   expect(calls).toBe(1);
+  release();
+  await vi.waitFor(async () => {
+    const status = await fetch(`${origin}/job/${job.runId}`, control);
+    expect(v.parse(RunnerStatus, await status.json()).status).toBe("succeeded");
+  });
   const result = v.parse(
     RunnerStatus,
     await (await fetch(`${origin}/job/${job.runId}`, control)).json(),
@@ -180,6 +187,11 @@ test("executes the selected agent once and rejects a different job", async (t) =
     "job_started",
     "job_succeeded",
   ]);
+  // A container kept for the Session takes its next Turn, from the same
+  // controller only.
+  expect((await sendJob(origin, next, "d".repeat(64))).status).toBe(401);
+  expect((await sendJob(origin, next)).status).toBe(202);
+  await vi.waitFor(() => expect(calls).toBe(2));
 });
 
 test("cancels an active adapter at the job deadline", async (t) => {
@@ -404,17 +416,9 @@ test("runs a Claude job with the Claude agent and accepts only its own credentia
     prompt: "test",
     deadlineAt: Date.now() + 10_000,
     access: { token: "claude-oauth-token", connectionVersion: randomUUID() },
-    lease: {
-      url: "https://tailos.example/_runner/runs/1/credentials",
-      bearer: "b".repeat(64),
-    },
   } satisfies RunnerJob;
 
   // A job cannot mix the Codex and Claude credential shapes.
-  const { lease, ...withoutLease } = job;
-  expect(
-    v.safeParse(RunnerJobSchema, { ...withoutLease, refresh: lease }).success,
-  ).toBe(false);
   expect(
     v.safeParse(RunnerJobSchema, { ...job, engine: "codex" }).success,
   ).toBe(false);
@@ -470,4 +474,79 @@ test("only the controller that sent the job can read or resend it", async (t) =>
   ).toBe(401);
   expect((await fetch(`${origin}/job/${job.runId}`, control)).status).toBe(200);
   expect((await fetch(`${origin}/health`)).status).toBe(200);
+});
+
+test("takes the previous work only from the controller before the job and reports what was saved", async (t) => {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  const codex: AgentAdapter = {
+    run: async () => {
+      await released;
+      return { reply: "done" };
+    },
+  };
+  const server = createRunnerServer({
+    fake: fakeAgent,
+    codex,
+    claude: claudeAgent,
+  });
+  t.onTestFinished(
+    () => new Promise<void>((resolve) => server.close(() => resolve())),
+  );
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const other = "d".repeat(64);
+  const upload = (bearer: string) =>
+    fetch(`${origin}/continuity`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: new Uint8Array([1, 2, 3]),
+    });
+
+  expect((await upload(key)).status).toBe(204);
+  // The first control request names the controller for the whole Run.
+  expect((await upload(other)).status).toBe(401);
+  const job: RunnerJob = {
+    version: 1,
+    engine: "codex",
+    runId: randomUUID(),
+    prompt: "test",
+    deadlineAt: Date.now() + 10_000,
+    continuity: { restore: "saved" },
+    access: {
+      accessToken: "placeholder",
+      accountId: "account",
+      connectionVersion: randomUUID(),
+      accessVersion: randomUUID(),
+    },
+  };
+  expect((await sendJob(origin, job, other)).status).toBe(401);
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect((await upload(key)).status).toBe(409);
+  release();
+
+  await vi.waitFor(async () => {
+    const status = await fetch(`${origin}/job/${job.runId}`, control);
+    expect(v.parse(RunnerStatus, await status.json()).status).toBe("succeeded");
+  });
+  const saved = `${origin}/job/${job.runId}/continuity`;
+  expect(
+    (await fetch(saved, { headers: { Authorization: `Bearer ${other}` } }))
+      .status,
+  ).toBe(401);
+  // Without a work tree the Turn left nothing: the previous work stays.
+  expect((await fetch(saved, control)).status).toBe(204);
+});
+
+test("has no saved work for a job that does not carry work over", async (t) => {
+  const origin = await listen(t);
+  const job = diagnosticJob(Date.now() + 10_000);
+  delete job.diagnostics;
+  expect((await sendJob(origin, job)).status).toBe(202);
+  expect(
+    (await fetch(`${origin}/job/${job.runId}/continuity`, control)).status,
+  ).toBe(404);
 });

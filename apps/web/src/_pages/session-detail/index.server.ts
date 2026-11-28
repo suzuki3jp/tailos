@@ -1,10 +1,8 @@
 import { QueryClient, dehydrate } from "@tanstack/react-query";
 import { createServerApi } from "@/shared/api/index.server";
-import {
-  projectSessionQueryOptions,
-  projectSessionsQueryOptions,
-  sessionErrorStatus,
-} from "./api/queries";
+import { accountProfileQueryOptions } from "@/entities/account";
+import { accountSessionsQueryOptions } from "@/entities/session";
+import { projectSessionQueryOptions, sessionErrorStatus } from "./api/queries";
 
 export async function prefetchProjectSession(
   cookie: string,
@@ -17,10 +15,12 @@ export async function prefetchProjectSession(
   try {
     const api = createServerApi(cookie);
     await Promise.all([
+      cache.prefetchQuery(accountProfileQueryOptions(api)),
       cache.prefetchQuery(
         projectSessionQueryOptions(projectId, sessionId, api),
       ),
-      cache.prefetchInfiniteQuery(projectSessionsQueryOptions(projectId, api)),
+      // The sidebar's Recent Sessions.
+      cache.prefetchInfiniteQuery(accountSessionsQueryOptions(api)),
     ]);
     const state = dehydrate(cache, {
       shouldDehydrateQuery: (query) => query.state.status !== "pending",

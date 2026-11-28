@@ -178,7 +178,8 @@ test("scopes project session pages by owner and project, including histories of 
 
   const detail = await send("/first");
   expect(detail.headers.get("Cache-Control")).toBe("private, no-store");
-  expect(await detail.json()).toMatchObject({
+  const payload = await detail.json();
+  expect(payload).toMatchObject({
     projectName: null,
     detail: {
       messages: [{ body: "Prompt" }],
@@ -186,9 +187,44 @@ test("scopes project session pages by owner and project, including histories of 
         {
           id: "run",
           startMessageId: "prompt",
+          engine: null,
           agentDurationMs: 752_000,
         },
       ],
     },
   });
+  expect(JSON.stringify(payload)).not.toContain('"jobContext"');
+
+  const contentHash = "a".repeat(64);
+  await db
+    .prepare("UPDATE runs SET execution_context = ? WHERE id = 'run'")
+    .bind(
+      JSON.stringify({
+        version: 1,
+        engine: "codex",
+        connectionId: "codex/10000000-0000-0000-0000-000000000001",
+        repository: {
+          repository: "owner/repo",
+          repositoryId: 1,
+          installationId: 2,
+          defaultBranch: "main",
+        },
+        trigger: {
+          kind: "github.issue-label",
+          label: "start",
+          issueNumber: 166,
+          issueContentHash: contentHash,
+        },
+      }),
+    )
+    .run();
+  const triggered = await (await send("/first")).json();
+  expect(triggered).toMatchObject({
+    detail: {
+      messages: [
+        { jobContext: { github: { kind: "issue", number: 166, contentHash } } },
+      ],
+    },
+  });
+  expect(JSON.stringify(triggered)).not.toContain('"executionContext"');
 });

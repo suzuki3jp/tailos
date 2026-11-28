@@ -1,19 +1,15 @@
+import { projectsQueryOptions } from "@/features/select-project";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
-import {
-  homeProjectsQueryOptions,
-  homeSessionsQueryOptions,
-} from "../api/queries";
-import { ProjectSelectionProvider } from "./project-selection";
+import { accountSessionsQueryOptions } from "@/entities/session";
+import { ProjectSelectionProvider } from "@/features/select-project";
 import { ProjectStatus } from "./project-status";
 import { SessionList } from "./session-list";
 
 vi.mock("next/link", () => ({
-  default: ({ children, ...props }: ComponentProps<"a">) => (
-    <a {...props}>{children}</a>
-  ),
+  default: (props: ComponentProps<"a">) => createElement("a", props),
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -30,7 +26,7 @@ test("renders only the first five sessions and retains the full response in cach
   const http = vi.fn<typeof fetch>(async () => Response.json(page));
   vi.stubGlobal("fetch", http);
   const client = new QueryClient();
-  const options = homeSessionsQueryOptions();
+  const options = accountSessionsQueryOptions();
   try {
     await client.fetchInfiniteQuery(options);
     const html = renderToStaticMarkup(
@@ -78,8 +74,8 @@ test.each([
     });
     try {
       await Promise.all([
-        client.prefetchQuery(homeProjectsQueryOptions()),
-        client.prefetchInfiniteQuery(homeSessionsQueryOptions()),
+        client.prefetchQuery(projectsQueryOptions()),
+        client.prefetchInfiniteQuery(accountSessionsQueryOptions()),
       ]);
       const html = renderToStaticMarkup(
         <QueryClientProvider client={client}>

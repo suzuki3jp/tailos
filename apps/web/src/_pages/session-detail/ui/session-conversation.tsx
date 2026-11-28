@@ -1,6 +1,10 @@
 import { Fragment } from "react";
+import { agentEngineLabels } from "@tailos/core/models";
 import type { TimelineSnapshot } from "@tailos/core/timeline";
 import type { ProjectSession } from "../api/queries";
+import { runEngine } from "../model/agent-engine";
+import { MessageJobContext } from "./message-job-context";
+import { MessageMarkdown } from "./message-markdown";
 import { RunActivity } from "./run-activity";
 
 const authorLabels = {
@@ -52,11 +56,17 @@ export function SessionConversation({
                   className={
                     agent
                       ? "space-y-3 p-4.5"
-                      : "max-w-[90%] rounded-[18px] bg-message p-4.5"
+                      : "min-w-0 max-w-[90%] rounded-[18px] bg-message p-4.5"
                   }
                 >
                   <span className="sr-only">
-                    {authorLabels[message.authorKind]}
+                    {(() => {
+                      // A reply is named after the Model Provider of its Run.
+                      const engine = runEngine(replyRun?.engine);
+                      return engine
+                        ? agentEngineLabels[engine]
+                        : authorLabels[message.authorKind];
+                    })()}
                   </span>
                   {replyRun && (
                     <RunActivity
@@ -71,9 +81,8 @@ export function SessionConversation({
                       projectId={projectId}
                     />
                   )}
-                  <p className="whitespace-pre-wrap wrap-anywhere leading-relaxed">
-                    {message.body}
-                  </p>
+                  <MessageMarkdown body={message.body} bubble={!agent} />
+                  <MessageJobContext context={message.jobContext} />
                 </div>
               </li>
               {pendingRun && (

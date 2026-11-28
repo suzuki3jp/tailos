@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import type { InferResponseType } from "hono/client";
 import { api } from "@/shared/api";
 
@@ -61,27 +61,6 @@ export function projectSessionQueryOptions(
     // Business-state transitions arrive through the Session stream. Reconnect
     // and focus still reconcile via the HTTP snapshot.
     refetchInterval: false,
-  });
-}
-
-export function projectSessionsQueryOptions(projectId: string, client = api) {
-  return infiniteQueryOptions({
-    queryKey: ["projects", projectId, "sessions"],
-    refetchOnMount: false,
-    retryOnMount: false,
-    initialPageParam: "",
-    queryFn: async ({ signal, pageParam }) => {
-      const response = await client.projects[":projectId"].sessions.$get(
-        {
-          param: { projectId: encodeURIComponent(projectId) },
-          query: pageParam ? { cursor: pageParam } : {},
-        },
-        { init: { signal } },
-      );
-      if (!response.ok) throw new SessionRequestError(response.status);
-      return response.json();
-    },
-    getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
 }
 

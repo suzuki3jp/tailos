@@ -1,18 +1,17 @@
 import { expect, test } from "vitest";
-import * as v from "valibot";
-import { ExecutionContext } from "@tailos/core/runner";
 import { createTestDb } from "./testing.ts";
 import { d1Projects } from "./projects.ts";
 import { ProjectConflict } from "@/application/projects/store.ts";
 import { admitTrigger } from "./trigger-admission.ts";
 import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
+import { d1Routines } from "./routines.ts";
+import { planningPrompt } from "@/application/routines/routines.ts";
 
 const settings = {
   name: "Tailos",
   repository: "owner/repo",
   repositoryId: 42,
   installationId: 19,
-  allowedActors: ["operator"],
   maxRunMinutes: 30,
 };
 
@@ -122,6 +121,7 @@ test("imports UUID mappings and session references once, preserving run snapshot
     ...settings,
     name: settings.repository,
     id: crypto.randomUUID(),
+    allowedActors: ["operator"],
   };
   await db
     .prepare(
@@ -234,213 +234,28 @@ test("new trigger admission checks the project revision and deletion in its tran
   expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(1);
 });
 
-test("UUID import moves planning scopes atomically and preserves the existing conversation", async (t) => {
-  const { acceptPlanningInput, dispatchPlanningInputs } =
-    await import("./planning.ts");
+test("import gives each Project a plan Routine for the users who could start plans", async (t) => {
   const db = await createTestDb(t);
   const store = d1Projects(db);
-  const input = {
-    ownerId: "operator",
-    projectId: "meguri",
-    repositoryId: 42,
-    issueNumber: 3,
-    commentId: 100,
-    actor: "operator",
-    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
-    body: "@tailos plan",
-    deliveryId: "legacy-plan",
-    start: true,
-    executionContext: JSON.stringify({
-      version: 1,
-      engine: "codex",
-      mode: "plan",
-      connectionId: `codex/${crypto.randomUUID()}`,
-      repository: {
-        repository: settings.repository,
-        repositoryId: 42,
-        installationId: 19,
-        agentNetworkAccess: false,
-        issueNumber: 3,
-        defaultBranch: "main",
-      },
-    }),
-    timeoutMs: 60_000,
-  };
-  const receipt = await acceptPlanningInput(db, input);
-  expect(await dispatchPlanningInputs(db)).toEqual([]);
   const project = {
     ...settings,
     name: settings.repository,
     id: crypto.randomUUID(),
+    allowedActors: ["planner"],
   };
-  await db
-    .prepare(
-      "CREATE TRIGGER reject_scope BEFORE UPDATE ON planning_inbox BEGIN SELECT RAISE(ABORT, 'scope failure'); END",
-    )
-    .run();
-  await expect(store.import([project], ["meguri"], "operator")).rejects.toThrow(
-    /scope failure/,
-  );
-  expect(await store.list()).toEqual([]);
-  expect(
-    await db
-      .prepare("SELECT project_id FROM sessions WHERE id = ?")
-      .bind(receipt.sessionId)
-      .first("project_id"),
-  ).toBe("meguri");
-  await db.prepare("DROP TRIGGER reject_scope").run();
   await store.import([project], ["meguri"], "operator");
-  const scope = JSON.stringify(["operator", project.id, 42, 3]);
-  expect(
-    await db.prepare("SELECT scope FROM planning_issues").first("scope"),
-  ).toBe(scope);
-  expect(
-    await db.prepare("SELECT scope FROM planning_inbox").first("scope"),
-  ).toBe(scope);
-  expect((await db.prepare("PRAGMA foreign_key_check").all()).results).toEqual(
-    [],
-  );
-  expect(
-    await acceptPlanningInput(db, {
-      ...input,
-      projectId: project.id,
-      projectRevision: 1,
+  const [stored] = await store.list();
+  expect(stored.project).not.toHaveProperty("allowedActors");
+  const routines = await d1Routines(db).list("operator", project.id);
+  expect(routines).toEqual([
+    expect.objectContaining({
+      name: "Issue planning",
+      enabled: true,
+      trigger: { version: 1, type: "github.issue-comment", command: "plan" },
+      allowedActors: ["planner"],
+      prompt: planningPrompt,
     }),
-  ).toEqual(receipt);
-  await store.update(
-    project.id,
-    1,
-    { ...settings, maxRunMinutes: 2 },
-    "operator",
-  );
-  const [runId] = await dispatchPlanningInputs(db);
-  expect(runId).toBeTruthy();
-  const run = await db
-    .prepare(
-      "SELECT execution_context, deadline_at, created_at FROM runs WHERE id = ?",
-    )
-    .bind(runId)
-    .first<{
-      execution_context: string;
-      deadline_at: number;
-      created_at: number;
-    }>();
-  const context = v.parse(ExecutionContext, JSON.parse(run!.execution_context));
-  expect(JSON.parse(run!.execution_context).repository).not.toHaveProperty(
-    "agentNetworkAccess",
-  );
-  expect(context.engine === "codex" && context.repository).toBeTruthy();
-  expect(run!.deadline_at - run!.created_at).toBe(120_000);
-  await acceptPlanningInput(db, {
-    ...input,
-    projectId: project.id,
-    projectRevision: 2,
-    deliveryId: "follow-up",
-    commentId: 101,
-  });
-  await store.remove(project.id, 2, "operator");
-  await db
-    .prepare("UPDATE runs SET status = 'failed' WHERE id = ?")
-    .bind(runId)
-    .run();
-  expect(await dispatchPlanningInputs(db)).toEqual([]);
-  expect(await db.prepare("SELECT count(*) AS n FROM runs").first("n")).toBe(1);
-  expect(
-    await db
-      .prepare(
-        "SELECT count(*) AS n FROM planning_inbox WHERE state = 'pending'",
-      )
-      .first("n"),
-  ).toBe(1);
-});
-
-test("planning admission rejects a stale or deleted project without accepting another comment", async (t) => {
-  const { acceptPlanningInput } = await import("./planning.ts");
-  const db = await createTestDb(t);
-  const store = d1Projects(db);
-  const configured = await store.create(settings, "operator");
-  const input = {
-    ownerId: "operator",
-    projectId: configured.project.id,
-    projectRevision: 1,
-    repositoryId: 42,
-    issueNumber: 3,
-    commentId: 100,
-    actor: "operator",
-    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
-    body: "@tailos plan",
-    deliveryId: "plan",
-    start: true,
-    executionContext: "{}",
-    timeoutMs: 60_000,
-  };
-  await store.update(configured.project.id, 1, settings, "operator");
-  await expect(acceptPlanningInput(db, input)).rejects.toBeInstanceOf(
-    ProjectChanged,
-  );
-  expect(
-    await db.prepare("SELECT count(*) AS n FROM sessions").first("n"),
-  ).toBe(0);
-  await acceptPlanningInput(db, { ...input, projectRevision: 2 });
-  await store.remove(configured.project.id, 2, "operator");
-  await expect(
-    acceptPlanningInput(db, {
-      ...input,
-      projectRevision: 2,
-      commentId: 101,
-      deliveryId: "new",
-    }),
-  ).rejects.toBeInstanceOf(ProjectChanged);
-  expect(
-    await db.prepare("SELECT count(*) AS n FROM planning_inbox").first("n"),
-  ).toBe(1);
-});
-
-test("owner and planning scope mismatches remain distinct from project revision conflicts", async (t) => {
-  const { acceptPlanningInput } = await import("./planning.ts");
-  const db = await createTestDb(t);
-  const store = d1Projects(db);
-  const configured = await store.create(settings, "operator");
-  const trigger = {
-    source: "test",
-    ownerId: "operator",
-    projectId: configured.project.id,
-    projectRevision: 1,
-    idempotencyKey: "delivery",
-    concurrencyKey: "target",
-    prompt: "request",
-    executionContext: "{}",
-    timeoutMs: 60_000,
-  };
-  await admitTrigger(db, trigger);
-  await expect(
-    admitTrigger(db, { ...trigger, ownerId: "other" }),
-  ).rejects.toThrow("original owner");
-  await expect(
-    admitTrigger(db, { ...trigger, ownerId: "other" }),
-  ).rejects.not.toBeInstanceOf(ProjectChanged);
-  const planning = {
-    ownerId: "operator",
-    projectId: configured.project.id,
-    projectRevision: 1,
-    repositoryId: 42,
-    issueNumber: 3,
-    commentId: 100,
-    actor: "operator",
-    url: "https://github.com/owner/repo/issues/3#issuecomment-100",
-    body: "@tailos plan",
-    deliveryId: "planning",
-    start: true,
-    executionContext: "{}",
-    timeoutMs: 60_000,
-  };
-  await acceptPlanningInput(db, planning);
-  await expect(
-    acceptPlanningInput(db, { ...planning, ownerId: "other" }),
-  ).rejects.toThrow("original scope");
-  await expect(
-    acceptPlanningInput(db, { ...planning, ownerId: "other" }),
-  ).rejects.not.toBeInstanceOf(ProjectChanged);
+  ]);
 });
 
 test("stored projects and history that still carry the removed network setting stay readable", async (t) => {

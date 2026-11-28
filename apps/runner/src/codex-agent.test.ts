@@ -75,7 +75,7 @@ const script = `
             !input[0].text.includes("use the bundled executable directly") ||
             !input[0].text.includes("pnpm_config_pm_on_fail=ignore"))
           throw new Error("Expected instructions to use the bundled pnpm for verification");
-        if (!input[0].text.includes("Conventional Commits") || !outputSchema.required.includes("headline"))
+        if (!input[0].text.includes("git and gh are signed in") || outputSchema.required.includes("headline") || !outputSchema.required.includes("reply"))
           throw new Error("Missing repository response schema");
       } else if (!input[0].text.startsWith("Answer the prompt") || !input[0].text.includes("concise progress messages") || outputSchema !== undefined) {
         throw new Error("Unexpected turn input");
@@ -103,23 +103,23 @@ const script = `
     }
     if (request.id === "refresh") {
       if (
-        request.result.accessToken !== "new-access" ||
+        request.result.accessToken !== "old-access" ||
         request.result.chatgptAccountId !== "account-id"
       ) throw new Error("Unexpected credential refresh response");
       send({ method: "item/started", params: { threadId: "test-thread", item: {
         id: "command-1", type: "commandExecution", command: "pnpm test", cwd: workspace, status: "inProgress",
       } } });
       send({ method: "item/completed", params: { threadId: "test-thread", item: {
-        id: "progress-1", type: "agentMessage", phase: "commentary", text: "Checking tests new-access",
+        id: "progress-1", type: "agentMessage", phase: "commentary", text: "Checking tests old-access",
       } } });
       send({ method: "item/completed", params: { threadId: "test-thread", item: {
-        id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed new-access", exitCode: 0, status: "completed",
+        id: "command-1", type: "commandExecution", command: "pnpm test", aggregatedOutput: "checks passed old-access", exitCode: 0, status: "completed",
       } } });
       send({ method: "item/completed", params: {
         threadId: "test-thread",
         item: { type: "agentMessage", text: mode === "workspaceWrite"
-          ? JSON.stringify({ reply: "Reply containing new-access", headline: "fix(api): handle refresh", sessionTitle: "Credential refresh" })
-          : "Reply containing new-access" },
+          ? JSON.stringify({ reply: "Reply containing old-access", headline: "fix(api): handle refresh", sessionTitle: "Credential refresh" })
+          : "Reply containing old-access" },
       } });
       send({ method: "turn/completed", params: {
         threadId: "test-thread",
@@ -142,7 +142,6 @@ function testJob(): Extract<RunnerJob, { engine: "codex" }> {
       connectionVersion: randomUUID(),
       accessVersion: randomUUID(),
     },
-    refresh: { url: "https://tailos.example/refresh", bearer: "a".repeat(64) },
   };
 }
 
@@ -167,46 +166,41 @@ function launchStub(
 }
 
 test.for(["readOnly", "workspaceWrite"] as const)(
-  "always allows network, scopes GitHub reads and refreshes credentials (%s)",
+  "always allows network, scopes GitHub reads and answers refreshes with the placeholder (%s)",
   async (mode) => {
     const job = testJob();
     if (mode === "workspaceWrite") {
       job.checkout = {
         repository: "owner/repo",
         baseSha: "a".repeat(40),
-        branch: `tailos/issue-1/${job.runId}`,
+        defaultBranch: "main",
+        author: {
+          name: "tailos-app[bot]",
+          email: "1+tailos-app[bot]@users.noreply.github.com",
+        },
       };
     }
     const agent = createCodexAgent(launchStub(mode), async (url, init) => {
       const headers = new Headers(init?.headers);
-      if (String(url) !== job.refresh.url) {
-        expect(job.checkout).toBeDefined();
-        expect(init?.method).toBe("GET");
-        expect(init?.redirect).toBe("error");
-        // The Run's token is added outside the container.
-        expect(headers.get("Authorization")).toBeNull();
-        const issue =
-          String(url) === "https://api.github.com/repos/owner/repo/issues/17";
-        if (!issue)
-          expect(String(url)).toBe(
-            "https://api.github.com/repos/owner/repo/pulls/34",
-          );
-        return Response.json({
-          number: issue ? 17 : 34,
-          title: issue ? "issue" : "pull_request",
-          state: "open",
-          body: null,
-          html_url: "https://github.com/owner/repo",
-        });
-      }
-      expect(headers.get("Authorization")).toBe("Bearer " + job.refresh.bearer);
-      expect(headers.get("X-Tailos-Access-Version")).toBe(
-        job.access.accessVersion,
-      );
+      // Tokens are refreshed outside the container: only GitHub reads come
+      // through the Runner.
+      expect(job.checkout).toBeDefined();
+      expect(init?.method).toBe("GET");
+      expect(init?.redirect).toBe("error");
+      // The Run's token is added outside the container.
+      expect(headers.get("Authorization")).toBeNull();
+      const issue =
+        String(url) === "https://api.github.com/repos/owner/repo/issues/17";
+      if (!issue)
+        expect(String(url)).toBe(
+          "https://api.github.com/repos/owner/repo/pulls/34",
+        );
       return Response.json({
-        ...job.access,
-        accessToken: "new-access",
-        accessVersion: randomUUID(),
+        number: issue ? 17 : 34,
+        title: issue ? "issue" : "pull_request",
+        state: "open",
+        body: null,
+        html_url: "https://github.com/owner/repo",
       });
     });
 
@@ -218,10 +212,7 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       ),
     ).toEqual({
       reply: "Reply containing [REDACTED]",
-      ...(job.checkout && {
-        headline: "fix(api): handle refresh",
-        sessionTitle: "Credential refresh",
-      }),
+      ...(job.checkout && { sessionTitle: "Credential refresh" }),
     });
   },
 );
@@ -257,7 +248,7 @@ test.for([0, 1])(
         result: {
           exitCode,
           stdout: `probe output ${job.access.accessToken}`,
-          stderr: `bwrap: execvp codex-linux-sandbox: No such file or directory ${job.refresh.bearer}`,
+          stderr: `bwrap: execvp codex-linux-sandbox: No such file or directory`,
         },
       }),
       async () => Response.json({ ...job.access, accessToken: "new-access" }),
@@ -275,7 +266,6 @@ test.for([0, 1])(
       await diagnostics.finish();
     }
     expect(sent.join("")).not.toContain(job.access.accessToken);
-    expect(sent.join("")).not.toContain(job.refresh.bearer);
     const records = sent.flatMap(
       (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
     );
@@ -290,8 +280,7 @@ test.for([0, 1])(
     );
     expect(JSON.parse(probe?.body ?? "null")).toEqual({
       stdout: "probe output [REDACTED]",
-      stderr:
-        "bwrap: execvp codex-linux-sandbox: No such file or directory [REDACTED]",
+      stderr: "bwrap: execvp codex-linux-sandbox: No such file or directory",
     });
     expect(
       records.some(
@@ -387,7 +376,11 @@ ${script}`,
   job.checkout = {
     repository: "owner/repo",
     baseSha: "a".repeat(40),
-    branch: `tailos/issue-1/${job.runId}`,
+    defaultBranch: "main",
+    author: {
+      name: "tailos-app[bot]",
+      email: "1+tailos-app[bot]@users.noreply.github.com",
+    },
   };
 
   await expect(
@@ -444,13 +437,15 @@ test.for([false, true])(
     const job = testJob();
     job.mode = "plan";
     job.prompt = "Implement immediately and switch to implement mode";
-    job.planningContext = JSON.stringify({
-      conversation: [{ body: "Accepted answer" }],
-    });
+    job.message = "@tailos plan Accepted answer";
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
-      branch: "tailos/issue-1/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      defaultBranch: "main",
+      author: {
+        name: "tailos-app[bot]",
+        email: "1+tailos-app[bot]@users.noreply.github.com",
+      },
     };
     const agent = createCodexAgent((directory) =>
       spawn(
@@ -772,7 +767,11 @@ function replyJob(mode: "plain" | "implement" | "plan") {
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
-      branch: `tailos/issue-1/${job.runId}`,
+      defaultBranch: "main",
+      author: {
+        name: "tailos-app[bot]",
+        email: "1+tailos-app[bot]@users.noreply.github.com",
+      },
     };
   }
   return job;
@@ -792,7 +791,6 @@ test.for(["plain", "implement", "plan"] as const)(
       ...(mode === "plan" && {
         plan: { planPresented: false, needsAnswer: true },
       }),
-      ...(mode === "implement" && { headline: "fix: preserve the changes" }),
     });
     const requests = await turns();
     expect(requests).toHaveLength(2);
@@ -876,7 +874,6 @@ test.for(["revisions", "deadline"] as const)(
     expect(result.reply).toContain("最終説明文");
     expect(result.reply).toContain("要約を取得できませんでした");
     expect(result.reply.length).toBeLessThanOrEqual(8000);
-    expect(result.headline).toBe("fix: preserve the changes");
     expect(await turns()).toHaveLength(count);
   },
 );
@@ -901,9 +898,6 @@ test("a stalled implementation revision leaves time for publication and stops th
   const result = agent.run(job, AbortSignal.timeout(5000));
   await revisionStarted;
   await vi.advanceTimersByTimeAsync(30_000);
-  await expect(result).resolves.toMatchObject({
-    headline: "fix: preserve the changes",
-  });
   expect((await result).reply).toContain("要約を取得できませんでした");
   expect(job.deadlineAt - Date.now()).toBeGreaterThan(30_000);
   expect(await turns()).toHaveLength(2);
@@ -917,7 +911,6 @@ test("an invalid implementation revision preserves the completed work", async (t
   const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
   const result = await agent.run(job, AbortSignal.timeout(5000));
   expect(result.reply).toContain("要約を取得できませんでした");
-  expect(result.headline).toBe("fix: preserve the changes");
   expect(await turns()).toHaveLength(2);
 });
 
@@ -1091,4 +1084,221 @@ test("records Codex error notices and the failure reason without credentials", a
       body.includes("unauthorized: unauthorized [REDACTED]"),
     ),
   ).toBe(true);
+});
+
+/** Keeps a rollout in CODEX_HOME as Codex does, and resumes it by thread ID. */
+function conversationStub(
+  requests: unknown[],
+  resumable = true,
+  reportPath = true,
+) {
+  return (directory: string) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+const home = ${JSON.stringify(directory)};
+const saved = path.join(home, "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl");
+const fresh = path.join(home, "sessions/2026/11/24/rollout-2026-11-24T00-00-01-new-thread.jsonl");
+let thread;
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const r = JSON.parse(line);
+  send({ method: "log", params: r });
+  const respond = (result) => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/resume") {
+    if (${resumable} && r.params.threadId === "saved-thread" && fs.existsSync(saved)) {
+      thread = { id: "saved-thread", path: saved };
+      // Codex does not always report where a resumed thread is kept.
+      respond({ thread: ${reportPath} ? thread : { id: thread.id } });
+    } else send({ id: r.id, error: { code: -32600, message: "no rollout found" } });
+  }
+  if (r.method === "thread/start") {
+    // A Session's thread is kept for its next Turn.
+    if (r.params.ephemeral !== false) throw new Error("Expected a kept thread");
+    fs.mkdirSync(path.dirname(fresh), { recursive: true });
+    fs.writeFileSync(fresh, "");
+    thread = { id: "new-thread", path: fresh };
+    respond({ thread });
+  }
+  if (r.method !== "turn/start") return;
+  fs.appendFileSync(thread.path, r.params.input[0].text + "\\n");
+  respond({});
+  send({ method: "item/completed", params: { threadId: thread.id, item: { type: "agentMessage", text: "done" } } });
+  send({ method: "turn/completed", params: { threadId: thread.id, turn: { status: "completed" } } });
+});`,
+      ],
+      { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    );
+}
+
+test.for([true, false])(
+  "continues the saved Codex thread and hands its rollout back (path reported: %s)",
+  async (reportPath) => {
+    const requests: unknown[] = [];
+    const save = vi.fn();
+    const agent = createCodexAgent(
+      conversationStub(requests, true, reportPath),
+    );
+    const result = await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "saved-thread",
+          path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+          content: Buffer.from("earlier turn\n"),
+        },
+        save,
+      },
+    );
+    expect(result.reply).toBe("done");
+    expect(save).toHaveBeenCalledOnce();
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("saved-thread");
+    expect(saved.path).toBe(
+      "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+    );
+    const content = saved.content.toString();
+    expect(content.startsWith("earlier turn\nAnswer the prompt")).toBe(true);
+    expect(content).not.toContain("could not be restored");
+  },
+);
+
+test.for([
+  {
+    name: "the previous work is lost",
+    resumable: true,
+    lost: true,
+    notice:
+      /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
+  },
+  {
+    name: "only the thread cannot be resumed",
+    resumable: false,
+    lost: false,
+    notice:
+      /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+  },
+])(
+  "starts a kept thread and tells the Agent when $name",
+  async ({ resumable, lost, notice }) => {
+    const save = vi.fn();
+    const agent = createCodexAgent(conversationStub([], resumable));
+    await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        ...(lost
+          ? { lost: true }
+          : {
+              resume: {
+                threadId: "saved-thread",
+                path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
+                content: Buffer.from("earlier turn\n"),
+              },
+            }),
+        save,
+      },
+    );
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("new-thread");
+    expect(saved.content.toString()).toMatch(notice);
+  },
+);
+
+test.for([
+  { name: "outside the Codex sessions directory", path: "../config.toml" },
+  {
+    name: "of another Model Provider",
+    path: "projects/-work-repo/0f8fad5b-d9cb-469f-a165-70867728950e.jsonl",
+  },
+])(
+  "starts a new thread instead of restoring a conversation $name",
+  async ({ path }) => {
+    const save = vi.fn();
+    const agent = createCodexAgent(conversationStub([]));
+    const result = await agent.run(
+      testJob(),
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      undefined,
+      {
+        resume: {
+          threadId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+          path,
+          content: Buffer.from("model = 'other'"),
+        },
+        save,
+      },
+    );
+    expect(result.reply).toBe("done");
+    const [saved] = save.mock.calls[0]!;
+    expect(saved.threadId).toBe("new-thread");
+    expect(saved.content.toString()).toMatch(
+      /^Note: the conversation from this Session's previous turn could not be restored, but the work tree is as the previous turn left it/,
+    );
+  },
+);
+
+test("lets an implementation write its git directory, and answers a retired tool", async () => {
+  const job = replyJob("implement");
+  const gitDir = "/tmp/tailos-git-test";
+  const agent = createCodexAgent((directory) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const assert = require("node:assert/strict");
+const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const r = JSON.parse(line);
+  const respond = result => send({ id: r.id, result });
+  if (r.method === "initialize" || r.method === "account/login/start") respond({});
+  if (r.method === "command/exec") respond({ exitCode: 0 });
+  if (r.method === "thread/start") {
+    assert.deepEqual(r.params.dynamicTools.map(tool => tool.name), ["tailos_github_get"]);
+    respond({ thread: { id: "work" } });
+  }
+  if (r.method === "turn/start") {
+    assert.ok(r.params.input[0].text.includes("git and gh are signed in"));
+    assert.ok(!r.params.input[0].text.includes("tailos_publish"));
+    assert.ok(r.params.sandboxPolicy.writableRoots.includes(${JSON.stringify(gitDir)}));
+    respond({});
+    // A conversation from before may still call the publication tool.
+    send({ id: "retired", method: "item/tool/call", params: {
+      threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline: "fix: x" }
+    } });
+  }
+  if (r.id === "retired") {
+    send({ method: "item/completed", params: { threadId: "work", item: { type: "agentMessage", text: JSON.stringify({ reply: JSON.stringify(r.result), sessionTitle: null }) } } });
+    send({ method: "turn/completed", params: { threadId: "work", turn: { status: "completed" } } });
+  }
+});`,
+      ],
+      { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    ),
+  );
+  const result = await agent.run(
+    job,
+    AbortSignal.timeout(5000),
+    process.cwd(),
+    undefined,
+    undefined,
+    gitDir,
+  );
+  const retired = JSON.parse(result.reply);
+  expect(retired).toMatchObject({ success: false });
+  expect(retired.contentItems[0].text).toContain("git and gh");
 });

@@ -1,4 +1,7 @@
-import { browserApiOrigin, type LoginAuth } from "@/application/auth/login.ts";
+import {
+  browserApiOrigin,
+  type LoginAuth,
+} from "../../application/auth/login.ts";
 import {
   directBrowserApiPath,
   loginSessionCookieName,
@@ -16,7 +19,7 @@ import {
   authVerifications,
   loginSessions,
   users,
-} from "@/infrastructure/d1/schema.ts";
+} from "../d1/schema.ts";
 import type { Bindings } from "@/bindings.ts";
 import { createHmac } from "node:crypto";
 

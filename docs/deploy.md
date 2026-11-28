@@ -125,7 +125,7 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 Issue 起点の Run では、Agent が対象リポジトリの指示と CI 設定を参照し、作業ディレクトリで適用できる整形・lint・テストなどを実行する。実行結果と、実行できなかった検証の理由を返答に記載する。Runner イメージには Tailos 自体を検証するための pnpm・oxfmt・oxlint を組み込む。公開には GitHub App の Contents と Pull requests の書き込み権限を使う。現在の公開経路は通常ファイルの追加・更新・削除に対応し、実行ビットの変更やシンボリックリンクの追加など GitHub のファイル変更 API で表現できない差分は Run を失敗させる。公開リクエストの上限は 4 MiB。
 
-Codex の Run は `standard-3`（8 GiB、2 vCPU）で起動する。Run のコンテナはエンジンに関係なく外部通信を有効にして起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
+Codex・Claude の Run は `standard-3`（8 GiB、2 vCPU）で起動する。Run のコンテナはエンジンに関係なく外部通信を有効にして起動する。oxlint の JS プラグインは大きなメモリ領域を確保するため、Tailos の `pnpm lint` は 1 スレッドに固定し、従来の `standard-1`（4 GiB、1/2 vCPU）よりメモリの余裕を持たせる。リソース増加により Run ごとの利用料金も増える。固定応答の Run とヘルスチェックは `lite` のまま。Linux のメモリ割り当て設定にも依存するため、デプロイ後は新規 Run で lint の成功を確認する。背景は [oxlint の既知のメモリ確保問題](https://github.com/oxc-project/oxc/issues/20331) を参照。
 
 チェックアウトを伴う Run では、ホーム・一時領域・キャッシュ・pnpm のロック用領域・ユーザー用ツールの配置先を Run ごとに作成し、作業ディレクトリと合わせて書き込みを許可する。これらの環境変数はサンドボックス内のコマンドに渡し、app-server 自身は Agent のホームや一時領域を使用しない。領域は Codex の認証用ディレクトリと分け、Run 終了時に削除する。
 
@@ -136,7 +136,7 @@ Agent のコマンドは常に外部と通信できる。通信を許可する�
 - リポジトリのある Run では、`github.com` と `api.github.com` への HTTPS を Worker（`GitHubEgress`）が受け、Run 用のトークンを付けて GitHub に転送する。コンテナ内の gh にはダミーのトークンだけを置き、横取り用の CA を gh・git・Node が信頼するよう Runner の起動時に設定する。
 - Run 用のトークンは対象リポジトリに限定し、GitHub App の権限をすべて持つ。Agent は gh や git で、対象リポジトリの Issue・PR へのコメント、ラベル変更、既定ブランチ以外への push、PR 作成などを行える。既定ブランチは下記の ruleset で守る。
 - Agent の作業が終わった時点で差し込みを止め、その後に API が署名付きコミットと PR を作る。
-- Codex・Claude の認証情報は、まだコンテナ内の Runner が持つ。
+- Codex・Claude のモデル API の認証情報もコンテナに置かない。`chatgpt.com` と `api.anthropic.com` への HTTPS を Worker（`ModelEgress`）が受け、その時点の Run の Provider の接続の認証情報を、モデル API のパスにだけ差し込む。
 - Claude Code のコマンドは、Runner 内の転送プロキシを経由して HTTP(S) で外部に出る。このプロキシはコンテナ内・内部ネットワークのアドレスを拒否する。
 - Runner の制御用 HTTP サーバーは、Run の制御側がジョブと一緒に渡した鍵がないと、状態の取得とジョブの再送を受け付けない。
 
@@ -159,10 +159,10 @@ Codex に渡す出力スキーマには文字列の長さ制約を付けず、�
 
 ### Issue 内で計画を相談する
 
-GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、PROJECTS の repository ID・installation ID・allowedActors の設定も必要。
+GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。
 
-許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。タイトル・本文を使った計画または質問が返るので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で再調査する。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は引き続き `tailos:run` ラベルから開始し、コメントでは起動しない。
+許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。plan Routine の Session で Agent が計画または質問を Issue にコメントするので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で続ける。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は label の Routine から開始し、コメントでは起動しない。
 
-新 migration は planning_issues / planning_inbox / planning_deliveries / planning_snapshots / planning_replies と終了時の SQL trigger を追加する。Run の状態画像と計画本文は別コメントに投稿する。Session の閲覧は従来どおり運用者だけに許可するが、返信本文は Issue の閲覧者に公開される。
+アプリは Turn ごとの状態画像だけを投稿し、計画の本文は Agent が gh で投稿する。Session の閲覧は従来どおり運用者だけに許可するが、Agent の返信は Issue の閲覧者に公開される。マイグレーション 0013 は、進行中の Run と未送信の planning_replies がない状態で適用する。 マイグレーション 0014 は、計画会話専用だった `planning_*` のテーブルを DROP する。旧計画会話の受付記録・スナップショット・返信の送信状態は消え、会話の本文は Session のメッセージに残る。
 
-受付後に停止しても、pending inbox の次 Run 作成、queued Run の起動、期限切れ通知リースの再取得を Cron が回収する。実行中の追記は捨てずに順次実行する。返信に失敗しても Agent を再実行しない。送信できない場合は planning_replies の state / attempts / error_category / next_attempt_at / lease_until と対応 Run を確認する。permission / permanent は自動再試行を停止して後続の返信を解放する。入力超過や取得失敗は Run の error_code と返信に残る。planning_snapshots から各 Run の Issue・SHA・対象入力を追える。会話全体が既存 Runner ジョブの 32 KiB 上限に収まらない場合は全文を保存したまま明示的に失敗する。
+受付後に停止しても、待っているメッセージの Turn 作成（session_inbox）、queued Run の起動、期限切れ通知リースの再取得を Cron が回収する。作業中に届いたコメントや label は捨てずに順に処理する。続ける Session がないコメントへの案内は issue_guidance に残り、送信の状態は state / attempts / error_category / next_attempt_at で確認する。ジョブの 32 KiB に収まらない長いコメントの Turn は `message_too_large` で失敗する。

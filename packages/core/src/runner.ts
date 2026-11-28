@@ -50,57 +50,6 @@ const repositoryName = v.pipe(
 );
 export const gitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40}$/));
 const branch = v.pipe(v.string(), v.minLength(1), v.maxLength(255));
-export const workBranch = v.pipe(
-  v.string(),
-  v.regex(/^tailos\/(?:issue-[1-9][0-9]*|run)\/[a-f0-9-]{36}$/),
-);
-export const changeHeadline = v.pipe(
-  v.string(),
-  v.maxLength(100),
-  v.check((headline) => !/[\r\n]/.test(headline)),
-  v.regex(
-    /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([a-z0-9./_-]+\))?!?: [!-~](?:[ -~]*[!-~])?$/,
-  ),
-);
-const gitPath = v.pipe(
-  v.string(),
-  v.maxLength(4096),
-  v.check((path) =>
-    path
-      .split("/")
-      .every(
-        (part) =>
-          part !== "" &&
-          part !== "." &&
-          part !== ".." &&
-          part.toLowerCase() !== ".git" &&
-          !part.includes("\0"),
-      ),
-  ),
-);
-export const maxPublicationBytes = 4 * 1024 * 1024;
-export const FileChanges = v.strictObject({
-  additions: v.pipe(
-    v.array(
-      v.strictObject({
-        path: gitPath,
-        contents: v.pipe(
-          v.string(),
-          v.regex(
-            /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
-          ),
-        ),
-      }),
-    ),
-    v.maxLength(512),
-  ),
-  deletions: v.pipe(
-    v.array(v.strictObject({ path: gitPath })),
-    v.maxLength(512),
-  ),
-});
-export type FileChanges = v.InferOutput<typeof FileChanges>;
-
 export const RepositoryTarget = v.strictObject({
   repository: repositoryName,
   repositoryId: positiveId,
@@ -142,7 +91,7 @@ export const PlanResult = v.strictObject({
 });
 export type PlanResult = v.InferOutput<typeof PlanResult>;
 
-export const codexOptions = {
+export const agentOptions = {
   model: v.optional(v.pipe(v.string(), v.minLength(1))),
   effort: v.optional(v.pipe(v.string(), v.minLength(1))),
 };
@@ -179,6 +128,22 @@ const repositoryRun = {
   trigger: v.optional(RunTrigger),
 };
 
+/** What a Turn on a Model Provider keeps, apart from its connection. */
+const agentContext = {
+  ...agentOptions,
+  routine: v.optional(
+    v.strictObject({
+      id: v.pipe(v.string(), v.uuid()),
+      revision: positiveId,
+      projectRevision: positiveId,
+    }),
+  ),
+  // The Routine's prompt, when its message is what the user wrote.
+  instructions: v.optional(promptText),
+  mode: v.optional(ExecutionMode),
+  ...repositoryRun,
+};
+
 export const ExecutionContext = v.pipe(
   v.unknown(),
   v.transform(upgradeStoredContext),
@@ -191,30 +156,20 @@ export const ExecutionContext = v.pipe(
     v.strictObject({
       version: v.literal(1),
       engine: v.literal("codex"),
-      ...codexOptions,
-      routine: v.optional(
-        v.strictObject({
-          id: v.pipe(v.string(), v.uuid()),
-          revision: positiveId,
-          projectRevision: positiveId,
-        }),
-      ),
-      mode: v.optional(ExecutionMode),
+      ...agentContext,
       connectionId: v.pipe(
         v.string(),
         v.regex(/^codex\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
       ),
-      ...repositoryRun,
     }),
     v.strictObject({
       version: v.literal(1),
       engine: v.literal("claude"),
-      mode: v.optional(ExecutionMode),
+      ...agentContext,
       connectionId: v.pipe(
         v.string(),
         v.regex(/^claude\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
       ),
-      ...repositoryRun,
     }),
   ]),
   // A repository Run must say what started it; that decides issue handling.
@@ -227,10 +182,30 @@ export const ExecutionContext = v.pipe(
 
 export const maxRunnerJobBytes = 32 * 1024;
 
+/** A Turn's settings on a Model Provider. */
+export type AgentExecutionContext = Exclude<
+  ExecutionContext,
+  { engine: "fake" }
+>;
+
+/** The structured GitHub input sent to the Agent for a repository Run. */
+export function githubJobContext(context: ExecutionContext) {
+  if (context.engine === "fake" || !context.repository) return undefined;
+  const issue = triggerIssue(context.trigger);
+  if (!issue) return undefined;
+  return {
+    kind: "issue" as const,
+    number: issue.issueNumber,
+    ...(issue.issueContentHash && { contentHash: issue.issueContentHash }),
+  };
+}
+
 const job = {
-  planningContext: v.optional(
-    v.pipe(v.string(), v.maxLength(maxRunnerJobBytes)),
-  ),
+  /**
+   * The message this Turn answers, such as an issue comment, when the
+   * prompt holds its Routine's instructions instead.
+   */
+  message: v.optional(v.pipe(v.string(), v.maxLength(maxRunnerJobBytes))),
   mode: v.optional(ExecutionMode),
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),
@@ -259,16 +234,40 @@ const repositoryJob = {
   checkout: v.optional(
     v.strictObject({
       repository: repositoryName,
+      // The commit the Session's work started from: the first Turn checks it
+      // out on a local branch named after the default branch.
       baseSha: gitSha,
-      branch: workBranch,
+      defaultBranch: branch,
+      // Who the Agent's commits are by, unless it changes the git settings.
+      author: v.strictObject({
+        name: v.pipe(v.string(), v.regex(/^[A-Za-z0-9-]{1,100}\[bot\]$/)),
+        email: v.pipe(
+          v.string(),
+          v.regex(
+            /^[0-9]{1,20}\+[A-Za-z0-9-]{1,100}\[bot\]@users\.noreply\.github\.com$/,
+          ),
+        ),
+      }),
     }),
   ),
 };
-// Authorizes the Runner to call back into its Run's controller.
-const lease = v.strictObject({
-  url: v.pipe(v.string(), v.url()),
-  bearer: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+/** The largest saved work of a Session that the next Turn can restore. */
+export const maxContinuityBytes = 100 * 1024 * 1024;
+/**
+ * How long saving the Turn's work may take after the Agent stops, beyond the
+ * Run's own time limit.
+ */
+export const continuitySaveMs = 2 * 60_000;
+/**
+ * Carries a Session's work between its Turns. `restore` says what the previous
+ * Turn left: its saved work, which the controller uploads before the job, or
+ * nothing because saving it failed. A first Turn has no `restore`.
+ */
+export const RunnerContinuity = v.strictObject({
+  restore: v.optional(v.picklist(["saved", "lost"])),
 });
+export type RunnerContinuity = v.InferOutput<typeof RunnerContinuity>;
+
 // A pasted long-lived token: it cannot be refreshed, so it has no version.
 export const ClaudeAccess = v.strictObject({
   token: secret,
@@ -281,17 +280,18 @@ export const RunnerJob = v.variant("engine", [
     ...job,
     ...repositoryJob,
     engine: v.literal("codex"),
-    ...codexOptions,
+    ...agentOptions,
+    continuity: v.optional(RunnerContinuity),
     access: CodexAccess,
-    // Also the base URL of the publication checkpoint.
-    refresh: lease,
   }),
   v.strictObject({
     ...job,
     ...repositoryJob,
     engine: v.literal("claude"),
+    ...agentOptions,
+    continuity: v.optional(RunnerContinuity),
+    // The token is a placeholder: the model egress Worker adds the real one.
     access: ClaudeAccess,
-    lease,
   }),
 ]);
 
@@ -306,23 +306,12 @@ export const RunnerEvent = v.strictObject({
 
 const events = v.pipe(v.array(RunnerEvent), v.maxLength(20));
 
-export const RunnerPublication = v.variant("kind", [
-  v.strictObject({ kind: v.literal("no_changes") }),
-  v.strictObject({ kind: v.literal("checked") }),
-  v.strictObject({
-    kind: v.literal("pushed"),
-    branch: workBranch,
-    sha: gitSha,
-  }),
-]);
-
 export const RunnerStatus = v.variant("status", [
   v.strictObject({ status: v.literal("running") }),
   v.strictObject({
     status: v.literal("succeeded"),
     reply: replyText,
     sessionTitle: optionalSessionTitle,
-    publication: v.optional(RunnerPublication),
     plan: v.optional(PlanResult),
     events,
   }),
@@ -332,11 +321,6 @@ export const RunnerStatus = v.variant("status", [
       "agent_failed",
       "deadline_exceeded",
       "sandbox_unavailable",
-      // Accept outcomes from Runner images that ran fixed publication checks.
-      "format_check_failed",
-      "lint_failed",
-      "invalid_change_headline",
-      "unsupported_changes",
     ]),
     events,
   }),
@@ -345,23 +329,6 @@ export const RunnerStatus = v.variant("status", [
 export type RunnerJob = v.InferOutput<typeof RunnerJob>;
 export type RunnerStatus = v.InferOutput<typeof RunnerStatus>;
 
-export const checkedPublicationFields = {
-  kind: v.literal("checked"),
-  branch: workBranch,
-  baseSha: gitSha,
-  tree: gitSha,
-  headline: changeHeadline,
-  reply: replyText,
-  sessionTitle: optionalSessionTitle,
-  events,
-};
-export const CheckedPublication = v.strictObject({
-  ...checkedPublicationFields,
-  changes: FileChanges,
-});
-export type CheckedPublication = v.InferOutput<typeof CheckedPublication>;
-
 export type RunnerEvent = v.InferOutput<typeof RunnerEvent>;
 
 export type RepositoryTarget = v.InferOutput<typeof RepositoryTarget>;
-export type RunnerPublication = v.InferOutput<typeof RunnerPublication>;

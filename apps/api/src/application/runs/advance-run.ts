@@ -5,22 +5,18 @@ import {
   type RunnerStatus,
 } from "@tailos/core/runner";
 import * as v from "valibot";
-import {
-  pendingPublication,
-  publicationDeadline,
-  type PendingPublication,
-} from "@/application/runs/publication.ts";
 
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunInput = {
   messageId: string;
   executionContext: string;
   deadlineAt: number;
-  stepState: string | null;
 };
-type PublicationResult =
-  | { kind: "no_changes" }
-  | { kind: "pull_request"; url: string; branch: string; sha: string };
+/** The pull requests of the branches the Turn pushed. */
+type PublicationResult = {
+  kind: "pull_requests";
+  pullRequests: { branch: string; url: string }[];
+};
 type RunOutcome =
   | {
       status: "succeeded";
@@ -37,12 +33,10 @@ type RunOutcome =
         | "runner_unavailable"
         | "runner_lost"
         | "repository_unavailable"
-        | "publication_unconfirmed"
         | "provider_unavailable"
         | "invalid_execution_context"
         | "artifact_write_failed"
-        | "planning_snapshot_failed"
-        | "planning_input_too_large";
+        | "message_too_large";
       events?: RunnerEvent[];
     };
 
@@ -59,7 +53,6 @@ export type RunnerDriver = {
     runId: string,
     context: ExecutionContext,
     deadlineAt: number,
-    stepState: string | null,
   ): Promise<RunnerStatus | RunOutcome>;
 };
 
@@ -94,8 +87,6 @@ export async function advanceRun(
     parseJson(run.executionContext),
   );
   let outcome: RunnerStatus | RunOutcome;
-  let stepState = run.stepState;
-  let pending = claimed ? null : pendingPublication(stepState);
   if (claimed && run.deadlineAt <= Date.now()) {
     outcome = { status: "failed", errorCode: "deadline_exceeded", events: [] };
   } else if (!context.success) {
@@ -104,39 +95,21 @@ export async function advanceRun(
     outcome = await dispatchNewRun(store, runId, run, context.output, driver);
   } else {
     outcome = await driver
-      .poll(runId, context.output, run.deadlineAt, run.stepState)
+      .poll(runId, context.output, run.deadlineAt)
       .catch(() => ({ status: "running" as const }));
   }
-
-  if (
-    !claimed &&
-    (pending || outcome.status !== "running" || Date.now() >= run.deadlineAt)
-  ) {
-    // A push checkpoint or reconciliation timestamp may have changed during polling.
-    stepState = (await store.load(runId))?.stepState ?? stepState;
-    const latest = pendingPublication(stepState);
-    if (!pending && latest) outcome = { status: "running" };
-    pending = latest;
-  }
-  const recoveryDeadline = publicationDeadline(stepState, run.deadlineAt);
-  const pollDeadline = pending ? recoveryDeadline : run.deadlineAt;
-  if (outcome.status === "running" && pollDeadline > Date.now()) {
-    return scheduleNext(store, runId, pollDeadline);
-  }
-  if (outcome.status === "running" && pending) {
-    outcome = { status: "failed", errorCode: "publication_unconfirmed" };
+  if (outcome.status === "running" && run.deadlineAt > Date.now()) {
+    return scheduleNext(store, runId, run.deadlineAt);
   }
 
   const status = await storeOutcome(
     store,
     runId,
     run.deadlineAt,
-    recoveryDeadline,
     outcome,
-    pending,
     writeArtifacts,
   );
-  if (status === "running") return scheduleNext(store, runId, recoveryDeadline);
+  if (status === "running") return scheduleNext(store, runId, run.deadlineAt);
   return status === "succeeded" || status === "failed" ? { status } : undefined;
 }
 
@@ -171,6 +144,14 @@ async function dispatchNewRun(
     .catch(() => ({ status: "running" as const }));
 }
 
+function publishedPullRequest(outcome: RunnerStatus | RunOutcome) {
+  const result: PublicationResult | undefined =
+    outcome.status === "succeeded" && "publicationResult" in outcome
+      ? (outcome.publicationResult as PublicationResult | undefined)
+      : undefined;
+  return !!result?.pullRequests.length;
+}
+
 function completionResult(
   outcome: Extract<RunnerStatus | RunOutcome, { status: "succeeded" }>,
 ) {
@@ -184,9 +165,7 @@ async function storeOutcome(
   store: RunStore,
   runId: string,
   deadlineAt: number,
-  recoveryDeadline: number,
   result: RunnerStatus | RunOutcome,
-  pending: PendingPublication | null,
   writeArtifacts?: WriteRunArtifacts,
 ) {
   let outcome =
@@ -199,24 +178,13 @@ async function storeOutcome(
       : result;
 
   const finishedAt = Date.now();
-  const published =
-    outcome.status === "succeeded" &&
-    "publicationResult" in outcome &&
-    outcome.publicationResult?.kind === "pull_request";
-  const unconfirmed =
-    outcome.status === "failed" &&
-    outcome.errorCode === "publication_unconfirmed";
+  const published = publishedPullRequest(outcome);
   const terminalEvent =
     outcome.status === "succeeded" ? "job_succeeded" : "job_failed";
   const finishedBeforeDeadline = outcome.events?.some(
     (event) => event.type === terminalEvent && event.at < deadlineAt,
   );
-  if (
-    finishedAt >= deadlineAt &&
-    !finishedBeforeDeadline &&
-    !published &&
-    !unconfirmed
-  ) {
+  if (finishedAt >= deadlineAt && !finishedBeforeDeadline && !published) {
     outcome = {
       status: "failed",
       errorCode: "deadline_exceeded",
@@ -235,18 +203,8 @@ async function storeOutcome(
       // committed atomically by the RunStore, including a successful PR result.
     }
   }
-  if (outcome.status === "failed") {
-    const result =
-      pending && outcome.errorCode === "publication_unconfirmed"
-        ? JSON.stringify({
-            version: 1,
-            kind: "publication_unconfirmed",
-            branch: pending.branch,
-            ...(pending.kind === "checked" ? {} : { sha: pending.sha }),
-          })
-        : null;
-    return failRun(store, runId, outcome.errorCode, finishedAt, result);
-  }
+  if (outcome.status === "failed")
+    return failRun(store, runId, outcome.errorCode, finishedAt);
 
   const storedResult = JSON.stringify({
     version: 1,
@@ -257,7 +215,9 @@ async function storeOutcome(
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))
       return "succeeded";
   } catch {
-    if (published && Date.now() < recoveryDeadline) {
+    // Pull requests the Turn opened are part of its result: keep trying until
+    // the Run's deadline.
+    if (published && Date.now() < deadlineAt) {
       return "running";
     }
     return failRun(

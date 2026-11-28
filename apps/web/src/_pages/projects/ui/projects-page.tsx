@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  Button,
+  Select,
+  TextArea,
+  TextField,
+} from "@/shared/ui/design-systems";
 import { RoutinePanel } from "./routine-panel";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,11 +27,14 @@ const empty: ProjectSettings = {
   repository: "",
   repositoryId: 0,
   installationId: 0,
-  allowedActors: [],
   maxRunMinutes: 30,
 };
-const fieldClass =
-  "block w-full rounded-md border border-rule bg-paper px-3 py-2";
+function repositoryChoiceId({
+  installationId,
+  repositoryId,
+}: Pick<ProjectSettings, "installationId" | "repositoryId">) {
+  return `${installationId}/${repositoryId}`;
+}
 function Snapshot({ project }: { project: ProjectChange["before"] }) {
   if (!project) return <p className="text-muted-foreground">設定なし</p>;
   return (
@@ -44,10 +53,6 @@ function Snapshot({ project }: { project: ProjectChange["before"] }) {
           <dd>{project.triggerLabel}</dd>
         </div>
       )}
-      <div>
-        <dt className="text-muted-foreground">plan の許可ユーザー</dt>
-        <dd>{project.allowedActors.join(", ")}</dd>
-      </div>
       <div>
         <dt className="text-muted-foreground">制限時間</dt>
         <dd>{project.maxRunMinutes}分</dd>
@@ -71,7 +76,6 @@ export function ProjectsPage() {
   const history = useQuery(projectHistoryQueryOptions(before));
   const [editing, setEditing] = useState<ProjectItem | null>(null);
   const [settings, setSettings] = useState<ProjectSettings>({ ...empty });
-  const [actors, setActors] = useState("");
   const [legacyJson, setLegacyJson] = useState("");
   const invalidate = async () => {
     await Promise.all([
@@ -83,15 +87,10 @@ export function ProjectsPage() {
   const reset = () => {
     setEditing(null);
     setSettings({ ...empty });
-    setActors("");
   };
   const save = useMutation({
     mutationFn: () =>
-      saveProject(
-        { ...settings, allowedActors: actors.split(/[,\s]+/).filter(Boolean) },
-        editing?.project.id,
-        editing?.revision,
-      ),
+      saveProject(settings, editing?.project.id, editing?.revision),
     onSuccess: async () => {
       reset();
       await invalidate();
@@ -114,13 +113,13 @@ export function ProjectsPage() {
   });
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!save.isPending) save.mutate();
+    if (!busy && selected) save.mutate();
   }
   const choices =
     repositories.data && !("error" in repositories.data)
       ? repositories.data.repositories
       : [];
-  const selected = choices.findIndex(
+  const selected = choices.find(
     (r) =>
       r.repository === settings.repository &&
       r.repositoryId === settings.repositoryId &&
@@ -188,19 +187,21 @@ export function ProjectsPage() {
         ))}
         <div className="flex gap-3">
           {before !== undefined && (
-            <button
+            <Button
               type="button"
-              className="action"
-              onClick={() => setBefore(undefined)}
+              variant="outline"
+              size="touch"
+              onPress={() => setBefore(undefined)}
             >
               最新の履歴
-            </button>
+            </Button>
           )}
           {history.data.nextCursor !== null && (
-            <button
+            <Button
               type="button"
-              className="action"
-              onClick={() =>
+              variant="outline"
+              size="touch"
+              onPress={() =>
                 setBefore(
                   history.data && !("error" in history.data)
                     ? (history.data.nextCursor ?? undefined)
@@ -209,7 +210,7 @@ export function ProjectsPage() {
               }
             >
               以前の履歴
-            </button>
+            </Button>
           )}
         </div>
       </>
@@ -257,14 +258,15 @@ export function ProjectsPage() {
           <h2 className="text-lg font-medium">
             登録済みの Project（{data.projects.length}/100）
           </h2>
-          <button
+          <Button
             type="button"
-            className="action"
-            disabled={busy}
-            onClick={() => void projects.refetch()}
+            variant="outline"
+            size="touch"
+            isDisabled={busy}
+            onPress={() => void projects.refetch()}
           >
             一覧を更新
-          </button>
+          </Button>
         </div>
         {data.projects.length === 0 ? (
           <p className="text-muted-foreground">Project はまだありません。</p>
@@ -283,31 +285,31 @@ export function ProjectsPage() {
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button
+                    <Button
                       type="button"
-                      className="action"
-                      disabled={busy}
-                      onClick={() => {
+                      variant="outline"
+                      size="touch"
+                      isDisabled={busy}
+                      onPress={() => {
                         setEditing(item);
                         setSettings({
                           name: item.project.name,
                           repository: item.project.repository,
                           repositoryId: item.project.repositoryId,
                           installationId: item.project.installationId,
-                          allowedActors: item.project.allowedActors,
                           maxRunMinutes: item.project.maxRunMinutes,
                         });
-                        setActors(item.project.allowedActors.join(", "));
                         save.reset();
                       }}
                     >
                       編集
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="action text-danger"
-                      disabled={busy}
-                      onClick={() => {
+                      variant="destructive"
+                      size="touch"
+                      isDisabled={busy}
+                      onPress={() => {
                         if (
                           window.confirm(
                             `「${item.project.name}」を削除しますか？新規起動は停止します。作成済みの Run は続行し、会話と履歴は残ります。`,
@@ -317,7 +319,7 @@ export function ProjectsPage() {
                       }}
                     >
                       削除
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -338,116 +340,85 @@ export function ProjectsPage() {
         <h2 className="text-lg font-medium">
           {editing ? "Project を編集" : "Project を追加"}
         </h2>
-        <label className="block space-y-2 text-sm">
-          名前
-          <input
-            required
-            maxLength={100}
-            className={fieldClass}
-            value={settings.name}
-            disabled={busy}
-            onChange={(event) =>
-              setSettings({ ...settings, name: event.target.value })
-            }
-          />
-        </label>
-        <label className="block space-y-2 text-sm">
-          リポジトリ
-          <select
-            required
-            className={fieldClass}
-            disabled={
-              busy ||
-              repositories.isPending ||
-              repositories.isError ||
-              !repositories.data ||
-              "error" in repositories.data
-            }
-            value={selected < 0 ? "" : String(selected)}
-            onChange={(event) => {
-              const choice = choices[Number(event.target.value)];
-              if (choice && event.target.value !== "")
-                setSettings({ ...settings, ...choice });
-            }}
-          >
-            <option value="">
-              {editing && selected < 0
-                ? `現在: ${settings.repository}（候補を取得して選択してください）`
-                : "リポジトリを選択"}
-            </option>
-            {choices.map((choice, index) => (
-              <option
-                key={`${choice.installationId}/${choice.repositoryId}`}
-                value={index}
-              >
-                {choice.repository}（installation {choice.installationId}）
-              </option>
-            ))}
-          </select>
-        </label>
+        <TextField
+          label="名前"
+          isRequired
+          maxLength={100}
+          value={settings.name}
+          isDisabled={busy}
+          onChange={(name) => setSettings({ ...settings, name })}
+        />
+        <Select
+          label="リポジトリ"
+          size="lg"
+          isRequired
+          options={choices.map((choice) => ({
+            id: repositoryChoiceId(choice),
+            label: `${choice.repository}（installation ${choice.installationId}）`,
+          }))}
+          placeholder={
+            editing && !selected
+              ? `現在: ${settings.repository}（候補を取得して選択してください）`
+              : "リポジトリを選択"
+          }
+          disabled={
+            busy ||
+            repositories.isPending ||
+            repositories.isError ||
+            !repositories.data ||
+            "error" in repositories.data
+          }
+          value={selected ? repositoryChoiceId(selected) : null}
+          onValueChange={(id) => {
+            const choice = choices.find(
+              (item) => repositoryChoiceId(item) === id,
+            );
+            if (choice) setSettings({ ...settings, ...choice });
+          }}
+        />
         {renderRepositories()}
-        <button
+        <Button
           type="button"
-          className="action"
-          disabled={repositories.isFetching}
-          onClick={() => void repositories.refetch()}
+          variant="outline"
+          size="touch"
+          isDisabled={repositories.isFetching}
+          onPress={() => void repositories.refetch()}
         >
           リポジトリ候補を更新
-        </button>
+        </Button>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="space-y-2 text-sm">
-            Run の上限時間（分）
-            <input
-              required
-              type="number"
-              min={1}
-              max={30}
-              step={1}
-              className={fieldClass}
-              value={settings.maxRunMinutes}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  maxRunMinutes: Number(e.target.value),
-                })
-              }
-            />
-          </label>
-        </div>
-        <label className="block space-y-2 text-sm">
-          plan の起動を許可する GitHub ユーザー
-          <input
-            required
-            className={fieldClass}
-            value={actors}
-            onChange={(e) => setActors(e.target.value)}
-            placeholder="login1, login2"
-          />
-          <span className="text-muted-foreground">
-            ログイン名をカンマまたは空白で区切って入力します（1〜100件）。
-          </span>
-        </label>
-        <div className="flex gap-3">
-          <button
-            className="action action-primary"
-            disabled={
-              busy ||
-              selected < 0 ||
-              actors.split(/[,\s]+/).filter(Boolean).length === 0
+          <TextField
+            label="Run の上限時間（分）"
+            isRequired
+            type="number"
+            min={1}
+            max={30}
+            step={1}
+            value={String(settings.maxRunMinutes)}
+            onChange={(value) =>
+              setSettings({ ...settings, maxRunMinutes: Number(value) })
             }
+          />
+        </div>
+        <div className="flex gap-3">
+          <Button
+            variant="default"
+            size="touch"
+            isDisabled={busy || !selected}
             type="submit"
           >
             {save.isPending ? "保存しています…" : "保存"}
-          </button>
+          </Button>
           {editing && (
-            <button
-              className="action"
-              disabled={busy}
+            <Button
+              variant="outline"
+              size="touch"
+              isDisabled={busy}
               type="button"
-              onClick={reset}
+              onPress={reset}
             >
               編集をやめる
-            </button>
+            </Button>
           )}
         </div>
         {save.isError && (
@@ -473,17 +444,22 @@ export function ProjectsPage() {
               配列を貼り付けてください。登録履歴のない環境で一度だけ実行できます。UUID
               を発行し、既存 Session の紐付けも移します。
             </p>
-            <textarea
+            <TextArea
               aria-label="移行する Project 設定の JSON"
-              required
+              isRequired
               rows={8}
-              className={`${fieldClass} font-mono text-sm`}
+              textAreaClassName="font-mono"
               value={legacyJson}
-              onChange={(e) => setLegacyJson(e.target.value)}
+              onChange={setLegacyJson}
             />
-            <button className="action" disabled={busy} type="submit">
+            <Button
+              variant="outline"
+              size="touch"
+              isDisabled={busy}
+              type="submit"
+            >
               {migrate.isPending ? "移行しています…" : "インポート"}
-            </button>
+            </Button>
             {migrate.isError && (
               <p role="alert" className="text-danger">
                 {migrate.error.message}

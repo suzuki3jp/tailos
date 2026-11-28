@@ -23,7 +23,6 @@ const config = {
   repository: "owner/repo",
   repositoryId: 1,
   installationId: 1,
-  allowedActors: ["owner"],
   maxRunMinutes: 30,
 };
 async function fixture(t: TestContext) {

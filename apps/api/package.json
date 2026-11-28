@@ -9,9 +9,11 @@
   },
   "scripts": {
     "dev": "pnpm --filter @tailos/runner run build && wrangler d1 migrations apply DB --local && wrangler dev --local",
+    "dev:seeded": "wrangler dev --local --env-file .wrangler/seed.env --persist-to .wrangler/seed --enable-containers=false",
     "provision": "node scripts/provision-resources.mjs",
     "deploy": "node --experimental-strip-types scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
+    "db:seed": "node --experimental-strip-types scripts/seed-local.mjs",
     "test": "vitest run --fsModuleCachePath node_modules/.vitest-cache",
     "typecheck": "tsc -b --stopBuildOnErrors"
   },

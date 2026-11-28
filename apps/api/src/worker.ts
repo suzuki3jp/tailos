@@ -1,4 +1,4 @@
-import { processPlanningInputs } from "@/bootstrap/planning.ts";
+import { processSessionInbox } from "@/bootstrap/session-inbox.ts";
 import { deliverIssueNotifications } from "@/bootstrap/issue-notifications.ts";
 import { listDueRunIds } from "@/infrastructure/d1/run-recovery.ts";
 import type {
@@ -12,9 +12,11 @@ import { rescheduleDueRuns } from "@/application/runs/recovery.ts";
 import { observeRun } from "@/infrastructure/diagnostics/store.ts";
 import { deliverTimelineNotifications } from "@/infrastructure/cloudflare/session-stream.ts";
 import { expireTimeline } from "@/infrastructure/d1/timeline.ts";
+import { runStarter } from "@/infrastructure/cloudflare/run-start.ts";
 
 export { CredentialBroker } from "@/infrastructure/cloudflare/credential-broker.ts";
 export { GitHubEgress } from "@/infrastructure/cloudflare/github-egress.ts";
+export { ModelEgress } from "@/infrastructure/cloudflare/model-egress.ts";
 export { RunnerContainer } from "@/infrastructure/cloudflare/runner-container.ts";
 export { SessionStream } from "@/infrastructure/cloudflare/session-stream.ts";
 
@@ -39,18 +41,16 @@ export default {
     ctx: ExecutionContext,
   ) {
     ctx.waitUntil(deliverIssueNotifications(env));
-    ctx.waitUntil(processPlanningInputs(env));
+    ctx.waitUntil(processSessionInbox(env));
     ctx.waitUntil(deliverTimelineNotifications(env));
     ctx.waitUntil(expireTimeline(env.DB));
     const runner = env.RUNNER;
-    if (!runner) throw new Error("Missing runner binding");
+    const schedule = runStarter(env);
+    if (!runner || !schedule) throw new Error("Missing runner binding");
     ctx.waitUntil(
       rescheduleDueRuns(
         (now) => listDueRunIds(env.DB, now),
-        (id) =>
-          observeRun(env.DB, id, "recovery", () =>
-            runner.getByName(id).schedule(id),
-          ),
+        (id) => observeRun(env.DB, id, "recovery", () => schedule(id)),
       ),
     );
     ctx.waitUntil(runner.getByName("diagnostics-cleanup").cleanupDiagnostics());

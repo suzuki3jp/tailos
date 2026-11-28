@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -105,7 +104,7 @@ test("real questions find this session's decisions and keep unknown rationale no
     ["長文 要約", "PDR-20261113-003"],
     ["8,000 根拠", "PDR-20261113-004"],
     ["通知 障害 Run", "PDR-20261113-006"],
-    ["@tailos plan inbox", "PDR-20261113-012"],
+    ["@tailos plan inbox", "PDR-20261125-planning-tables-dropped"],
     ["kind", "PDR-20261113-007"],
     ["未適用 migration", "PDR-20261113-008"],
     ["GIF 背景", "PDR-20261113-009"],
@@ -398,15 +397,21 @@ test("resolve pages many unresolved alternatives without claiming an accepted de
   );
 });
 
-test("CLI validates catalog freshness and rejects invalid commands/options", (t) => {
+test("CLI checks records and prints the catalog without an index file", (t) => {
   const root = fixture(t);
   put(root, "PDR-1");
-  assert.equal(run(root, "catalog", "--write").status, 0);
   assert.equal(run(root, "check").status, 0);
   put(root, "PDR-1", {}, { title: "タイトルを変更する" });
-  assert.match(run(root, "check").stderr, /catalog is stale/);
-  assert.equal(run(root, "catalog", "--write").status, 0);
   assert.equal(run(root, "check").status, 0);
+  const catalog = run(root, "catalog");
+  assert.equal(catalog.status, 0);
+  assert.match(catalog.stdout, /タイトルを変更する/);
+  assert.equal(existsSync(join(root, "docs/pdr/index.md")), false);
+});
+
+test("CLI rejects invalid commands and options", (t) => {
+  const root = fixture(t);
+  put(root, "PDR-1");
   for (const args of [
     ["resolve"],
     ["search", "--limit", "0", "返答"],
@@ -417,12 +422,6 @@ test("CLI validates catalog freshness and rejects invalid commands/options", (t)
   const noMatches = run(root, "search", "存在しない用語");
   assert.equal(noMatches.status, 0);
   assert.ok(JSON.parse(noMatches.stdout).warning);
-  assert.equal(
-    readFileSync(join(root, "docs/pdr/index.md"), "utf8").includes(
-      "タイトルを変更する",
-    ),
-    true,
-  );
 });
 
 test("context includes staged, working and untracked paths without shell expansion", (t) => {

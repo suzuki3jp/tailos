@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261116-web-prototype-styles
 key: web.design-system.prototype-migration
-status: accepted
+status: superseded
 date: "2026-11-16"
 decided_by: suzuki3jp
 areas: [web, design-system]

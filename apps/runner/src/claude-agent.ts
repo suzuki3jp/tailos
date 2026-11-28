@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   basename,
@@ -11,13 +19,19 @@ import {
   sep,
 } from "node:path";
 import type {
+  EffortLevel,
   HookCallback,
   McpServerConfig,
   Options,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Diagnostics } from "@tailos/core/diagnostics";
+import { supportsSelection } from "@tailos/core/models";
 import * as v from "valibot";
-import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
+import {
+  AgentSandboxUnavailable,
+  type AgentAdapter,
+  type Conversation,
+} from "@/agent.ts";
 import {
   agentPrompt,
   replySchema,
@@ -25,6 +39,11 @@ import {
   type RepositoryJob,
 } from "@/agent-turns.ts";
 import { createGitHubReader, githubTool } from "@/github-tool.ts";
+import { claudeTranscriptPath } from "@/continuity.ts";
+import {
+  continuityNotice,
+  lostConversationNotice,
+} from "@/continuity-notice.ts";
 import {
   prepareGitHubCli,
   startEgressProxy,
@@ -37,6 +56,8 @@ import {
 
 type ClaudeJob = Extract<RepositoryJob, { engine: "claude" }>;
 type GitHubRead = ReturnType<typeof createGitHubReader>["read"];
+/** The Tailos tools Claude Code gets, each run in the Runner process. */
+type TailosTools = { read?: GitHubRead };
 
 // The part of the Agent SDK the adapter depends on. Tests replace it with a
 // fixed message sequence, as the Codex adapter's tests replace its process.
@@ -45,17 +66,17 @@ export type ClaudeRuntime = {
     prompt: string;
     options: Options;
   }): AsyncIterable<unknown> & { close?(): void };
-  githubServer(read: GitHubRead): McpServerConfig;
+  tailosServer(tools: TailosTools): McpServerConfig;
   // Whether the command sandbox can start in this environment.
   sandboxAvailable(signal: AbortSignal): Promise<boolean>;
   // The forward proxy that commands reach the internet through.
   startProxy(): Promise<{ port: number; close(): Promise<void> }>;
 };
 
-const githubServerName = "tailos";
+const tailosServerName = "tailos";
 const githubToolLocalName = "github_get";
-// The name Claude Code gives a tool of an SDK MCP server.
-const githubToolName = `mcp__${githubServerName}__${githubToolLocalName}`;
+// The names Claude Code gives the tools of an SDK MCP server.
+const githubToolName = `mcp__${tailosServerName}__${githubToolLocalName}`;
 
 // The SDK ships Claude Code as a platform-specific binary, so the image
 // installs it next to the bundle and the bundle loads it only for Claude jobs.
@@ -86,36 +107,43 @@ export const loadClaudeRuntime = async (): Promise<ClaudeRuntime> => {
           (error) => resolve(!error),
         );
       }),
-    githubServer: (read) =>
+    tailosServer: ({ read }) =>
       sdk.createSdkMcpServer({
-        name: githubServerName,
+        name: tailosServerName,
         version: "0.1.0",
-        tools: [
-          sdk.tool(
-            githubToolLocalName,
-            githubTool.description,
-            {
-              kind: z.enum(["issue", "pull_request"]),
-              number: z.number().int().min(1),
-              bodyOffset: z.number().int().min(0).optional(),
-            },
-            // The handler runs in the Runner process, whose GitHub requests
-            // get the Run's token outside the container.
-            async (input) => {
-              const result = await read(input);
-              return {
-                content: result.contentItems.map(({ text }) => ({
-                  type: "text" as const,
-                  text,
-                })),
-                isError: !result.success,
-              };
-            },
-          ),
-        ],
+        tools: read
+          ? [
+              sdk.tool(
+                githubToolLocalName,
+                githubTool.description,
+                {
+                  kind: z.enum(["issue", "pull_request"]),
+                  number: z.number().int().min(1),
+                  bodyOffset: z.number().int().min(0).optional(),
+                },
+                // The handler runs in the Runner process, whose GitHub
+                // requests get the Run's token outside the container.
+                async (input) => toolContent(await read(input)),
+              ),
+            ]
+          : [],
       }),
   };
 };
+
+/** A Tailos tool's result, as an MCP tool result. */
+function toolContent(result: {
+  success: boolean;
+  contentItems: { text: string }[];
+}) {
+  return {
+    content: result.contentItems.map(({ text }) => ({
+      type: "text" as const,
+      text,
+    })),
+    isError: !result.success,
+  };
+}
 
 const messageSchema = v.object({
   type: v.string(),
@@ -154,6 +182,7 @@ const messageSchema = v.object({
   total_cost_usd: v.optional(v.number()),
   usage: v.optional(v.unknown()),
   permission_denials: v.optional(v.array(v.object({ tool_name: v.string() }))),
+  errors: v.optional(v.array(v.string())),
 });
 
 const toolInputSchema = v.object({
@@ -316,15 +345,48 @@ function recordMessage(
   }
 }
 
+/** Where Claude Code keeps a session's transcript under its configuration. */
+async function findTranscript(configDirectory: string, sessionId: string) {
+  const projects = join(configDirectory, "projects");
+  const directories = await readdir(projects).catch(() => []);
+  for (const directory of directories) {
+    const path = `projects/${directory}/${sessionId}.jsonl`;
+    if (!v.is(claudeTranscriptPath, path)) continue;
+    const content = await readFile(join(configDirectory, path)).catch(
+      () => undefined,
+    );
+    if (content) return { path, content };
+  }
+  return undefined;
+}
+
+/** Restores the previous Turn's transcript; resolves the session to resume. */
+async function restoreTranscript(
+  configDirectory: string,
+  resume: NonNullable<Conversation["resume"]>,
+) {
+  const path = v.safeParse(claudeTranscriptPath, resume.path);
+  if (!path.success || !resume.path.endsWith(`/${resume.threadId}.jsonl`))
+    return undefined;
+  const target = join(configDirectory, path.output);
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  await writeFile(target, resume.content, { mode: 0o600 });
+  return resume.threadId;
+}
+
 export function createClaudeAgent(
   load = loadClaudeRuntime,
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics) {
+    async run(job, signal, cwd, diagnostics, conversation, gitDir) {
       if (job.engine !== "claude") throw new Error("Invalid Claude job");
       const root = await mkdtemp(join(tmpdir(), "tailos-claude-"));
+      // Outside the Agent's writable roots, and rebuilt every Turn: only the
+      // conversation itself is carried over.
+      const configDirectory = join(root, "config");
       const environment = join(root, "environment");
+      let sessionId: string | undefined;
       try {
         signal.throwIfAborted();
         await Promise.all(
@@ -338,17 +400,38 @@ export function createClaudeAgent(
             .map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
         );
         await prepareGitHubCli(join(environment, "home"));
+        // Another Model Provider's conversation cannot be resumed here: the
+        // Session's Routine changed its provider.
+        const saved = conversation?.resume;
+        const resume = saved
+          ? await restoreTranscript(configDirectory, saved)
+          : undefined;
         return await runTurns(
           await load(),
           cwd ?? join(root, "workspace"),
-          join(root, "config"),
+          configDirectory,
           environment,
           job,
           signal,
           http,
           diagnostics,
+          {
+            ...(resume && { resume }),
+            lostWork: conversation?.lost ?? false,
+            lostConversation: !!saved && !resume,
+            started: (id) => {
+              sessionId = id;
+            },
+          },
+          gitDir,
         );
       } finally {
+        // Kept for the Session's next Turn, whether this one succeeded or not.
+        if (conversation && sessionId) {
+          const transcript = await findTranscript(configDirectory, sessionId);
+          if (transcript)
+            conversation.save({ threadId: sessionId, ...transcript });
+        }
         await withDiagnosticSpan(
           diagnostics,
           "cleanup",
@@ -360,6 +443,16 @@ export function createClaudeAgent(
   };
 }
 
+/** What carries over from the Session's previous Turn. */
+type TurnContinuity = {
+  /** The session to resume, whose transcript is in place. */
+  resume?: string;
+  lostWork: boolean;
+  lostConversation: boolean;
+  /** Receives the session that holds this Turn's conversation. */
+  started(sessionId: string): void;
+};
+
 async function runTurns(
   runtime: ClaudeRuntime,
   cwd: string,
@@ -369,6 +462,8 @@ async function runTurns(
   signal: AbortSignal,
   http: typeof fetch,
   diagnostics?: Diagnostics,
+  continuity?: TurnContinuity,
+  gitDir?: string,
 ) {
   if (job.githubContext && !job.checkout)
     throw new Error("GitHub issue context requires a repository checkout");
@@ -382,7 +477,7 @@ async function runTurns(
         job.githubContext?.contentHash,
       )
     : undefined;
-  const sensitive = new Set([job.access.token, job.lease.bearer]);
+  const sensitive = new Set([job.access.token]);
   const agentSpan = diagnostics?.start(
     "agent",
     JSON.stringify({
@@ -424,6 +519,17 @@ async function runTurns(
     }
   };
 
+  const tailosTools: TailosTools = {
+    ...(githubReader && { read: readGitHub }),
+  };
+  const tailosToolNames = githubReader ? [githubToolName] : [];
+  if (supportsSelection("claude", job.model, job.effort))
+    throw new Error("Requested model or effort is unavailable");
+  const selection: Partial<Options> = {
+    ...(job.model && { model: job.model }),
+    ...(job.effort && { effort: job.effort as EffortLevel }),
+  };
+
   // Plan mode gets no command execution, so it cannot change the workspace.
   // Skill lets the Agent use the skills of the target repository.
   const tools = implementation
@@ -462,6 +568,8 @@ async function runTurns(
   };
   const fileGuard = createFileGuard(cwd, [cwd, environment]);
   let sessionId: string | undefined;
+  let resume = continuity?.resume;
+  let lostConversation = continuity?.lostConversation ?? false;
   let agentSucceeded = false;
   let agentError: unknown;
   let proxy: Awaited<ReturnType<ClaudeRuntime["startProxy"]>> | undefined;
@@ -476,110 +584,34 @@ async function runTurns(
     const result = await runAgentTurns({
       job,
       signal,
-      prompt: agentPrompt(job, githubToolName),
+      prompt:
+        continuityNotice(continuity?.lostWork ?? false, lostConversation) +
+        agentPrompt(job, githubToolName),
       sensitive,
       async turn(prompt, revision, timeoutMs) {
         const first = revision === 0;
         if (!first && !sessionId)
           throw new Error("Claude Code session is unavailable");
-        const inputSpan = diagnostics?.start("input", prompt, agentSpan);
-        if (inputSpan) diagnostics?.end(inputSpan);
-        const controller = new AbortController();
-        const abort = () => controller.abort();
-        signal.addEventListener("abort", abort, { once: true });
-        // On timeout stop Claude Code: no more turns are needed.
-        const revisionTimer =
-          timeoutMs === undefined ? undefined : setTimeout(abort, timeoutMs);
-        const stream = runtime.query({
-          prompt,
-          options: {
-            cwd,
-            env,
-            abortController: controller,
-            systemPrompt: { type: "preset", preset: "claude_code" },
-            // The target repository's CLAUDE.md, skills, settings and hooks.
-            settingSources: ["project"],
-            // Not the repository's .mcp.json servers.
-            strictMcpConfig: true,
-            permissionMode: "dontAsk",
-            ...(outputSchema && {
-              outputFormat: { type: "json_schema", schema: outputSchema },
-            }),
-            ...(first
-              ? {
-                  tools,
-                  allowedTools: githubReader
-                    ? [...tools, githubToolName]
-                    : tools,
-                  skills: "all",
-                  mcpServers: githubReader
-                    ? { [githubServerName]: runtime.githubServer(readGitHub) }
-                    : {},
-                  hooks: { PreToolUse: [{ hooks: [fileGuard] }] },
-                  ...(implementation && {
-                    sandbox: {
-                      enabled: true,
-                      // Never run a command outside the sandbox.
-                      failIfUnavailable: true,
-                      allowUnsandboxedCommands: false,
-                      autoAllowBashIfSandboxed: true,
-                      filesystem: { allowWrite: [cwd, environment] },
-                      // Claude Code cannot allow every host itself, so
-                      // commands reach the internet through Tailos's proxy,
-                      // which is not checked against these lists. The strict
-                      // empty list keeps the repository's own domains and
-                      // every other route closed.
-                      network: {
-                        httpProxyPort: proxy!.port,
-                        allowedDomains: [],
-                        strictAllowlist: true,
-                      },
-                    },
-                  }),
-                }
-              : // Revisions may only summarize the existing answer.
-                { resume: sessionId, tools: [], skills: [], mcpServers: {} }),
-          },
-        });
-        let outcome: v.InferOutput<typeof messageSchema> | undefined;
-        try {
-          for await (const raw of stream) {
-            const parsed = v.safeParse(messageSchema, raw);
-            if (!parsed.success) continue;
-            const message = parsed.output;
-            if (message.type === "result") outcome = message;
-            if (diagnostics && agentSpan) {
-              try {
-                recordMessage(message, diagnostics, agentSpan, toolSpans);
-              } catch {
-                // Recording diagnostics must not change the turn.
-              }
-            }
+        for (;;) {
+          const outcome = await query(prompt, first, timeoutMs);
+          // A transcript that Claude Code cannot find: start a new
+          // conversation, and say that the earlier one is unavailable.
+          if (
+            first &&
+            resume &&
+            !lostConversation &&
+            outcome.subtype === "error_during_execution" &&
+            outcome.errors?.some((error) =>
+              error.startsWith("No conversation found"),
+            )
+          ) {
+            resume = undefined;
+            lostConversation = true;
+            prompt = lostConversationNotice + prompt;
+            continue;
           }
-        } finally {
-          clearTimeout(revisionTimer);
-          signal.removeEventListener("abort", abort);
-          stream.close?.();
+          return answer(outcome);
         }
-        signal.throwIfAborted();
-        if (!outcome) throw new Error("Claude Code ended without a result");
-        if (outcome.startup_failure_reason === "sandbox_required_unavailable")
-          throw new AgentSandboxUnavailable(
-            "Claude Code command sandbox unavailable",
-          );
-        if (outcome.subtype !== "success" || outcome.is_error)
-          throw new Error("Claude Code turn failed");
-        sessionId = outcome.session_id ?? sessionId;
-        if (githubReader && !githubReader.isSourceRead())
-          throw new Error("The assigned GitHub issue was not read completely");
-        if (!outputSchema) {
-          if (outcome.result === undefined)
-            throw new Error("Claude Code returned no answer");
-          return outcome.result;
-        }
-        if (outcome.structured_output === undefined)
-          throw new Error("Claude Code returned no structured answer");
-        return JSON.stringify(outcome.structured_output);
       },
     });
     agentSucceeded = true;
@@ -595,6 +627,121 @@ async function runTurns(
         { outcome: agentSucceeded ? "succeeded" : "failed" },
         agentSucceeded ? undefined : diagnosticErrorBody(agentError),
       );
+  }
+
+  async function query(
+    prompt: string,
+    first: boolean,
+    timeoutMs: number | undefined,
+  ) {
+    const inputSpan = diagnostics?.start("input", prompt, agentSpan);
+    if (inputSpan) diagnostics?.end(inputSpan);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    // On timeout stop Claude Code: no more turns are needed.
+    const revisionTimer =
+      timeoutMs === undefined ? undefined : setTimeout(abort, timeoutMs);
+    const stream = runtime.query({
+      prompt,
+      options: {
+        cwd,
+        env,
+        abortController: controller,
+        systemPrompt: { type: "preset", preset: "claude_code" },
+        // The target repository's CLAUDE.md, skills, settings and hooks.
+        settingSources: ["project"],
+        // Not the repository's .mcp.json servers.
+        strictMcpConfig: true,
+        permissionMode: "dontAsk",
+        ...(outputSchema && {
+          outputFormat: { type: "json_schema", schema: outputSchema },
+        }),
+        ...(first
+          ? {
+              tools,
+              allowedTools: [...tools, ...tailosToolNames],
+              skills: "all",
+              mcpServers: tailosToolNames.length
+                ? { [tailosServerName]: runtime.tailosServer(tailosTools) }
+                : {},
+              hooks: { PreToolUse: [{ hooks: [fileGuard] }] },
+              ...(implementation && {
+                sandbox: {
+                  enabled: true,
+                  // Never run a command outside the sandbox.
+                  failIfUnavailable: true,
+                  allowUnsandboxedCommands: false,
+                  autoAllowBashIfSandboxed: true,
+                  // The Agent commits, so it writes the git directory too.
+                  filesystem: {
+                    allowWrite: [cwd, environment, ...(gitDir ? [gitDir] : [])],
+                  },
+                  // Claude Code cannot allow every host itself, so
+                  // commands reach the internet through Tailos's proxy,
+                  // which is not checked against these lists. The strict
+                  // empty list keeps the repository's own domains and
+                  // every other route closed.
+                  network: {
+                    httpProxyPort: proxy!.port,
+                    allowedDomains: [],
+                    strictAllowlist: true,
+                  },
+                },
+              }),
+            }
+          : // Revisions may only summarize the existing answer.
+            { resume: sessionId, tools: [], skills: [], mcpServers: {} }),
+        ...(first && resume && { resume }),
+        ...selection,
+      },
+    });
+    let outcome: v.InferOutput<typeof messageSchema> | undefined;
+    try {
+      for await (const raw of stream) {
+        const parsed = v.safeParse(messageSchema, raw);
+        if (!parsed.success) continue;
+        const message = parsed.output;
+        if (message.type === "result") outcome = message;
+        if (message.session_id && message.session_id !== sessionId) {
+          sessionId = message.session_id;
+          continuity?.started(sessionId);
+        }
+        if (diagnostics && agentSpan) {
+          try {
+            recordMessage(message, diagnostics, agentSpan, toolSpans);
+          } catch {
+            // Recording diagnostics must not change the turn.
+          }
+        }
+      }
+    } finally {
+      clearTimeout(revisionTimer);
+      signal.removeEventListener("abort", abort);
+      stream.close?.();
+    }
+    signal.throwIfAborted();
+    if (!outcome) throw new Error("Claude Code ended without a result");
+    return outcome;
+  }
+
+  function answer(outcome: v.InferOutput<typeof messageSchema>) {
+    if (outcome.startup_failure_reason === "sandbox_required_unavailable")
+      throw new AgentSandboxUnavailable(
+        "Claude Code command sandbox unavailable",
+      );
+    if (outcome.subtype !== "success" || outcome.is_error)
+      throw new Error("Claude Code turn failed");
+    if (githubReader && !githubReader.isSourceRead())
+      throw new Error("The assigned GitHub issue was not read completely");
+    if (!outputSchema) {
+      if (outcome.result === undefined)
+        throw new Error("Claude Code returned no answer");
+      return outcome.result;
+    }
+    if (outcome.structured_output === undefined)
+      throw new Error("Claude Code returned no structured answer");
+    return JSON.stringify(outcome.structured_output);
   }
 }
 

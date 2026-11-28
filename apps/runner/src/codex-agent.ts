@@ -1,12 +1,25 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
-import { CodexAccess, type RunnerJob } from "@tailos/core/runner";
+import { delimiter, dirname, join, relative } from "node:path";
+import type { RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import { supportsCodexSelection } from "@tailos/core/models";
-import { AgentSandboxUnavailable, type AgentAdapter } from "@/agent.ts";
+import {
+  AgentSandboxUnavailable,
+  type AgentAdapter,
+  type Conversation,
+} from "@/agent.ts";
+import { rolloutPath } from "@/continuity.ts";
+import { continuityNotice } from "@/continuity-notice.ts";
 import { agentPrompt, replySchema, runAgentTurns } from "@/agent-turns.ts";
 import { CodexRpc, type CodexProcess } from "@/codex-rpc.ts";
 import {
@@ -19,9 +32,13 @@ import {
   githubToolCallSchema,
 } from "@/github-tool.ts";
 import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
+import { retiredToolCallSchema, retiredToolResult } from "@/retired-tools.ts";
 
 const threadSchema = v.object({
-  thread: v.object({ id: v.string() }),
+  thread: v.object({
+    id: v.string(),
+    path: v.optional(v.nullable(v.string())),
+  }),
   model: v.optional(v.string()),
   modelProvider: v.optional(v.string()),
 });
@@ -152,6 +169,9 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
       env: {
         PATH: process.env.PATH,
         CODEX_HOME: directory,
+        // Codex reaches the model API through the interception that adds the
+        // Run's token, so it must trust the same CA as the Agent's commands.
+        ...trustEnvironment(),
         npm_config_verify_deps_before_run: "false",
         pnpm_config_verify_deps_before_run: "false",
         GIT_CONFIG_GLOBAL: "/dev/null",
@@ -167,14 +187,27 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics) {
+    async run(job, signal, cwd, diagnostics, conversation, gitDir) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
+      // Outside the Agent's writable roots, and rebuilt every Turn: only the
+      // conversation itself is carried over.
       const directory = join(root, "codex");
       const environment = job.checkout ? join(root, "environment") : undefined;
+      let thread: { id: string; path?: string } | undefined;
       try {
         signal.throwIfAborted();
         await mkdir(directory);
+        // Another Model Provider's conversation cannot be resumed here: the
+        // Session's Routine changed its provider.
+        const saved = conversation?.resume;
+        const resume =
+          saved && v.is(rolloutPath, saved.path) ? saved : undefined;
+        if (resume) {
+          const path = join(directory, v.parse(rolloutPath, resume.path));
+          await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+          await writeFile(path, resume.content, { mode: 0o600 });
+        }
         if (environment) {
           await Promise.all(
             ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
@@ -191,8 +224,26 @@ export function createCodexAgent(
           http,
           environment,
           diagnostics,
+          conversation && {
+            ...conversation,
+            resume,
+            foreign: !!saved && !resume,
+            started: (started) => {
+              thread = started;
+            },
+          },
+          gitDir,
         );
       } finally {
+        // Codex may not report the path of a resumed thread: it is where
+        // the rollout was restored.
+        const path =
+          thread?.path ??
+          (thread && thread.id === conversation?.resume?.threadId
+            ? join(directory, conversation.resume.path)
+            : undefined);
+        if (conversation && thread && path)
+          await saveConversation(directory, thread.id, path, conversation);
         await withDiagnosticSpan(
           diagnostics,
           "cleanup",
@@ -202,6 +253,22 @@ export function createCodexAgent(
       }
     },
   };
+}
+
+/** Hands the thread's rollout to the Turn's saved work; never fails the Turn. */
+async function saveConversation(
+  directory: string,
+  threadId: string,
+  path: string,
+  conversation: Conversation,
+) {
+  // Codex reports the real path, which differs under a symbolic link.
+  const real = await realpath(path).catch(() => path);
+  const home = await realpath(directory).catch(() => directory);
+  const saved = v.safeParse(rolloutPath, relative(home, real));
+  if (!saved.success) return;
+  const content = await readFile(path).catch(() => undefined);
+  if (content) conversation.save({ threadId, path: saved.output, content });
 }
 
 async function initialize(rpc: CodexRpc) {
@@ -220,6 +287,12 @@ async function runTurn(
   http: typeof fetch,
   environment?: string,
   diagnostics?: Diagnostics,
+  conversation?: Conversation & {
+    started(thread: { id: string; path?: string }): void;
+    /** The previous Turn ran on another Model Provider. */
+    foreign?: boolean;
+  },
+  gitDir?: string,
 ) {
   // Commands may always reach the internet: GitHub credentials are added
   // outside the container, so none are here to send.
@@ -227,7 +300,8 @@ async function runTurn(
     environment && job.mode !== "plan"
       ? {
           type: "workspaceWrite" as const,
-          writableRoots: [cwd, environment],
+          // The Agent commits, so it writes the git directory too.
+          writableRoots: [cwd, environment, ...(gitDir ? [gitDir] : [])],
           networkAccess: true,
           excludeSlashTmp: true,
           excludeTmpdirEnvVar: true,
@@ -249,7 +323,7 @@ async function runTurn(
     : undefined;
   const abort = () => rpc.close();
   signal.addEventListener("abort", abort, { once: true });
-  let access = job.access;
+  const access = job.access;
   let threadId: string | undefined;
   let reply = "";
   const agentSpan = diagnostics?.start(
@@ -286,7 +360,7 @@ async function runTurn(
       ),
     }),
   });
-  const sensitive = new Set([access.accessToken, job.refresh.bearer]);
+  const sensitive = new Set([access.accessToken]);
   const loginParams = () => ({
     accessToken: access.accessToken,
     chatgptAccountId: access.accountId,
@@ -303,6 +377,9 @@ async function runTurn(
   };
   rpc.onFailure = fail;
   rpc.onRequest = async (method, params) => {
+    // A conversation from before may still offer a tool that is gone.
+    if (method === "item/tool/call" && v.is(retiredToolCallSchema, params))
+      return retiredToolResult(params.tool);
     if (method === "item/tool/call" && githubReader && threadId) {
       const call = v.parse(githubToolCallSchema, params);
       if (call.threadId !== threadId) throw new Error("Unexpected tool thread");
@@ -344,28 +421,8 @@ async function runTurn(
       throw new Error("Interactive requests are disabled");
     }
 
-    const url = new URL(job.refresh.url);
-    if (url.protocol !== "https:" || url.username || url.password)
-      throw new Error("Invalid refresh URL");
-    const response = await http(url, {
-      method: "POST",
-      redirect: "error",
-      headers: {
-        Authorization: `Bearer ${job.refresh.bearer}`,
-        "X-Tailos-Access-Version": access.accessVersion,
-      },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-    });
-    if (!response.ok) throw new Error("Refresh unavailable");
-    const next = v.parse(CodexAccess, await response.json());
-    if (
-      next.accountId !== access.accountId ||
-      next.connectionVersion !== access.connectionVersion
-    )
-      throw new Error("Connection changed");
-    access = next;
-    sensitive.add(next.accessToken);
-    diagnostics?.addSecret(next.accessToken);
+    // The token is a placeholder: the model egress Worker outside the
+    // container adds the real one and refreshes it when the API rejects it.
     return loginParams();
   };
   rpc.onNotification = (method, params) => {
@@ -508,19 +565,57 @@ async function runTurn(
     });
     if (supportsCodexSelection(job.model, job.effort))
       throw new Error("Requested model or effort is unavailable");
-    const thread = v.parse(
+    const threadOptions = {
+      cwd,
+      ...(job.model && { model: job.model }),
+      approvalPolicy: "never",
+      sandbox:
+        job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
+    };
+    const lostWork = conversation?.lost ?? false;
+    let lostConversation = conversation?.foreign ?? false;
+    let thread: v.InferOutput<typeof threadSchema> | undefined;
+    if (conversation?.resume) {
+      // The rollout brings back the earlier turns and the dynamic tools.
+      thread = await rpc
+        .call("thread/resume", {
+          threadId: conversation.resume.threadId,
+          ...threadOptions,
+        })
+        .then((result) => v.parse(threadSchema, result))
+        .catch((error: unknown) => {
+          // Shown with the other carry-over steps, so the cause can be found.
+          const span = diagnostics?.start(
+            "continuity",
+            JSON.stringify({ target: "conversation" }),
+            agentSpan,
+          );
+          if (span)
+            diagnostics?.end(
+              span,
+              { outcome: "failed" },
+              diagnosticErrorBody(error),
+            );
+          return undefined;
+        });
+      lostConversation = !thread;
+    }
+    thread ??= v.parse(
       threadSchema,
       await rpc.call("thread/start", {
-        cwd,
-        ...(job.model && { model: job.model }),
-        ephemeral: true,
-        approvalPolicy: "never",
-        sandbox:
-          job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
-        ...(job.checkout && { dynamicTools: [githubTool] }),
+        ...threadOptions,
+        // A Session's conversation is kept for its next Turn.
+        ephemeral: !conversation,
+        ...(job.checkout && {
+          dynamicTools: [githubTool],
+        }),
       }),
     );
     threadId = thread.thread.id;
+    conversation?.started({
+      id: thread.thread.id,
+      ...(thread.thread.path && { path: thread.thread.path }),
+    });
     if (agentSpan && (thread.model || thread.modelProvider))
       diagnostics?.output(
         agentSpan,
@@ -533,7 +628,9 @@ async function runTurn(
     const result = await runAgentTurns({
       job,
       signal,
-      prompt: agentPrompt(job, githubTool.name),
+      prompt:
+        continuityNotice(lostWork, lostConversation) +
+        agentPrompt(job, githubTool.name),
       sensitive,
       failure: () => failure,
       async turn(prompt, revision, timeoutMs) {

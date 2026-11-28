@@ -38,10 +38,9 @@ const bucket = {
   binding: "RUN_ARTIFACTS",
   bucket_name: "tailos-preview-run-artifacts",
 };
-const [database, r2, { result: workersSubdomain }] = await Promise.all([
+const [database, r2] = await Promise.all([
   previewDatabase(),
   cloudflare(`r2/buckets/${bucket.bucket_name}`),
-  cloudflare("workers/subdomain"),
 ]);
 if (r2.result?.name !== bucket.bucket_name)
   throw new Error(
@@ -160,10 +159,7 @@ try {
     },
     { ...login.secrets, ...proxy },
   );
-  const apiDeploymentOrigin = findApiDeploymentOrigin(
-    apiDeployment,
-    workersSubdomain?.subdomain,
-  );
+  const apiDeploymentOrigin = findApiDeploymentOrigin(apiDeployment);
   await verify(apiDeploymentOrigin, "/health", serviceIs("tailos-api"), {
     "X-Tailos-Preview-Proxy": secret,
   });

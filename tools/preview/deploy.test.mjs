@@ -6,7 +6,7 @@ import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-test("publishes Previews using Wrangler's output file when stdout contains module logs", (t) => {
+test("publishes Previews using Wrangler's output file without account subdomain access when stdout contains module logs", (t) => {
   const temp = mkdtempSync(join(tmpdir(), "tailos-preview-test-"));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const script = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
@@ -54,7 +54,10 @@ globalThis.fetch = async (input, options) => {
   if (url.hostname === "api.cloudflare.com") {
     const path = url.pathname.split("/").slice(5).join("/");
     if (path === "workers/subdomain")
-      return ok({ success: true, result: { subdomain: "preview-account" } });
+      return Response.json(
+        { success: false, errors: [{ code: 10000 }] },
+        { status: 403 },
+      );
     assert.ok(path.startsWith("d1/database/") || path === "r2/buckets/tailos-preview-run-artifacts");
     const name = path.startsWith("d1/") ? "tailos-preview" : "tailos-preview-run-artifacts";
     return ok({ success: true, result: { name } });

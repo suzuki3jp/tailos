@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -53,6 +59,7 @@ const wranglerEnv = {
 function deploy(kind, config, secrets) {
   const configPath = join(temp, `${kind}.json`);
   const secretPath = join(temp, `${kind}-secrets.json`);
+  const outputPath = join(temp, `${kind}-output.ndjson`);
   writeFileSync(
     configPath,
     JSON.stringify({
@@ -67,7 +74,7 @@ function deploy(kind, config, secrets) {
     { mode: 0o600 },
   );
   writeFileSync(secretPath, JSON.stringify(secrets), { mode: 0o600 });
-  const output = execFileSync(
+  execFileSync(
     "pnpm",
     [
       "--filter",
@@ -87,21 +94,26 @@ function deploy(kind, config, secrets) {
       "--json",
     ],
     {
-      env: wranglerEnv,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
+      env: { ...wranglerEnv, WRANGLER_OUTPUT_FILE_PATH: outputPath },
+      stdio: ["ignore", "ignore", "inherit"],
     },
   );
+  // Wrangler can log additional modules to stdout even with --json.
+  const output = readFileSync(outputPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .find(({ type, version }) => type === "preview" && version === 1);
+  if (output?.worker_name !== workers[kind] || output.preview_name !== name)
+    throw new Error(
+      `Wrangler did not report deployment of ${workers[kind]}/${name}`,
+    );
   const expected = kind === "web" ? web : api;
-  const { preview, deployment } = JSON.parse(output);
-  if (
-    preview?.name !== name ||
-    !preview.urls?.some((url) => new URL(url).origin === expected)
-  )
+  if (!output.preview_urls?.some((url) => new URL(url).origin === expected))
     throw new Error(
       `Configure the ${kind} Preview custom domain for ${expected}`,
     );
-  return deployment;
+  return output.deployment_urls;
 }
 
 async function verify(origin, healthPath, isReady, headers) {
@@ -129,7 +141,7 @@ const serviceIs = (service) => async (response) => {
 
 try {
   const proxy = { TAILOS_PREVIEW_PROXY_SECRET: secret };
-  const deployment = deploy(
+  const apiDeploymentUrls = deploy(
     "api",
     {
       main: join(artifacts, "api/preview.js"),
@@ -147,7 +159,7 @@ try {
     },
     { ...login.secrets, ...proxy },
   );
-  const apiDeploymentOrigin = findApiDeploymentOrigin(deployment?.urls, api);
+  const apiDeploymentOrigin = findApiDeploymentOrigin(apiDeploymentUrls, api);
   await verify(apiDeploymentOrigin, "/health", serviceIs("tailos-api"), {
     "X-Tailos-Preview-Proxy": secret,
   });

@@ -617,7 +617,6 @@ test.for([{ oversized: false }, { oversized: true }])(
       executionContext: JSON.stringify({
         version: 1,
         engine: "codex",
-        mode: "plan",
         instructions: planningPrompt,
         connectionId: `codex/${crypto.randomUUID()}`,
         repository: {
@@ -651,12 +650,12 @@ test.for([{ oversized: false }, { oversized: true }])(
         return Response.json({
           status: "succeeded",
           reply: "Plan",
-          plan: { planPresented: true, needsAnswer: false },
           events: [],
         });
       jobs.push(String(init.body));
       const job = JSON.parse(String(init.body));
-      expect(job.mode).toBe("plan");
+      // Planning runs with the same permissions as any other Turn.
+      expect(job).not.toHaveProperty("mode");
       expect(job.githubContext).toEqual({
         kind: "issue",
         number: 3,
@@ -676,7 +675,6 @@ test.for([{ oversized: false }, { oversized: true }])(
         {
           status: "succeeded",
           reply: "Plan",
-          plan: { planPresented: true, needsAnswer: false },
           events: [],
         },
         { status: 202 },
@@ -783,7 +781,7 @@ test.for([{ oversized: false }, { oversized: true }])(
       // The controller keeps its key for the Session's container: a new
       // Runner takes the first key it is sent.
       expect(memory.has("runnerKey")).toBe(true);
-      // Planning results arrived: the Agent's GitHub access ended before them.
+      // The results arrived: the Agent's GitHub access ended before them.
       expect(closedAtDestroy).toBe(true);
       expect(memory.has("agentEgressClosed")).toBe(false);
     }

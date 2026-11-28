@@ -278,18 +278,18 @@ async function runTurn(
   gitDir?: string,
 ) {
   // Commands may always reach the internet: GitHub credentials are added
-  // outside the container, so none are here to send.
-  const sandboxPolicy =
-    environment && job.mode !== "plan"
-      ? {
-          type: "workspaceWrite" as const,
-          // The Agent commits, so it writes the git directory too.
-          writableRoots: [cwd, environment, ...(gitDir ? [gitDir] : [])],
-          networkAccess: true,
-          excludeSlashTmp: true,
-          excludeTmpdirEnvVar: true,
-        }
-      : { type: "readOnly" as const, networkAccess: true };
+  // outside the container, so none are here to send. Every repository Turn
+  // may write its work: what it does is up to its prompt.
+  const sandboxPolicy = environment
+    ? {
+        type: "workspaceWrite" as const,
+        // The Agent commits, so it writes the git directory too.
+        writableRoots: [cwd, environment, ...(gitDir ? [gitDir] : [])],
+        networkAccess: true,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: true,
+      }
+    : { type: "readOnly" as const, networkAccess: true };
   const rpc = new CodexRpc(child);
   if (job.githubContext && !job.checkout) {
     rpc.close();
@@ -314,8 +314,7 @@ async function runTurn(
     JSON.stringify({
       engine: "codex",
       version: process.env.TAILOS_CODEX_VERSION ?? "unknown",
-      sandbox:
-        job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
+      sandbox: job.checkout ? "workspace-write" : "read-only",
     }),
   );
   let agentSucceeded = false;
@@ -372,11 +371,8 @@ async function runTurn(
         parentSpan: agentSpan,
       });
     }
-    if (method !== "account/chatgptAuthTokens/refresh") {
-      if (job.mode === "plan")
-        fail(new Error("Interactive planning requests are disabled"));
+    if (method !== "account/chatgptAuthTokens/refresh")
       throw new Error("Interactive requests are disabled");
-    }
 
     // The token is a placeholder: the model egress Worker outside the
     // container adds the real one and refreshes it when the API rejects it.
@@ -526,8 +522,7 @@ async function runTurn(
       cwd,
       ...(job.model && { model: job.model }),
       approvalPolicy: "never",
-      sandbox:
-        job.checkout && job.mode !== "plan" ? "workspace-write" : "read-only",
+      sandbox: job.checkout ? "workspace-write" : "read-only",
     };
     const lostWork = conversation?.lost ?? false;
     let lostConversation = conversation?.foreign ?? false;

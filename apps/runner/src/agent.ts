@@ -1,11 +1,10 @@
-import type { PlanResult, RunnerJob } from "@tailos/core/runner";
+import type { RunnerJob } from "@tailos/core/runner";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import type { SavedConversation } from "@/continuity.ts";
 
 export type AgentResult = {
   reply: string;
   sessionTitle?: string;
-  plan?: PlanResult;
 };
 
 /**
@@ -36,11 +35,6 @@ export class AgentSandboxUnavailable extends Error {}
 export const fakeAgent: AgentAdapter = {
   async run(job, signal) {
     signal.throwIfAborted();
-    return {
-      reply: `Fake agent completed: ${job.prompt}`,
-      ...(job.mode === "plan" && {
-        plan: { planPresented: true, needsAnswer: false },
-      }),
-    };
+    return { reply: `Fake agent completed: ${job.prompt}` };
   },
 };

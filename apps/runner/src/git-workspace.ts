@@ -107,13 +107,8 @@ export async function runInGitWorkspace(
   ) => Promise<AgentResult>,
   remote = `https://github.com/${checkout.repository}.git`,
   diagnostics?: Diagnostics,
-  mode?: RunnerJob["mode"],
   continuity?: WorkspaceContinuity,
-): Promise<{
-  reply: string;
-  sessionTitle?: string;
-  plan?: AgentResult["plan"];
-}> {
+): Promise<AgentResult> {
   const workDir = continuity?.workDir;
   const metadata = workDir
     ? join(workDir, "git")
@@ -675,17 +670,12 @@ export async function runInGitWorkspace(
     }
     await writeConfig(agentConfig);
     agentStarted = true;
-    const { reply, plan, sessionTitle } = await work(
+    const { reply, sessionTitle } = await work(
       { cwd, gitDir: metadata },
       conversation,
     );
-    const title = sessionTitle ? { sessionTitle } : {};
     signal.throwIfAborted();
-    if (mode === "plan") {
-      if (!plan) throw new Error("Missing plan result");
-      return { reply, plan, ...title };
-    }
-    return { reply, ...title };
+    return { reply, ...(sessionTitle && { sessionTitle }) };
   } catch (error) {
     if (activeSpan)
       diagnostics?.end(

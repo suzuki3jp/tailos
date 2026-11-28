@@ -146,13 +146,13 @@ Agent のコマンドは常に外部と通信できる。依存関係のスク�
 
 ### Issue 調査用の計画実行
 
-API が受付時に `mode: "plan"` を決め、Runner は作業領域を読み取り専用にする。Issue のタイトルと本文は受付時のハッシュと照合する。結果の `planPresented` と `needsAnswer` は D1 の Run に、説明本文は Session のメッセージに保存する。[計画会話](pdr/records/PDR-20261125-planning-tables-dropped.md)、[Issue の参照](pdr/records/PDR-20261124-routine-github-context.md)
+計画の Turn も、ほかの Turn と同じ権限（作業ツリーと git の管理ディレクトリに書き込めるサンドボックス）で動く。計画を返し、実装や公開をしないことは plan Routine のプロンプトで求める。マイグレーション 0016 が、既定のまま変更されていない plan Routine のプロンプトを、計画の進め方を含む新しい既定の文に書き換える。Issue のタイトルと本文は受付時のハッシュと照合する。説明本文は Session のメッセージに保存する。既定ブランチの保護ルールがないリポジトリでは、計画の Turn も始まらない。[Turn の権限](pdr/records/PDR-20261129-turn-permissions.md)、[計画会話](pdr/records/PDR-20261129-planning-routine-writable.md)、[Issue の参照](pdr/records/PDR-20261124-routine-github-context.md)
 
 保存上限を超える返答は、共通の Turn 処理が同じ会話で短縮を再要求する。上限と構造は [Runner の共有契約](../packages/core/src/runner.ts)と [Turn の実装](../apps/runner/src/agent-turns.ts)、再要求の理由は [返答の短縮](pdr/records/PDR-20261113-003.md) を参照する。
 
 ### Issue 内で計画を相談する
 
-GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。
+GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261129-planning-routine-writable.md)）。
 
 許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。plan Routine の Session で Agent が計画または質問を Issue にコメントするので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で続ける。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は label の Routine から開始し、コメントでは起動しない。
 

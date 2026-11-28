@@ -84,13 +84,6 @@ export function triggerIssue(
   return trigger && "issueNumber" in trigger ? trigger : undefined;
 }
 
-export const ExecutionMode = v.picklist(["plan", "implement"]);
-export const PlanResult = v.strictObject({
-  planPresented: v.boolean(),
-  needsAnswer: v.boolean(),
-});
-export type PlanResult = v.InferOutput<typeof PlanResult>;
-
 export const agentOptions = {
   model: v.optional(v.pipe(v.string(), v.minLength(1))),
   effort: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -101,12 +94,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 // Stored Runs and planning inputs predate `trigger` and kept the issue values
 // inside `repository`. Some also carry the removed per-Project network
-// setting. Read them in the current shape without rewriting rows.
+// setting, or the removed execution mode: every Turn now runs with the same
+// permissions. Read them in the current shape without rewriting rows.
 function upgradeStoredContext(input: unknown) {
-  if (!isRecord(input) || !isRecord(input.repository)) return input;
-  const { agentNetworkAccess: _removed, ...current } = input.repository;
-  if (input.trigger !== undefined || current.issueNumber === undefined)
-    return { ...input, repository: current };
+  if (!isRecord(input)) return input;
+  const { mode, ...context } = input;
+  if (!isRecord(context.repository)) return context;
+  const { agentNetworkAccess: _removed, ...current } = context.repository;
+  if (context.trigger !== undefined || current.issueNumber === undefined)
+    return { ...context, repository: current };
   const { issueNumber, issueContentHash, triggerLabel, ...repository } =
     current;
   const issue = {
@@ -114,10 +110,11 @@ function upgradeStoredContext(input: unknown) {
     ...(issueContentHash !== undefined && { issueContentHash }),
   };
   return {
-    ...input,
+    ...context,
     repository,
     trigger:
-      input.mode === "plan"
+      // Only planning ran from issue comments then.
+      mode === "plan"
         ? { kind: "github.issue-comment", ...issue }
         : { kind: "github.issue-label", ...issue, label: triggerLabel },
   };
@@ -140,7 +137,6 @@ const agentContext = {
   ),
   // The Routine's prompt, when its message is what the user wrote.
   instructions: v.optional(promptText),
-  mode: v.optional(ExecutionMode),
   ...repositoryRun,
 };
 
@@ -151,7 +147,6 @@ export const ExecutionContext = v.pipe(
     v.strictObject({
       version: v.literal(1),
       engine: v.literal("fake"),
-      mode: v.optional(ExecutionMode),
     }),
     v.strictObject({
       version: v.literal(1),
@@ -206,7 +201,6 @@ const job = {
    * prompt holds its Routine's instructions instead.
    */
   message: v.optional(v.pipe(v.string(), v.maxLength(maxRunnerJobBytes))),
-  mode: v.optional(ExecutionMode),
   version: v.literal(1),
   runId: v.pipe(v.string(), v.uuid()),
   prompt: promptText,
@@ -312,7 +306,6 @@ export const RunnerStatus = v.variant("status", [
     status: v.literal("succeeded"),
     reply: replyText,
     sessionTitle: optionalSessionTitle,
-    plan: v.optional(PlanResult),
     events,
   }),
   v.strictObject({

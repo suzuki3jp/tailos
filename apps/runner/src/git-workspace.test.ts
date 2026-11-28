@@ -84,7 +84,6 @@ async function repository(t: TestContext) {
     run(
       work: Parameters<typeof runInGitWorkspace>[2],
       options: {
-        mode?: "plan";
         diagnostics?: Diagnostics;
         continuity?: WorkspaceContinuity;
       } = {},
@@ -100,7 +99,6 @@ async function repository(t: TestContext) {
         work,
         remote,
         options.diagnostics,
-        options.mode,
         options.continuity,
       );
     },
@@ -228,20 +226,6 @@ test("starts like a shallow clone that the Agent commits and pushes in as the Ap
   // The work tree and its git directory are gone without continuity.
   expect(await exists(workspace!.cwd)).toBe(false);
   expect(await exists(workspace!.gitDir)).toBe(false);
-});
-
-test("planning reads the base", async (t) => {
-  const repo = await repository(t);
-  const plan = { planPresented: false, needsAnswer: true };
-  await expect(
-    repo.run(
-      async ({ cwd }) => {
-        expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
-        return { reply: "Which behavior is desired?", plan };
-      },
-      { mode: "plan" },
-    ),
-  ).resolves.toEqual({ reply: "Which behavior is desired?", plan });
 });
 
 test("carries branches, HEAD, the work tree, the git settings and the conversation over to the next Turn", async (t) => {
@@ -428,7 +412,6 @@ test("keeps the previous work when the Turn never reached it", async (t) => {
     AbortSignal.timeout(15_000),
     async () => ({ reply: "never" }),
     "file:///nonexistent",
-    undefined,
     undefined,
     { restore: "lost", saved: (result) => (saved = result) },
   ).catch(() => {});

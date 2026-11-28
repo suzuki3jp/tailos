@@ -24,7 +24,6 @@ type RunOutcome =
       sessionTitle?: string;
       events: RunnerEvent[];
       publicationResult?: PublicationResult;
-      plan?: Extract<RunnerStatus, { status: "succeeded" }>["plan"];
     }
   | Extract<RunnerStatus, { status: "failed" }>
   | {
@@ -155,7 +154,6 @@ function publishedPullRequest(outcome: RunnerStatus | RunOutcome) {
 function completionResult(
   outcome: Extract<RunnerStatus | RunOutcome, { status: "succeeded" }>,
 ) {
-  if (outcome.plan) return { kind: "plan", ...outcome.plan };
   if ("publicationResult" in outcome && outcome.publicationResult)
     return outcome.publicationResult;
   return { kind: "completed" };

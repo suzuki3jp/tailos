@@ -313,7 +313,7 @@ test("preserves the agent failure when storing its R2 artifact also fails", asyn
   ).toBe("agent_failed");
 });
 
-test("stores questions-only planning results and the reply in the session", async (t) => {
+test("a planning Turn saved with the removed mode completes like any other", async (t) => {
   const db = await createTestDb(t);
   const { runId, sessionId } = await admitTrigger(db, {
     ...request,
@@ -321,13 +321,8 @@ test("stores questions-only planning results and the reply in the session", asyn
   });
   await advanceRun(db, runId, {
     async start(job) {
-      expect(job.context.mode).toBe("plan");
-      return {
-        status: "succeeded",
-        reply: "Which behavior?",
-        plan: { planPresented: false, needsAnswer: true },
-        events: [],
-      };
+      expect(job.context).toEqual({ version: 1, engine: "fake" });
+      return { status: "succeeded", reply: "Which behavior?", events: [] };
     },
     poll: unexpectedPoll,
   });
@@ -337,8 +332,7 @@ test("stores questions-only planning results and the reply in the session", asyn
     .first();
   expect(result).toEqual({
     status: "succeeded",
-    result:
-      '{"version":1,"kind":"plan","planPresented":false,"needsAnswer":true}',
+    result: '{"version":1,"kind":"completed"}',
   });
   expect(
     await db

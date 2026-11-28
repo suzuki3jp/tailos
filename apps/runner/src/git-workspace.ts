@@ -187,6 +187,11 @@ export async function runInGitWorkspace(
         "http.sslVerify=true",
         "-c",
         "http.followRedirects=false",
+        // Nothing may write the git directory behind the Runner's back.
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "maintenance.auto=false",
         ...args,
       ],
       options,
@@ -200,14 +205,24 @@ export async function runInGitWorkspace(
   const scratch = await mkdtemp(
     join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-runner-"),
   );
+  /**
+   * Where the Runner writes objects while the git directory is the Agent's:
+   * it reads the Agent's objects, and never writes through a link there.
+   */
+  const scratchObjects = join(scratch, "objects");
+  await mkdir(scratchObjects);
+  const ownObjects = {
+    GIT_OBJECT_DIRECTORY: scratchObjects,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(metadata, "objects"),
+  };
 
   /**
-   * The Agent's git configuration as it is, or undefined when it is not a
+   * A file of the git directory as it is, or undefined when it is not a
    * regular file. Links are not followed: they could point anywhere.
    */
-  const readConfig = async () => {
+  const readOwnFile = async (path: string) => {
     const file = await open(
-      configPath,
+      path,
       constants.O_RDONLY | constants.O_NOFOLLOW,
     ).catch(() => undefined);
     if (!file) return undefined;
@@ -217,6 +232,7 @@ export async function runInGitWorkspace(
       await file.close();
     }
   };
+  const readConfig = () => readOwnFile(configPath);
   /** Replaces the configuration without writing through a link. */
   const writeConfig = async (data: Buffer) => {
     await rm(configPath, { force: true });
@@ -265,7 +281,9 @@ export async function runInGitWorkspace(
   /**
    * Makes the Runner's git commands safe to run on a git directory the Agent
    * may have changed: they read the Runner's configuration, and nothing
-   * outside the git directory. Returns what the Agent's configuration was.
+   * outside the git directory. They must also write nothing there but the
+   * configuration: objects go to `scratchObjects`, references to a repository
+   * of the Runner's own. Returns what the Agent's configuration was.
    */
   const asRunner = async () => {
     const own = await stat(join(metadata, "commondir")).then(
@@ -278,9 +296,12 @@ export async function runInGitWorkspace(
     return agentConfig;
   };
 
-  /** The tree of the whole work tree on HEAD, without touching the index. */
+  /**
+   * The tree of the whole work tree on HEAD, without touching the index or
+   * the git directory.
+   */
   const workTree = async (head: string, options: { signal?: AbortSignal }) => {
-    const index = { GIT_INDEX_FILE: join(scratch, "index") };
+    const index = { GIT_INDEX_FILE: join(scratch, "index"), ...ownObjects };
     try {
       await git(["read-tree", head], { ...options, env: index });
       await git(["add", "--all"], { ...options, env: index });
@@ -333,12 +354,7 @@ export async function runInGitWorkspace(
       const names = (refs: SavedWork["refs"]) =>
         refs.map(({ name, sha }) => `${sha} ${name}`).join("\n");
       if (names(await keptRefs()) !== names(saved.refs)) return false;
-      const tree = await text([
-        "rev-parse",
-        "--verify",
-        `${saved.work}^{tree}`,
-      ]);
-      return (await workTree(saved.head, {})) === tree;
+      return !!saved.tree && (await workTree(saved.head, {})) === saved.tree;
     } catch {
       return false;
     }
@@ -424,9 +440,11 @@ export async function runInGitWorkspace(
       throw new Error("Saved work does not follow its HEAD");
     await git(["checkout", "--quiet", "--force", "--detach", saved.head]);
     // Branches the Agent no longer has, such as the default branch, go.
-    for (const ref of await keptRefs())
-      if (!saved.refs.some((kept) => kept.name === ref.name))
-        await git(["update-ref", "-d", ref.name]);
+    // Work saved before Sessions kept branches keeps those of the start.
+    if (!saved.legacy)
+      for (const ref of await keptRefs())
+        if (!saved.refs.some((kept) => kept.name === ref.name))
+          await git(["update-ref", "-d", ref.name]);
     for (const ref of saved.refs) {
       const present = await git(["cat-file", "-e", `${ref.sha}^{commit}`]).then(
         () => true,
@@ -442,10 +460,15 @@ export async function runInGitWorkspace(
     // unstaged as they were.
     await git(["read-tree", "-m", "-u", saved.head, saved.work]);
     await git(["reset", "--quiet"]);
-    if (saved.branch) {
-      if ((await text(["rev-parse", "--verify", saved.branch])) !== saved.head)
+    const branch =
+      saved.branch ??
+      (saved.legacy && saved.head === checkout.baseSha
+        ? `refs/heads/${checkout.defaultBranch}`
+        : undefined);
+    if (branch) {
+      if ((await text(["rev-parse", "--verify", branch])) !== saved.head)
         throw new Error("Saved HEAD is not on its branch");
-      await git(["symbolic-ref", "HEAD", saved.branch]);
+      await git(["symbolic-ref", "HEAD", branch]);
     }
     const restored = await text([
       "for-each-ref",
@@ -484,51 +507,70 @@ export async function runInGitWorkspace(
       const tree = await workTree(head, options);
       const work = await text(
         ["commit-tree", tree, "-p", head, "-m", "Tailos saved work"],
-        { env: continuityIdentity, signal: saveSignal },
+        { env: { ...continuityIdentity, ...ownObjects }, signal: saveSignal },
       );
-      await git(["update-ref", continuityRef, work], options);
       // History before the base or a shallow fetch's boundary is not here:
       // the next Turn fetches those commits again.
-      const shallow = await readFile(join(metadata, "shallow"), "utf8").then(
-        (data) =>
-          data.split("\n").filter((line) => /^[a-f0-9]{40}$/.test(line)),
-        () => [],
-      );
-      const bundle = join(scratch, "save.bundle");
-      try {
-        await git(
+      const shallow = ((await readOwnFile(join(metadata, "shallow"))) ?? "")
+        .toString()
+        .split("\n")
+        .filter((line) => /^[a-f0-9]{40}$/.test(line));
+      // The remote's branches stay out: their history can be long, and it is
+      // on GitHub.
+      const bundled = [
+        { name: continuityRef, sha: work },
+        ...refs.filter((ref) => !remoteRef(ref.name)),
+      ];
+      // References only go in a repository of the Runner's own, which reads
+      // the objects of both.
+      const repository = join(scratch, "bundle.git");
+      const inRepository = (args: string[]) =>
+        run(
           [
-            "bundle",
-            "create",
-            bundle,
-            continuityRef,
-            // The remote's branches stay out: their history can be long, and
-            // it is on GitHub.
-            ...refs
-              .filter((ref) => !remoteRef(ref.name))
-              .map((ref) => ref.name),
-            "--not",
-            checkout.baseSha,
-            ...shallow,
+            "--git-dir=" + repository,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "gc.auto=0",
+            ...args,
           ],
-          options,
+          { cwd: scratch, signal: saveSignal },
         );
-        continuity.saved({
-          archive: await encodeSavedWork({
-            baseSha: checkout.baseSha,
-            head,
-            work,
-            ...(branch && { branch }),
-            refs,
-            ...(agentConfig && { gitConfig: agentConfig }),
-            bundle: await readFile(bundle),
-            ...(savedConversation && { conversation: savedConversation }),
-          }),
-        });
-      } finally {
-        await rm(bundle, { force: true });
-        await git(["update-ref", "-d", continuityRef]).catch(() => {});
-      }
+      await run(["init", "--quiet", "--bare", repository], {
+        cwd: scratch,
+        signal: saveSignal,
+      });
+      await writeFile(
+        join(repository, "objects", "info", "alternates"),
+        `${scratchObjects}\n${join(metadata, "objects")}\n`,
+      );
+      if (shallow.length)
+        await writeFile(join(repository, "shallow"), shallow.join("\n") + "\n");
+      for (const ref of bundled)
+        await inRepository(["update-ref", ref.name, ref.sha]);
+      const bundle = join(scratch, "save.bundle");
+      await inRepository([
+        "bundle",
+        "create",
+        bundle,
+        ...bundled.map((ref) => ref.name),
+        "--not",
+        checkout.baseSha,
+        ...shallow,
+      ]);
+      continuity.saved({
+        archive: await encodeSavedWork({
+          baseSha: checkout.baseSha,
+          head,
+          work,
+          tree,
+          ...(branch && { branch }),
+          refs,
+          ...(agentConfig && { gitConfig: agentConfig }),
+          bundle: await readFile(bundle),
+          ...(savedConversation && { conversation: savedConversation }),
+        }),
+      });
     } catch (error) {
       continuity.saved({
         failed: error instanceof ContinuityTooLarge ? "too_large" : "error",

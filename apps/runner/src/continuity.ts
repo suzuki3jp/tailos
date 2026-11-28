@@ -30,6 +30,13 @@ export type SavedWork = {
   baseSha: string;
   head: string;
   work: string;
+  /**
+   * The tree of the work commit, which a work tree found in place must
+   * have. Work saved before Sessions kept branches does not say.
+   */
+  tree?: string;
+  /** Saved before Sessions kept branches: only HEAD and older kept work. */
+  legacy?: true;
   /** The local branch HEAD is on; none when it is detached. */
   branch?: string;
   /**
@@ -101,6 +108,7 @@ const Header = v.variant("version", [
     baseSha: sha,
     head: sha,
     work: sha,
+    tree: sha,
     branch: v.optional(
       v.pipe(v.string(), v.maxLength(1024), v.regex(/^refs\/heads\/[^\0\n]+$/)),
     ),
@@ -120,11 +128,13 @@ export class ContinuityTooLarge extends Error {}
 export async function encodeSavedWork(saved: SavedWork) {
   if ((saved.gitConfig?.length ?? 0) > maxGitConfigBytes)
     throw new ContinuityTooLarge();
+  if (!saved.tree) throw new Error("Saved work needs its tree");
   const header: v.InferInput<typeof Header> = {
     version: 2,
     baseSha: saved.baseSha,
     head: saved.head,
     work: saved.work,
+    tree: saved.tree,
     ...(saved.branch && { branch: saved.branch }),
     refs: saved.refs,
     ...(saved.gitConfig && { gitConfig: saved.gitConfig.length }),
@@ -177,6 +187,9 @@ export async function decodeSavedWork(archive: Buffer): Promise<SavedWork> {
     baseSha: header.baseSha,
     head: header.head,
     work: header.work,
+    ...(header.version === 2
+      ? { tree: header.tree }
+      : { legacy: true as const }),
     ...(header.version === 2 && header.branch && { branch: header.branch }),
     refs,
     ...(header.version === 2 &&

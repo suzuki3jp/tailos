@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -526,6 +527,48 @@ test("never writes the git settings through a link the Agent left", async (t) =>
   expect((await decodeSavedWork(archiveOf(saved))).gitConfig).toBeUndefined();
 });
 
+test("writes nothing through links the Agent left in the git directory", async (t) => {
+  const repo = await repository(t);
+  const kept = await mkdtemp(join(tmpdir(), "tailos-work-"));
+  t.onTestFinished(() => rm(kept, { recursive: true, force: true }));
+  const outside = await mkdtemp(join(tmpdir(), "tailos-outside-"));
+  t.onTestFinished(() => rm(outside, { recursive: true, force: true }));
+  const plant = async (gitDir: string) => {
+    // Where the Runner would write a reference or a loose object.
+    await rm(join(gitDir, "refs", "tailos"), { recursive: true, force: true });
+    await symlink(outside, join(gitDir, "refs", "tailos"));
+    for (let i = 0; i < 256; i++) {
+      const fanout = join(gitDir, "objects", i.toString(16).padStart(2, "0"));
+      if (!(await exists(fanout))) await symlink(outside, fanout);
+    }
+  };
+  const first = await turn(
+    repo,
+    undefined,
+    async ({ cwd, gitDir }) => {
+      await writeFile(join(cwd, "notes.txt"), "untracked\n");
+      await plant(gitDir);
+      return result;
+    },
+    kept,
+  );
+  const archive = archiveOf(first.saved);
+  // Looking at the work left in place writes nothing through them either.
+  const second = await turn(
+    repo,
+    archive,
+    async ({ cwd }) => {
+      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe(
+        "untracked\n",
+      );
+      return result;
+    },
+    kept,
+  );
+  expect(second.result).toEqual(result);
+  expect(await readdir(outside)).toEqual([]);
+});
+
 test("does not save a git directory that refers to another one", async (t) => {
   const repo = await repository(t);
   const { saved } = await turn(repo, undefined, async ({ gitDir }) => {
@@ -604,7 +647,9 @@ test("restores work saved before Sessions kept branches", async (t) => {
       expect(
         agentGit(cwd, "rev-parse", "HEAD", "refs/tailos/unpublished"),
       ).toBe(`${repo.baseSha}\n${kept}`);
-      expect(() => agentGit(cwd, "symbolic-ref", "--quiet", "HEAD")).toThrow();
+      // It starts like a clone, as a new Session does.
+      expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+      expect(agentGit(cwd, "rev-parse", "origin/main")).toBe(repo.baseSha);
       // The Runner's settings, with the App's bot as the author.
       expect(agentGit(cwd, "config", "user.name")).toBe(author.name);
       return result;
@@ -613,6 +658,8 @@ test("restores work saved before Sessions kept branches", async (t) => {
   expect(restored).toEqual(result);
   // Kept work still goes along, until the Agent deletes it.
   expect((await decodeSavedWork(archiveOf(saved))).refs).toEqual([
+    { name: "refs/heads/main", sha: repo.baseSha },
+    { name: "refs/remotes/origin/main", sha: repo.baseSha },
     { name: "refs/tailos/unpublished", sha: kept },
   ]);
 });

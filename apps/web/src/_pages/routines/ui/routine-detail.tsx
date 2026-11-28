@@ -3,7 +3,8 @@
 import { useId, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { IconBrandGithub } from "@tabler/icons-react";
-import { routinesQueryOptions, type Routine } from "@/entities/routine";
+import type { Routine } from "@/entities/routine";
+import { pageRoutinesQueryOptions } from "../api/routines";
 import { SessionRow } from "@/entities/session";
 import { projectsQueryOptions } from "@/features/select-project";
 import { RequestState } from "@/widgets/request-state";
@@ -89,7 +90,7 @@ function RoutineSessions({ projectId, routineId }: Props) {
 }
 
 export function RoutineDetail({ projectId, routineId }: Props) {
-  const routines = useQuery(routinesQueryOptions(projectId));
+  const routines = useQuery(pageRoutinesQueryOptions(projectId));
   const projects = useQuery(projectsQueryOptions());
   if (routines.isPending)
     return (

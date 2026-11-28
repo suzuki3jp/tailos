@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { routinesQueryOptions, type Routine } from "@/entities/routine";
+import type { Routine } from "@/entities/routine";
+import { pageRoutinesQueryOptions } from "../api/routines";
 import { routinePath } from "@/shared/lib/routine-path";
 import { RequestState } from "@/widgets/request-state";
 import { requestStatus } from "../api/request-status";
@@ -33,7 +34,7 @@ function RoutineItem({ routine }: { routine: Routine }) {
 }
 
 export function RoutineList({ projectId }: { projectId: string }) {
-  const query = useQuery(routinesQueryOptions(projectId));
+  const query = useQuery(pageRoutinesQueryOptions(projectId));
   if (query.isPending)
     return (
       <p role="status" className="text-caption text-muted-foreground">

@@ -18,6 +18,9 @@ export function routineSessionsQueryOptions(
 ) {
   return queryOptions({
     queryKey: ["routine-sessions", projectId, routineId],
+    // The server prefetches them for the page: do not read them again on mount.
+    refetchOnMount: false,
+    retryOnMount: false,
     queryFn: async ({ signal }) => {
       const response = await client.projects[":projectId"].sessions.$get(
         {

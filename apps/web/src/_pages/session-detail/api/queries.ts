@@ -8,15 +8,6 @@ class SessionRequestError extends Error {
   }
 }
 
-export function sessionErrorStatus(error: unknown) {
-  return error &&
-    typeof error === "object" &&
-    "status" in error &&
-    typeof error.status === "number"
-    ? error.status
-    : undefined;
-}
-
 export function sessionQueryOptions(id: string) {
   return queryOptions({
     queryKey: ["sessions", id],

@@ -8,7 +8,7 @@ import { pageRoutinesQueryOptions } from "../api/routines";
 import { SessionRow } from "@/entities/session";
 import { projectsQueryOptions } from "@/features/select-project";
 import { RequestState } from "@/widgets/request-state";
-import { requestStatus } from "../api/request-status";
+import { requestErrorStatus } from "@/shared/api";
 import { routineSessionsQueryOptions } from "../api/routine-sessions";
 import { triggerCondition, triggerEvent } from "../model/routine-summary";
 
@@ -67,7 +67,7 @@ function RoutineSessions({ projectId, routineId }: Props) {
   if (query.isError)
     return (
       <RequestState
-        status={requestStatus(query.error)}
+        status={requestErrorStatus(query.error)}
         missing="Sessions are not available."
         retry={() => void query.refetch()}
       />
@@ -101,7 +101,7 @@ export function RoutineDetail({ projectId, routineId }: Props) {
   if (routines.isError)
     return (
       <RequestState
-        status={requestStatus(routines.error)}
+        status={requestErrorStatus(routines.error)}
         missing="This routine is not available."
         retry={() => void routines.refetch()}
       />

@@ -7,7 +7,7 @@ import {
   SessionRow,
   uniqueSessions,
 } from "@/entities/session";
-import { requestErrorStatus } from "../api/queries";
+import { requestErrorStatus } from "@/shared/api";
 import { DataRequestState } from "./data-request-state";
 import { useProjectSelection } from "@/features/select-project";
 

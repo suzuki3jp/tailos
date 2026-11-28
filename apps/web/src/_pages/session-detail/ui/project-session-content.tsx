@@ -5,13 +5,10 @@ import Link from "next/link";
 import type { AgentEngine } from "@tailos/core/models";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/design-systems";
+import { requestErrorStatus } from "@/shared/api";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { RequestState } from "@/widgets/request-state";
-import {
-  isActiveRun,
-  projectSessionQueryOptions,
-  sessionErrorStatus,
-} from "../api/queries";
+import { isActiveRun, projectSessionQueryOptions } from "../api/queries";
 import { sendMessage, SendMessageError } from "../api/send-message";
 import { SessionConversation } from "./session-conversation";
 import { useSessionTimeline } from "../api/use-session-timeline";
@@ -151,7 +148,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         Loading session…
       </p>
     );
-  const status = sessionErrorStatus(session.error);
+  const status = requestErrorStatus(session.error);
   if (!result || status === 401 || status === 404)
     return (
       <div className="mx-auto w-full max-w-172 p-6">

@@ -7,7 +7,7 @@ date: "2026-11-24"
 areas: [projects, triggers, api, database, web]
 keywords: [Routine, Project, triggerLabel, allowedActors, 許可ユーザー, plan, 計画, 通信許可, agentNetworkAccess, 時間上限]
 paths:
-  - apps/api/src/application/triggers/projects.ts
+  - apps/api/src/application/projects/settings.ts
   - apps/api/src/infrastructure/d1/projects.ts
   - apps/api/src/infrastructure/d1/planning.ts
   - apps/api/src/infrastructure/github/app.ts

@@ -7,7 +7,7 @@ date: "2026-11-16"
 areas: [projects, api]
 keywords: [Project名, name, 必須, 空白, trim, 100文字, 同名]
 paths:
-  - apps/api/src/application/triggers/projects.ts
+  - apps/api/src/application/projects/settings.ts
   - apps/api/src/application/projects/**
   - apps/api/src/presentation/http/handlers/projects/**
   - apps/api/src/infrastructure/d1/projects.ts

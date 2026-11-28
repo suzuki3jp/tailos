@@ -1,17 +1,16 @@
 "use client";
 
-import { Button } from "@/shared/ui/design-systems";
+import { Avatar, Button } from "@/shared/ui/design-systems";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { IconUser } from "@tabler/icons-react";
 import { accountProfileQueryOptions } from "@/entities/account";
-import { Avatar } from "@/shared/ui/design-systems";
+import { requestErrorStatus } from "@/shared/api";
 
 export function SidebarAccount() {
   const account = useQuery(accountProfileQueryOptions());
   const data = account.isError ? undefined : account.data;
-  const unauthorized =
-    account.error && "status" in account.error && account.error.status === 401;
+  const unauthorized = requestErrorStatus(account.error) === 401;
   return (
     <div className="mt-auto shrink-0">
       <Link

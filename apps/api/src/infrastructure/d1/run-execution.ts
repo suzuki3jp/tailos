@@ -1,7 +1,9 @@
 import { replyText } from "@tailos/core/runner";
+import type { RunStatus } from "@tailos/core/run-status";
 import * as v from "valibot";
 import { sessionTitleStatement } from "@/infrastructure/d1/session-title.ts";
 import type { D1Database } from "@cloudflare/workers-types";
+import type { RunArtifactsBucket } from "@/bindings.ts";
 import {
   timelineMarker,
   timelineNotification,
@@ -9,13 +11,9 @@ import {
 import {
   advanceRun as execute,
   type RunInput,
-  type RunStatus,
   type RunStore,
 } from "@/application/runs/advance-run.ts";
-import {
-  writeRunArtifacts,
-  type RunArtifactsBucket,
-} from "@/infrastructure/r2/run-artifacts.ts";
+import { writeRunArtifacts } from "@/infrastructure/r2/run-artifacts.ts";
 import {
   ensureRunTrace,
   executionTransition,

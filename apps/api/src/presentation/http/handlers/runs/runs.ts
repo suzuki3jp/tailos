@@ -1,4 +1,5 @@
 import type { TerminalResult } from "@/application/runs/artifacts.ts";
+import { isActiveRunStatus } from "@tailos/core/run-status";
 import { Hono } from "hono";
 import * as v from "valibot";
 import {
@@ -35,7 +36,7 @@ export function createRunRoutes(
     const run = await ownedRun(c.env, c.req.param("id"));
     if (!run) return c.notFound();
 
-    if (run.status === "queued" || run.status === "running") {
+    if (isActiveRunStatus(run.status)) {
       const start = startRun(c.env);
       if (!start) return c.json({ error: "runner_unavailable" }, 503);
       await start(run.id);

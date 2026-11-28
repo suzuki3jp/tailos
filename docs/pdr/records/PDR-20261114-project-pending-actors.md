@@ -6,7 +6,7 @@ status: accepted
 date: "2026-11-14"
 areas: [projects, planning, auth]
 keywords: [allowedActors, 許可ユーザー, 取消, 保留入力, pending, 計画会話]
-paths: ["apps/api/src/infrastructure/d1/planning.ts", "docs/design.md"]
+paths: ["apps/api/src/infrastructure/d1/planning.ts"]
 symbols: [acceptPlanningInput, dispatchPlanningInputs]
 supersedes: []
 decided_by: suzuki3jp

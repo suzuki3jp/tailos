@@ -9,15 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import {
-  basename,
-  delimiter,
-  dirname,
-  isAbsolute,
-  join,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type {
   EffortLevel,
   HookCallback,
@@ -38,24 +30,29 @@ import {
   runAgentTurns,
   type RepositoryJob,
 } from "@/agent-turns.ts";
-import { createGitHubReader, githubTool } from "@/github-tool.ts";
+import {
+  createGitHubReader,
+  githubTool,
+  readGitHubTool,
+} from "@/github-tool.ts";
 import { claudeTranscriptPath } from "@/continuity.ts";
 import {
   continuityNotice,
   lostConversationNotice,
 } from "@/continuity-notice.ts";
+import { startEgressProxy } from "@/egress.ts";
 import {
-  prepareGitHubCli,
-  startEgressProxy,
-  trustEnvironment,
-} from "@/egress.ts";
+  agentCommandEnvironment,
+  prepareAgentEnvironment,
+  providerToolEnvironment,
+} from "@/agent-environment.ts";
 import {
   diagnosticErrorBody,
   withDiagnosticSpan,
 } from "@/diagnostic-operations.ts";
 
 type ClaudeJob = Extract<RepositoryJob, { engine: "claude" }>;
-type GitHubRead = ReturnType<typeof createGitHubReader>["read"];
+type GitHubRead = (input: unknown) => ReturnType<typeof readGitHubTool>;
 /** The Tailos tools Claude Code gets, each run in the Runner process. */
 type TailosTools = { read?: GitHubRead };
 
@@ -389,17 +386,12 @@ export function createClaudeAgent(
       let sessionId: string | undefined;
       try {
         signal.throwIfAborted();
-        await Promise.all(
-          ["config", "workspace"]
-            .map((path) => join(root, path))
-            .concat(
-              ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
-                join(environment, path),
-              ),
-            )
-            .map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
-        );
-        await prepareGitHubCli(join(environment, "home"));
+        const workspace = join(root, "workspace");
+        await Promise.all([
+          mkdir(configDirectory, { mode: 0o700 }),
+          mkdir(workspace, { mode: 0o700 }),
+        ]);
+        await prepareAgentEnvironment(environment);
         // Another Model Provider's conversation cannot be resumed here: the
         // Session's Routine changed its provider.
         const saved = conversation?.resume;
@@ -408,7 +400,7 @@ export function createClaudeAgent(
           : undefined;
         return await runTurns(
           await load(),
-          cwd ?? join(root, "workspace"),
+          cwd ?? workspace,
           configDirectory,
           environment,
           job,
@@ -488,40 +480,16 @@ async function runTurns(
     }),
   );
   const toolSpans = new Map<string, string>();
-  const readGitHub: GitHubRead = async (input) => {
-    if (!githubReader) throw new Error("GitHub tool requires a checkout");
-    const span = diagnostics?.start(
-      "tool",
-      JSON.stringify({ name: githubToolName, arguments: input }),
-      agentSpan,
-    );
-    try {
-      const result = await githubReader.read(input);
-      if (span) {
-        try {
-          const { diagnosticReason, ...recorded } = result;
-          diagnostics?.end(
-            span,
-            {
-              outcome: result.success ? "succeeded" : "failed",
-              ...(diagnosticReason ? { reason: diagnosticReason } : {}),
-            },
-            JSON.stringify(recorded),
-          );
-        } catch {
-          // Recording diagnostics must not change the tool result or turn.
-        }
+  const tailosTools: TailosTools = githubReader
+    ? {
+        read: (input) =>
+          readGitHubTool(githubReader, input, {
+            name: githubToolName,
+            diagnostics,
+            parentSpan: agentSpan,
+          }),
       }
-      return result;
-    } catch (error) {
-      if (span) diagnostics?.end(span, { outcome: "failed" });
-      throw error;
-    }
-  };
-
-  const tailosTools: TailosTools = {
-    ...(githubReader && { read: readGitHub }),
-  };
+    : {};
   const tailosToolNames = githubReader ? [githubToolName] : [];
   if (supportsSelection("claude", job.model, job.effort))
     throw new Error("Requested model or effort is unavailable");
@@ -538,22 +506,8 @@ async function runTurns(
   const outputSchema = replySchema(job);
   // `env` replaces the environment of Claude Code: pass only what it needs.
   const env = {
-    PATH: [
-      join(environment, "tools", "bin"),
-      join(environment, "tools"),
-      process.env.PATH,
-    ].join(delimiter),
-    HOME: join(environment, "home"),
-    TMPDIR: join(environment, "tmp"),
-    XDG_RUNTIME_DIR: join(environment, "runtime"),
-    XDG_CACHE_HOME: join(environment, "cache"),
-    PNPM_HOME: join(environment, "tools"),
-    npm_config_prefix: join(environment, "tools"),
-    npm_config_verify_deps_before_run: "false",
-    pnpm_config_verify_deps_before_run: "false",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
-    ...trustEnvironment(),
+    ...agentCommandEnvironment(environment),
+    ...providerToolEnvironment,
     // Holds this Run's conversation only: no user settings exist in it.
     CLAUDE_CONFIG_DIR: configDirectory,
     CLAUDE_CODE_OAUTH_TOKEN: job.access.token,

@@ -16,6 +16,7 @@ import type {
   createOperatorAuth,
   OperatorEnv,
 } from "@/presentation/http/middlewares/operator.ts";
+import { jsonInput } from "@/presentation/http/middlewares/json-input.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { validator } from "hono/validator";
@@ -174,13 +175,8 @@ export function createSessionRoutes<Detail>(
       "/:id/messages",
       operatorAuth,
       bodyLimit({ maxSize: 32 * 1024 }),
-      validator("json", (value: v.InferInput<typeof startInput>, c) => {
-        const parsed = v.safeParse(startInput, value);
-        if (!parsed.success)
-          return c.json({ error: "invalid_input" as const }, 400);
-        // The Session's own Model Provider decides what may be chosen.
-        return parsed.output;
-      }),
+      // The Session's own Model Provider decides what may be chosen.
+      jsonInput(startInput),
       async (c) => {
         const projectId = c.req.param("projectId");
         const deps = start?.continueDeps?.(c.env);

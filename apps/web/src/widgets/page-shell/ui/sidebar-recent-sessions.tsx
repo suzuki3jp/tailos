@@ -6,13 +6,13 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   accountSessionsQueryOptions,
   uniqueSessions,
+  RECENT_SESSIONS_LIMIT,
   UnreadMark,
   type AccountSession,
 } from "@/entities/session";
+import { requestErrorStatus } from "@/shared/api";
 import { sessionPath } from "@/shared/lib/session-path";
 import { Button } from "@/shared/ui/design-systems";
-
-const SIDEBAR_SESSION_LIMIT = 10;
 
 export function SidebarRecentSessions({
   activeSessionId,
@@ -21,11 +21,9 @@ export function SidebarRecentSessions({
 }) {
   const headingId = useId();
   const query = useInfiniteQuery(accountSessionsQueryOptions());
-  const status =
-    query.error && "status" in query.error ? query.error.status : undefined;
   // The account footer already offers Sign in.
-  if (status === 401 || query.isPending) return null;
-  const sessions = uniqueSessions(query.data?.pages, SIDEBAR_SESSION_LIMIT);
+  if (requestErrorStatus(query.error) === 401 || query.isPending) return null;
+  const sessions = uniqueSessions(query.data?.pages, RECENT_SESSIONS_LIMIT);
   return (
     <section aria-labelledby={headingId} className="mt-6 flex flex-col gap-2.5">
       <h2

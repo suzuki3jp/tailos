@@ -1,8 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "@/shared/api";
-
-/** How many of a Routine's latest Sessions its page shows. */
-export const ROUTINE_SESSION_LIMIT = 10;
+import { RECENT_SESSIONS_LIMIT } from "@/entities/session";
 
 export class RoutineSessionsError extends Error {
   constructor(readonly status: number) {
@@ -25,7 +23,7 @@ export function routineSessionsQueryOptions(
       const response = await client.projects[":projectId"].sessions.$get(
         {
           param: { projectId },
-          query: { limit: String(ROUTINE_SESSION_LIMIT), routineId },
+          query: { limit: String(RECENT_SESSIONS_LIMIT), routineId },
         },
         { init: { signal } },
       );

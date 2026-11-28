@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { projectSchema } from "@/application/triggers/projects.ts";
+import { projectSchema } from "@/application/projects/settings.ts";
 import { Hono } from "hono";
 import { expect, test, vi } from "vitest";
 import { createProjectRoutes } from "./projects.ts";
@@ -87,8 +87,11 @@ test("operator-only CRUD and repository discovery enforce Origin, validation and
     { ...settings, maxRunMinutes: 31 },
     { ...settings, allowedActors: ["operator"] },
     { ...settings, repositoryId: 0 },
-  ])
-    expect((await send("", input)).status).toBe(400);
+  ]) {
+    const invalid = await send("", input);
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: "invalid_input" });
+  }
   verify.mockRejectedValueOnce(new Error("private upstream details"));
   const failed = await send("", settings);
   expect(failed.status).toBe(503);

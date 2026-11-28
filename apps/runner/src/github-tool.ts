@@ -1,4 +1,5 @@
 import { githubIssueDigest, type RunnerJob } from "@tailos/core/runner";
+import type { Diagnostics } from "@tailos/core/diagnostics";
 import * as v from "valibot";
 
 type Checkout = NonNullable<
@@ -198,4 +199,39 @@ export function createGitHubReader(
       }
     },
   };
+}
+
+/** Records the read and returns only the result intended for the Agent. */
+export async function readGitHubTool(
+  reader: ReturnType<typeof createGitHubReader>,
+  input: unknown,
+  options: { name: string; diagnostics?: Diagnostics; parentSpan?: string },
+) {
+  const { name, diagnostics, parentSpan } = options;
+  const span = diagnostics?.start(
+    "tool",
+    JSON.stringify({ name, arguments: input }),
+    parentSpan,
+  );
+  try {
+    const { diagnosticReason, ...result } = await reader.read(input);
+    if (span) {
+      try {
+        diagnostics?.end(
+          span,
+          {
+            outcome: result.success ? "succeeded" : "failed",
+            ...(diagnosticReason ? { reason: diagnosticReason } : {}),
+          },
+          JSON.stringify(result),
+        );
+      } catch {
+        // A diagnostic recording failure cannot change the tool result.
+      }
+    }
+    return result;
+  } catch (error) {
+    if (span) diagnostics?.end(span, { outcome: "failed" });
+    throw error;
+  }
 }

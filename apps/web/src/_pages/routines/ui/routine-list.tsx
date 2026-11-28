@@ -6,7 +6,7 @@ import type { Routine } from "@/entities/routine";
 import { pageRoutinesQueryOptions } from "../api/routines";
 import { routinePath } from "@/shared/lib/routine-path";
 import { RequestState } from "@/widgets/request-state";
-import { requestStatus } from "../api/request-status";
+import { requestErrorStatus } from "@/shared/api";
 import { modelLabel, triggerEvent } from "../model/routine-summary";
 
 function RoutineItem({ routine }: { routine: Routine }) {
@@ -44,7 +44,7 @@ export function RoutineList({ projectId }: { projectId: string }) {
   if (query.isError)
     return (
       <RequestState
-        status={requestStatus(query.error)}
+        status={requestErrorStatus(query.error)}
         missing="This project is not available."
         retry={() => void query.refetch()}
       />

@@ -6,7 +6,7 @@ status: accepted
 date: "2026-11-14"
 areas: [projects, sessions, deployment]
 keywords: [UUID, meguri, slug, Project ID, project_id, 移行, 対応表]
-paths: ["apps/api/src/application/triggers/**", "apps/api/src/infrastructure/d1/**", "config/**", "docs/deploy.md", "docs/design.md"]
+paths: ["apps/api/src/application/triggers/**", "apps/api/src/infrastructure/d1/**", "config/**", "docs/deploy.md"]
 symbols: [projectsSchema, projectId, sessions]
 supersedes: []
 decided_by: suzuki3jp

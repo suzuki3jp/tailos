@@ -21,7 +21,7 @@ import {
   type RunnerJob,
 } from "@tailos/core/runner";
 import * as v from "valibot";
-import type { Bindings } from "@/bindings.ts";
+import type { Bindings, ModelAccess, RunnerControl } from "@/bindings.ts";
 import { advanceRun } from "@/infrastructure/d1/run-execution.ts";
 import {
   type RunnerDriver,
@@ -46,11 +46,7 @@ import { currentInstructions } from "@/application/routines/routines.ts";
 import { deliverTimelineNotifications } from "./session-stream.ts";
 import { runStarter } from "./run-start.ts";
 import { githubEgressHosts, type GitHubEgressProps } from "./github-egress.ts";
-import {
-  modelEgressHosts,
-  type ModelAccess,
-  type ModelEgressProps,
-} from "./model-egress.ts";
+import { modelEgressHosts, type ModelEgressProps } from "./model-egress.ts";
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 
@@ -188,7 +184,10 @@ const runnerHeaders = (key: string | undefined) =>
  * Processes the Turns of one Session, one at a time, in a container of its
  * own. The Durable Object is named after the Session; a Turn is a Run.
  */
-export class RunnerContainer extends DurableObject<Bindings> {
+export class RunnerContainer
+  extends DurableObject<Bindings>
+  implements RunnerControl
+{
   private pollUnavailable = false;
   protected idleMs = sessionIdleMs;
   async cleanupDiagnostics() {

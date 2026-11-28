@@ -7,7 +7,7 @@ import { Disclosure } from "@/shared/ui/disclosure";
 import type { SessionRun } from "../api/queries";
 import { runActivityLabel } from "../model/activity";
 import { runResult } from "../model/run-result";
-import { isActiveRun } from "../api/queries";
+import { isActiveRunStatus } from "@tailos/core/run-status";
 import { ActivityItem, ActivityMark } from "./activity-item";
 
 export function RunActivity({
@@ -23,7 +23,7 @@ export function RunActivity({
   projectId?: string;
   capture?: { state: string; dropped: number };
 }) {
-  const active = isActiveRun(run);
+  const active = isActiveRunStatus(run.status);
   const [open, setOpen] = useState(active);
   const { urls, plan } = runResult(run.result);
   return (

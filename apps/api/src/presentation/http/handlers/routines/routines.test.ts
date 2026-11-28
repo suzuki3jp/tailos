@@ -95,7 +95,9 @@ test("Routine API authenticates ownership and Origin, permits unverified disable
 
   // Each Model Provider has its own models.
   expect((await send("", { ...settings, engine: "claude" })).status).toBe(400);
-  expect((await send("", { ...settings, engine: "gemini" })).status).toBe(400);
+  const invalidProvider = await send("", { ...settings, engine: "gemini" });
+  expect(invalidProvider.status).toBe(400);
+  expect(await invalidProvider.json()).toEqual({ error: "invalid_input" });
   const claude = {
     ...settings,
     engine: "claude",

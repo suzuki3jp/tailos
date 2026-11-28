@@ -1,20 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { InferResponseType } from "hono/client";
+import { isActiveRunStatus } from "@tailos/core/run-status";
 import { api } from "@/shared/api";
 
 class SessionRequestError extends Error {
   constructor(public readonly status: number) {
     super("Session request failed");
   }
-}
-
-export function sessionErrorStatus(error: unknown) {
-  return error &&
-    typeof error === "object" &&
-    "status" in error &&
-    typeof error.status === "number"
-    ? error.status
-    : undefined;
 }
 
 export function sessionQueryOptions(id: string) {
@@ -29,7 +21,9 @@ export function sessionQueryOptions(id: string) {
     },
     refetchInterval: (query) => {
       const detail = query.state.data;
-      return detail && "runs" in detail && detail.runs.some(isActiveRun)
+      return detail &&
+        "runs" in detail &&
+        detail.runs.some((run) => isActiveRunStatus(run.status))
         ? 5000
         : false;
     },
@@ -70,7 +64,3 @@ type ProjectSessionResponse = InferResponseType<
 >;
 export type ProjectSession = ProjectSessionResponse["detail"];
 export type SessionRun = ProjectSession["runs"][number];
-
-export function isActiveRun(run: { status: string }) {
-  return run.status === "queued" || run.status === "running";
-}

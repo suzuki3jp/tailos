@@ -3,15 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type { AgentEngine } from "@tailos/core/models";
+import { isActiveRunStatus } from "@tailos/core/run-status";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui/design-systems";
+import { requestErrorStatus } from "@/shared/api";
 import { LoopComposer, type LoopMessage } from "@/features/compose-loop";
 import { RequestState } from "@/widgets/request-state";
-import {
-  isActiveRun,
-  projectSessionQueryOptions,
-  sessionErrorStatus,
-} from "../api/queries";
+import { projectSessionQueryOptions } from "../api/queries";
 import { sendMessage, SendMessageError } from "../api/send-message";
 import { SessionConversation } from "./session-conversation";
 import { useSessionTimeline } from "../api/use-session-timeline";
@@ -151,7 +149,7 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         Loading session…
       </p>
     );
-  const status = sessionErrorStatus(session.error);
+  const status = requestErrorStatus(session.error);
   if (!result || status === 401 || status === 404)
     return (
       <div className="mx-auto w-full max-w-172 p-6">
@@ -231,7 +229,9 @@ export function ProjectSessionContent({ projectId, sessionId }: Props) {
         <SessionComposer
           projectId={projectId}
           sessionId={sessionId}
-          working={result.detail.runs.some(isActiveRun)}
+          working={result.detail.runs.some((run) =>
+            isActiveRunStatus(run.status),
+          )}
           engine={sessionEngine(result.detail.runs)}
         />
       </div>

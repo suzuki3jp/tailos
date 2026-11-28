@@ -6,7 +6,7 @@ status: superseded
 date: "2026-11-14"
 areas: [projects, web]
 keywords: [設定画面, agentNetworkAccess, allowedActors, triggerLabel, maxRunMinutes]
-paths: ["apps/api/src/application/triggers/projects.ts", "apps/web/src/_pages/projects/**"]
+paths: ["apps/api/src/application/projects/settings.ts", "apps/web/src/_pages/projects/**"]
 symbols: [projectsSchema, ExecutionContext]
 supersedes: []
 decided_by: suzuki3jp

@@ -1,21 +1,7 @@
 import type { TerminalResult } from "@/application/runs/artifacts.ts";
+import type { RunArtifactsBucket } from "@/bindings.ts";
 import { RunnerEvent } from "@tailos/core/runner";
 import * as v from "valibot";
-
-export type RunArtifactsBucket = {
-  // The body is the R2 object's stream, typed by the Workers runtime.
-  get(key: string): Promise<{
-    text(): Promise<string>;
-    body?: unknown;
-  } | null>;
-  put(key: string, contents: string): Promise<unknown>;
-  delete?(key: string): Promise<void>;
-  list?(options: { prefix: string; limit: number; cursor?: string }): Promise<{
-    objects: { key: string; uploaded: Date }[];
-    truncated: boolean;
-    cursor?: string;
-  }>;
-};
 
 type ArtifactRecord = {
   version: 1;

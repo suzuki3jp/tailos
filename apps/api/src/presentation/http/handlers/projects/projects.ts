@@ -1,18 +1,22 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { validator } from "hono/validator";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import {
+  decodePageCursor,
+  encodePageCursor,
+} from "@/application/pagination/cursor.ts";
+import {
   legacyProjectsSchema,
   projectSettings,
-} from "@/application/triggers/projects.ts";
+} from "@/application/projects/settings.ts";
 import {
   ProjectConflict,
   type ProjectRepositories,
   type ProjectStore,
 } from "@/application/projects/store.ts";
 import type { Bindings } from "@/bindings.ts";
+import { jsonInput } from "@/presentation/http/middlewares/json-input.ts";
 import type {
   createOperatorAuth,
   OperatorEnv,
@@ -41,34 +45,6 @@ const pageQuery = v.object({
   ),
   cursor: v.optional(v.string()),
 });
-function encodeCursor(position: { name: string; id: string }) {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ version: 1, ...position }),
-  );
-  return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-function decodeCursor(cursor: string) {
-  if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error("Invalid cursor");
-  const bytes = Uint8Array.from(
-    atob(cursor.replaceAll("-", "+").replaceAll("_", "/")),
-    (char) => char.charCodeAt(0),
-  );
-  return v.parse(
-    positionSchema,
-    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
-  );
-}
-function jsonInput<T extends v.GenericSchema>(schema: T) {
-  return validator("json", (value: v.InferInput<T>, c) => {
-    const parsed = v.safeParse(schema, value);
-    return parsed.success
-      ? parsed.output
-      : c.json({ error: "invalid_input" as const }, 400);
-  });
-}
 export function createProjectRoutes(
   store: (env: Bindings) => ProjectStore,
   repositories: (env: Bindings) => ProjectRepositories,
@@ -113,7 +89,7 @@ export function createProjectRoutes(
         after =
           parsed.output.cursor === undefined
             ? undefined
-            : decodeCursor(parsed.output.cursor);
+            : v.parse(positionSchema, decodePageCursor(parsed.output.cursor));
       } catch {
         return c.json({ error: "invalid_input" as const }, 400);
       }
@@ -124,7 +100,9 @@ export function createProjectRoutes(
       );
       return c.json({
         items: page.items,
-        nextCursor: page.nextPosition ? encodeCursor(page.nextPosition) : null,
+        nextCursor: page.nextPosition
+          ? encodePageCursor({ version: 1, ...page.nextPosition })
+          : null,
       });
     })
     .get("/settings", async (c) =>

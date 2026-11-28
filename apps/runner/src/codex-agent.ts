@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { RunnerJob } from "@tailos/core/runner";
 import * as v from "valibot";
 import type { Diagnostics } from "@tailos/core/diagnostics";
@@ -30,8 +30,14 @@ import {
   createGitHubReader,
   githubTool,
   githubToolCallSchema,
+  readGitHubTool,
 } from "@/github-tool.ts";
-import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
+import { trustEnvironment } from "@/egress.ts";
+import {
+  agentCommandEnvironment,
+  prepareAgentEnvironment,
+  providerToolEnvironment,
+} from "@/agent-environment.ts";
 import { retiredToolCallSchema, retiredToolResult } from "@/retired-tools.ts";
 
 const threadSchema = v.object({
@@ -125,20 +131,7 @@ type LaunchCodex = (
 ) => CodexProcess;
 const launchCodex: LaunchCodex = (directory, workspace, environment) => {
   const shellEnvironment = environment
-    ? {
-        HOME: join(environment, "home"),
-        TMPDIR: join(environment, "tmp"),
-        XDG_RUNTIME_DIR: join(environment, "runtime"),
-        XDG_CACHE_HOME: join(environment, "cache"),
-        PNPM_HOME: join(environment, "tools"),
-        npm_config_prefix: join(environment, "tools"),
-        PATH: [
-          join(environment, "tools", "bin"),
-          join(environment, "tools"),
-          process.env.PATH,
-        ].join(delimiter),
-        ...trustEnvironment(),
-      }
+    ? agentCommandEnvironment(environment)
     : {};
   return spawn(
     "codex",
@@ -172,10 +165,7 @@ const launchCodex: LaunchCodex = (directory, workspace, environment) => {
         // Codex reaches the model API through the interception that adds the
         // Run's token, so it must trust the same CA as the Agent's commands.
         ...trustEnvironment(),
-        npm_config_verify_deps_before_run: "false",
-        pnpm_config_verify_deps_before_run: "false",
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
+        ...providerToolEnvironment,
       },
       stdio: ["pipe", "pipe", "ignore"],
     },
@@ -208,14 +198,7 @@ export function createCodexAgent(
           await mkdir(dirname(path), { recursive: true, mode: 0o700 });
           await writeFile(path, resume.content, { mode: 0o600 });
         }
-        if (environment) {
-          await Promise.all(
-            ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
-              mkdir(join(environment, path), { recursive: true, mode: 0o700 }),
-            ),
-          );
-          await prepareGitHubCli(join(environment, "home"));
-        }
+        if (environment) await prepareAgentEnvironment(environment);
         return await runTurn(
           launch(directory, cwd ?? directory, environment),
           cwd ?? directory,
@@ -383,37 +366,11 @@ async function runTurn(
     if (method === "item/tool/call" && githubReader && threadId) {
       const call = v.parse(githubToolCallSchema, params);
       if (call.threadId !== threadId) throw new Error("Unexpected tool thread");
-      const span = diagnostics?.start(
-        "tool",
-        JSON.stringify({
-          name: "tailos_github_get",
-          arguments: call.arguments,
-        }),
-        agentSpan,
-      );
-      try {
-        const { diagnosticReason, ...result } = await githubReader.read(
-          call.arguments,
-        );
-        if (span) {
-          try {
-            diagnostics?.end(
-              span,
-              {
-                outcome: result.success ? "succeeded" : "failed",
-                ...(diagnosticReason ? { reason: diagnosticReason } : {}),
-              },
-              JSON.stringify(result),
-            );
-          } catch {
-            // Recording diagnostics must not change the tool result or turn.
-          }
-        }
-        return result;
-      } catch (error) {
-        if (span) diagnostics?.end(span, { outcome: "failed" });
-        throw error;
-      }
+      return readGitHubTool(githubReader, call.arguments, {
+        name: githubTool.name,
+        diagnostics,
+        parentSpan: agentSpan,
+      });
     }
     if (method !== "account/chatgptAuthTokens/refresh") {
       if (job.mode === "plan")

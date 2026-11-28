@@ -6,7 +6,7 @@ status: proposed
 date: "2026-11-14"
 areas: [projects, sessions, triggers, agent]
 keywords: [将来構想, 複数 Project, repository, Session, trigger, Agent 選択, agent.selection]
-paths: ["apps/api/src/application/triggers/**", "apps/api/src/application/sessions/**", "apps/api/src/infrastructure/d1/**", "apps/api/src/presentation/http/handlers/github-webhook/**", "apps/web/src/_pages/projects/**", "packages/core/src/runner.ts", "docs/design.md"]
+paths: ["apps/api/src/application/triggers/**", "apps/api/src/application/sessions/**", "apps/api/src/infrastructure/d1/**", "apps/api/src/presentation/http/handlers/github-webhook/**", "apps/web/src/_pages/projects/**", "packages/core/src/runner.ts"]
 symbols: [ExecutionContext, projectId, projectsSchema]
 supersedes: []
 ---

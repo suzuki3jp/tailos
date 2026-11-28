@@ -31,7 +31,7 @@
 | イベント判定 | [github-event.ts](../../apps/api/src/application/triggers/github-event.ts) が label と計画コマンドを判定 | 署名検証後の正規化と、設定照合を分離する |
 | Webhook | [github-webhook.ts](../../apps/api/src/presentation/http/handlers/github-webhook/github-webhook.ts) が Project の最初の一件を選び、条件検証・固定 prompt・Codex context を組み立てる | label 分岐を application の dispatcher へ委譲する。plan 分岐は残す |
 | 共通受付 | [TriggerAdmission](../../apps/api/src/application/triggers/admit-trigger.ts) と [D1 の admitTrigger](../../apps/api/src/infrastructure/d1/trigger-admission.ts) | Session・automation メッセージ・Run・配送・通知の原子的保存を拡張して使う |
-| 設定 | [Project スキーマ](../../apps/api/src/application/triggers/projects.ts) と [D1 Project store](../../apps/api/src/infrastructure/d1/projects.ts) に `triggerLabel` 等を保存 | Routine を Project から参照する。所有者の内部読出し契約も整える |
+| 設定 | 計画時点の Project スキーマと [D1 Project store](../../apps/api/src/infrastructure/d1/projects.ts) に `triggerLabel` 等を保存 | Routine を Project から参照する。所有者の内部読出し契約も整える |
 | 実行設定 | [共有契約](../../packages/core/src/runner.ts) の `ExecutionContext` / `RunnerJob` に model・effort の入力がない | DB 保存に加え、共有スキーマ・job 組立・Adapter まで値を通す必要がある |
 | Agent 起動 | [codex-agent.ts](../../apps/runner/src/codex-agent.ts) は model 等を応答から観測するが、要求へ設定を渡していない | 固定された app-server の契約を確認し、対応する要求フィールドへ設定する |
 | repository 実行 | [runner-container.ts](../../apps/api/src/infrastructure/cloudflare/runner-container.ts) の checkout・公開には Codex 限定分岐がある | Claude の Routine 対応は後続とし、今回の有効な選択肢には出さない |

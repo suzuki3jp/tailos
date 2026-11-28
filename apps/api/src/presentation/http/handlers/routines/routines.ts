@@ -10,20 +10,13 @@ import {
   type RoutineStore,
 } from "@/application/routines/routines.ts";
 import type { Bindings } from "@/bindings.ts";
+import { jsonInput } from "@/presentation/http/middlewares/json-input.ts";
 import type {
   createOperatorAuth,
   OperatorEnv,
 } from "@/presentation/http/middlewares/operator.ts";
 const uuid = v.pipe(v.string(), v.uuid());
 const revision = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
-function input<T extends v.GenericSchema>(schema: T) {
-  return validator("json", (value: v.InferInput<T>, c) => {
-    const parsed = v.safeParse(schema, value);
-    return parsed.success
-      ? parsed.output
-      : c.json({ error: "invalid_input" as const }, 400);
-  });
-}
 export function createRoutineRoutes(
   store: (env: Bindings) => RoutineStore,
   connection: (env: Bindings) => AgentConnected,
@@ -81,7 +74,7 @@ export function createRoutineRoutes(
           : c.json({ error: "not_found" as const }, 404);
       },
     )
-    .post("/", input(routineSettings), async (c) => {
+    .post("/", jsonInput(routineSettings), async (c) => {
       const settings = c.req.valid("json");
       if (
         !(await store(c.env).list(
@@ -111,7 +104,7 @@ export function createRoutineRoutes(
     })
     .post(
       "/:id",
-      input(v.strictObject({ ...routineSettings.entries, revision })),
+      jsonInput(v.strictObject({ ...routineSettings.entries, revision })),
       async (c) => {
         const { revision, ...settings } = c.req.valid("json");
         if (!v.safeParse(uuid, c.req.param("id")).success)
@@ -144,7 +137,7 @@ export function createRoutineRoutes(
           : c.json({ error: "routine_conflict" as const }, 409);
       },
     )
-    .post("/:id/delete", input(v.strictObject({ revision })), async (c) => {
+    .post("/:id/delete", jsonInput(v.strictObject({ revision })), async (c) => {
       if (!v.safeParse(uuid, c.req.param("id")).success)
         return c.json({ error: "invalid_input" as const }, 400);
       const removed = await store(c.env).remove(

@@ -1,5 +1,5 @@
 import { RequestState } from "@/widgets/request-state";
-import { requestErrorStatus } from "../api/queries";
+import { requestErrorStatus } from "@/shared/api";
 
 export function DataRequestState({
   error,

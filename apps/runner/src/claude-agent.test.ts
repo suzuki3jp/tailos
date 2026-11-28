@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   createSdkMcpServer,
   type Options,
@@ -117,6 +117,7 @@ function recorder() {
     operation: string;
     body?: string;
     outcome?: string;
+    reason?: string;
     result?: string;
   }> = [];
   const outputs: string[] = [];
@@ -128,6 +129,7 @@ function recorder() {
     end(spanId, attributes, body) {
       const span = spans[Number(spanId)]!;
       span.outcome = attributes?.outcome;
+      span.reason = attributes?.reason;
       span.result = body;
     },
     output: (_spanId, body) => void outputs.push(body),
@@ -194,11 +196,25 @@ test("runs an implementation turn inside the workspace with only the Run's crede
   expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(token);
   expect(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe("1");
   expect(env.CLAUDE_CONFIG_DIR).not.toContain(cwd);
+  const environment = dirname(env.HOME!);
+  expect(env).toMatchObject({
+    TMPDIR: join(environment, "tmp"),
+    XDG_RUNTIME_DIR: join(environment, "runtime"),
+    XDG_CACHE_HOME: join(environment, "cache"),
+    PNPM_HOME: join(environment, "tools"),
+    npm_config_prefix: join(environment, "tools"),
+  });
+  expect(env.PATH?.split(delimiter).slice(0, 2)).toEqual([
+    join(environment, "tools", "bin"),
+    join(environment, "tools"),
+  ]);
+  expect(dirname(env.CLAUDE_CONFIG_DIR!)).toBe(dirname(environment));
   // Nothing of the Runner's own environment leaks in.
   expect(
     Object.keys(env).filter((name) => /TAILOS|ANTHROPIC/.test(name)),
   ).toEqual([]);
   await expect(stat(env.CLAUDE_CONFIG_DIR!)).rejects.toThrow();
+  await expect(stat(environment)).rejects.toThrow();
 });
 
 test("commands reach the internet only through the Runner's proxy, stopped after the Run", async (t) => {
@@ -306,6 +322,49 @@ test("serves the GitHub tool from the Runner and requires the assigned issue to 
     }),
     outcome: "succeeded",
   });
+});
+
+test("records a changed issue in the GitHub tool span without returning its content", async (t) => {
+  const cwd = await workspace(t);
+  const { diagnostics, spans } = recorder();
+  const { agent } = runtime([
+    async (_call, tool) => {
+      const result = await tool!({ kind: "issue", number: 7 });
+      expect(result.success).toBe(false);
+      expect(result.contentItems[0]?.text).toContain(
+        "changed after authorization",
+      );
+      expect(result.contentItems[0]?.text).not.toContain("Private edited body");
+      return [success({ reply: "Done", headline: null })];
+    },
+  ]);
+  await expect(
+    agent(async () =>
+      Response.json({
+        number: 7,
+        title: "Broken widget",
+        body: "Private edited body",
+        state: "open",
+        html_url: "https://github.com/acme/widgets/issues/7",
+      }),
+    ).run(
+      job({
+        checkout,
+        githubContext: {
+          kind: "issue",
+          number: 7,
+          contentHash: "a".repeat(64),
+        },
+      }),
+      new AbortController().signal,
+      cwd,
+      diagnostics,
+    ),
+  ).rejects.toThrow("not read completely");
+  const span = spans.find(({ operation }) => operation === "tool");
+  expect(span).toMatchObject({ outcome: "failed", reason: "issue_changed" });
+  expect(span?.result).not.toContain("Private edited body");
+  expect(span?.result).not.toContain("diagnosticReason");
 });
 
 test("records commands, file changes, tools and replies without an exit code", async (t) => {

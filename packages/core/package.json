@@ -5,6 +5,7 @@
   "exports": {
     "./auth": "./src/auth.ts",
     "./models": "./src/models.ts",
+    "./run-status": "./src/run-status.ts",
     "./runner": "./src/runner.ts",
     "./diagnostics": "./src/diagnostics.ts",
     "./timeline": "./src/timeline.ts"

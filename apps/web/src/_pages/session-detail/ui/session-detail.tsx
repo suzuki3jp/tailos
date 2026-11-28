@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { agentEngineLabels } from "@tailos/core/models";
+import { isActiveRunStatus } from "@tailos/core/run-status";
 import { RequestState } from "@/widgets/request-state";
 import { sessionQueryOptions } from "../api/queries";
 import { runResult } from "../model/run-result";
@@ -94,9 +95,7 @@ export function SessionDetail({ id }: { id: string }) {
                           key={item.id}
                           item={item}
                           sessionId={id}
-                          runActive={
-                            run.status === "queued" || run.status === "running"
-                          }
+                          runActive={isActiveRunStatus(run.status)}
                         />
                       ))}
                   </div>

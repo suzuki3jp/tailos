@@ -33,17 +33,3 @@ export function accountSessionsQueryOptions(client = api) {
     getNextPageParam: (page) => page.nextCursor ?? undefined,
   });
 }
-
-/** Sessions across the loaded pages, without repeats, up to `limit`. */
-export function uniqueSessions(
-  pages: readonly { items: readonly AccountSession[] }[] | undefined,
-  limit: number,
-) {
-  const byId = new Map<string, AccountSession>();
-  for (const page of pages ?? []) {
-    for (const session of page.items) {
-      if (!byId.has(session.id)) byId.set(session.id, session);
-    }
-  }
-  return Array.from(byId.values()).slice(0, limit);
-}

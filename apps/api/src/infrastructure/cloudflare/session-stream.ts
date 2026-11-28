@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import * as v from "valibot";
 import { TimelineClientMessage } from "@tailos/core/timeline";
-import type { Bindings } from "@/bindings.ts";
+import type { Bindings, SessionStreamControl } from "@/bindings.ts";
 import { d1Timeline } from "@/infrastructure/d1/timeline.ts";
 
 const subscriptionSchema = v.object({
@@ -19,7 +19,10 @@ const subscriptionSchema = v.object({
 type Subscription = v.InferOutput<typeof subscriptionSchema>;
 
 // This object never starts a container and stores no login tokens or bodies.
-export class SessionStream extends DurableObject<Bindings> {
+export class SessionStream
+  extends DurableObject<Bindings>
+  implements SessionStreamControl
+{
   private readonly pending = new Map<WebSocket, Promise<void>>();
   private readonly depths = new Map<WebSocket, number>();
 

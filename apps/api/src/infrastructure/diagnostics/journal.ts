@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { diagnosticRetentionMs, runTraceId } from "@tailos/core/diagnostics";
-import type { RunStatus } from "@/application/runs/advance-run.ts";
+import type { RunStatus } from "@tailos/core/run-status";
+import { activeRunStatusSql } from "@/infrastructure/d1/run-status.ts";
 
 // Also covers runs admitted by the previous Worker between migration and code
 // rollout. A snapshot is explicitly an observation, never an invented start.
@@ -9,7 +10,7 @@ export function ensureRunTrace(db: D1Database, runId: string, now: number) {
     db
       .prepare(`INSERT INTO diagnostic_traces (id, owner_id, session_id, run_id, source, created_at, expires_at)
       SELECT 'run/' || r.id, s.owner_id, r.session_id, r.id, 'run', r.created_at, ?
-      FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ? AND r.status IN ('queued', 'running')
+      FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ? AND r.status IN ${activeRunStatusSql}
       ON CONFLICT(id) DO NOTHING`)
       .bind(now + diagnosticRetentionMs, runId),
     db

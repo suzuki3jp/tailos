@@ -6,6 +6,7 @@ Tailos は GitHub Issue を起点に Codex を実行し、変更を PR として
 - レビューには [review スキル](.agents/skills/review/SKILL.md) の観点を使う。
 - lint ルールを作成・変更するときは [lint スキル](lint/SKILL.md) に従う。
 - Web の配置・依存関係・データ取得・Loading・Server/Client 境界を設計、実装、レビューするときは [fsd スキル](.agents/skills/fsd/SKILL.md) に従う。
+- 共有 D1 を使う PR Preview で新しいスキーマが必要なら、既存コードと互換性のある migration を先行 PR に分ける。必要な migration が本番と Preview 用の D1 に適用されたことを確認してから、機能 PR を Preview に出す。[migration を伴う機能の確認](docs/pr-previews.md#migration-を伴う機能の確認)
 
 ## Product Decision Records
 

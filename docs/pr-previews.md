@@ -44,7 +44,17 @@ Preview 用リソースがある Cloudflare アカウントを指定し、`main`
 pnpm --dir apps/api exec wrangler d1 migrations apply DB --remote --config wrangler.preview-db.local.jsonc
 ```
 
-共有 DB のスキーマが必要な PR では、デプロイ先と互換性のある migration を運用者が別途計画する。既存 Preview が使う DB に PR の SQL が自動適用されることはない。Preview を消しても D1 の行と R2 のオブジェクトは残る。
+Preview を消しても D1 の行と R2 のオブジェクトは残る。
+
+## migration を伴う機能の確認
+
+機能 PR の Preview に新しい D1 スキーマが必要な場合は、スキーマ変更と機能実装を別の PR にする。共有 D1 は公開済みの別の Preview も使うため、`preview` ラベルによる公開時には PR 固有の migration を適用しない。
+
+1. 新しいテーブルや NULL を許容する列の追加など、稼働中の本番と公開済み Preview のコードが引き続き動く migration を先行 PR にして `main` にマージする。
+2. `main` の migration が本番 D1 と Preview 用の共有 D1 に適用されたことを確認する。本番 D1 には通常の Deploy で適用し、Preview 用 D1 には [共有 D1 のスキーマ](#共有-d1-のスキーマ) の手順で適用する。
+3. 機能 PR に最新の `main` を取り込み、リポジトリ所有者が `preview` ラベルを付けて動作確認する。機能 PR は先にドラフトで作成できる。
+
+列の削除や改名が必要なら、追加した列への切り替えを先に済ませる。旧列を参照する本番コードと公開済み Preview がなくなったことを確認してから、別の migration で旧列を削除する。
 
 ## 確認と削除
 

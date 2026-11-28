@@ -9,15 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import {
-  basename,
-  delimiter,
-  dirname,
-  isAbsolute,
-  join,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type {
   EffortLevel,
   HookCallback,
@@ -48,11 +40,12 @@ import {
   continuityNotice,
   lostConversationNotice,
 } from "@/continuity-notice.ts";
+import { startEgressProxy } from "@/egress.ts";
 import {
-  prepareGitHubCli,
-  startEgressProxy,
-  trustEnvironment,
-} from "@/egress.ts";
+  agentCommandEnvironment,
+  prepareAgentEnvironment,
+  providerToolEnvironment,
+} from "@/agent-environment.ts";
 import {
   diagnosticErrorBody,
   withDiagnosticSpan,
@@ -393,17 +386,12 @@ export function createClaudeAgent(
       let sessionId: string | undefined;
       try {
         signal.throwIfAborted();
-        await Promise.all(
-          ["config", "workspace"]
-            .map((path) => join(root, path))
-            .concat(
-              ["home", "tmp", "runtime", "cache", "tools/bin"].map((path) =>
-                join(environment, path),
-              ),
-            )
-            .map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
-        );
-        await prepareGitHubCli(join(environment, "home"));
+        const workspace = join(root, "workspace");
+        await Promise.all([
+          mkdir(configDirectory, { mode: 0o700 }),
+          mkdir(workspace, { mode: 0o700 }),
+        ]);
+        await prepareAgentEnvironment(environment);
         // Another Model Provider's conversation cannot be resumed here: the
         // Session's Routine changed its provider.
         const saved = conversation?.resume;
@@ -412,7 +400,7 @@ export function createClaudeAgent(
           : undefined;
         return await runTurns(
           await load(),
-          cwd ?? join(root, "workspace"),
+          cwd ?? workspace,
           configDirectory,
           environment,
           job,
@@ -518,22 +506,8 @@ async function runTurns(
   const outputSchema = replySchema(job);
   // `env` replaces the environment of Claude Code: pass only what it needs.
   const env = {
-    PATH: [
-      join(environment, "tools", "bin"),
-      join(environment, "tools"),
-      process.env.PATH,
-    ].join(delimiter),
-    HOME: join(environment, "home"),
-    TMPDIR: join(environment, "tmp"),
-    XDG_RUNTIME_DIR: join(environment, "runtime"),
-    XDG_CACHE_HOME: join(environment, "cache"),
-    PNPM_HOME: join(environment, "tools"),
-    npm_config_prefix: join(environment, "tools"),
-    npm_config_verify_deps_before_run: "false",
-    pnpm_config_verify_deps_before_run: "false",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
-    ...trustEnvironment(),
+    ...agentCommandEnvironment(environment),
+    ...providerToolEnvironment,
     // Holds this Run's conversation only: no user settings exist in it.
     CLAUDE_CONFIG_DIR: configDirectory,
     CLAUDE_CODE_OAUTH_TOKEN: job.access.token,

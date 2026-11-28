@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   createSdkMcpServer,
   type Options,
@@ -196,11 +196,25 @@ test("runs an implementation turn inside the workspace with only the Run's crede
   expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(token);
   expect(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe("1");
   expect(env.CLAUDE_CONFIG_DIR).not.toContain(cwd);
+  const environment = dirname(env.HOME!);
+  expect(env).toMatchObject({
+    TMPDIR: join(environment, "tmp"),
+    XDG_RUNTIME_DIR: join(environment, "runtime"),
+    XDG_CACHE_HOME: join(environment, "cache"),
+    PNPM_HOME: join(environment, "tools"),
+    npm_config_prefix: join(environment, "tools"),
+  });
+  expect(env.PATH?.split(delimiter).slice(0, 2)).toEqual([
+    join(environment, "tools", "bin"),
+    join(environment, "tools"),
+  ]);
+  expect(dirname(env.CLAUDE_CONFIG_DIR!)).toBe(dirname(environment));
   // Nothing of the Runner's own environment leaks in.
   expect(
     Object.keys(env).filter((name) => /TAILOS|ANTHROPIC/.test(name)),
   ).toEqual([]);
   await expect(stat(env.CLAUDE_CONFIG_DIR!)).rejects.toThrow();
+  await expect(stat(environment)).rejects.toThrow();
 });
 
 test("commands reach the internet only through the Runner's proxy, stopped after the Run", async (t) => {

@@ -5,17 +5,13 @@ import { setupPreview } from "./setup.mjs";
 const account = "a".repeat(32);
 const databaseId = "12345678-1234-1234-1234-123456789abc";
 const token = "test-preview-setup-token";
-const api = {
-  hostname: "preview-api.tailos.app",
-  service: "tailos-preview-api",
+const api = { enabled: false, previews_enabled: true };
+const web = {
+  hostname: "preview.tailos.app",
+  service: "tailos-preview-web",
   zone_name: "tailos.app",
   enabled: false,
   previews_enabled: true,
-};
-const web = {
-  ...api,
-  hostname: "preview.tailos.app",
-  service: "tailos-preview-web",
 };
 
 function mockSetup(t, { domains = [], databaseName = "tailos-preview" } = {}) {
@@ -30,6 +26,7 @@ function mockSetup(t, { domains = [], databaseName = "tailos-preview" } = {}) {
     TAILOS_PREVIEW_D1_DATABASE_ID: databaseId,
   };
   const current = new Map(domains.map((domain) => [domain.hostname, domain]));
+  let apiRouting = { enabled: true, previews_enabled: false };
   const writes = [];
   const failWrites = new Set();
   const fetch = t.mock.method(
@@ -45,10 +42,24 @@ function mockSetup(t, { domains = [], databaseName = "tailos-preview" } = {}) {
         url.pathname === `${base}/d1/database/${databaseId}`
       )
         return Response.json({ success: true, result: { name: databaseName } });
+      if (
+        url.pathname === `${base}/workers/scripts/tailos-preview-api/subdomain`
+      ) {
+        if (method === "GET")
+          return Response.json({ success: true, result: apiRouting });
+        assert.equal(method, "POST");
+        assert.equal(headers["Content-Type"], "application/json");
+        const requested = JSON.parse(body);
+        writes.push(requested);
+        if (failWrites.has("tailos-preview-api"))
+          return Response.json({ success: false }, { status: 503 });
+        apiRouting = requested;
+        return Response.json({ success: true, result: requested });
+      }
       assert.equal(url.pathname, `${base}/workers/domains`);
       if (method === "GET") {
         const hostname = url.searchParams.get("hostname");
-        assert.ok(hostname === api.hostname || hostname === web.hostname);
+        assert.equal(hostname, web.hostname);
         const domain = current.get(hostname);
         return Response.json({ success: true, result: domain ? [domain] : [] });
       }
@@ -65,19 +76,19 @@ function mockSetup(t, { domains = [], databaseName = "tailos-preview" } = {}) {
   return { fetch, writes, failWrites, migrate: t.mock.fn() };
 }
 
-test("configures Preview-only domains and retries partial setup before migrating", async (t) => {
+test("configures Preview-only Web and API URLs and retries partial setup before migrating", async (t) => {
   const { writes, failWrites, migrate } = mockSetup(t, {
     domains: [{ ...web, enabled: true, previews_enabled: false }],
   });
-  failWrites.add(web.hostname);
+  failWrites.add("tailos-preview-api");
   await assert.rejects(setupPreview(migrate), /HTTP 503/);
-  assert.deepEqual(writes, [api, web]);
+  assert.deepEqual(writes, [web, api]);
   assert.equal(migrate.mock.callCount(), 0);
 
   failWrites.clear();
   writes.length = 0;
   await setupPreview(migrate);
-  assert.deepEqual(writes, [web]);
+  assert.deepEqual(writes, [api]);
   assert.deepEqual(migrate.mock.calls[0].arguments, [
     {
       binding: "DB",

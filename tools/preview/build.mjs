@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { origins, previewName } from "./config.mjs";
+import { previewName, webPreviewOrigin } from "./config.mjs";
 
 const [number, outputDir] = process.argv.slice(2);
-const { web } = origins(previewName(number));
+const web = webPreviewOrigin(previewName(number));
 const output = resolve(outputDir);
 mkdirSync(output, { recursive: true });
 execFileSync(

@@ -30,7 +30,7 @@ jobs:
         with:
           cache: true
       - run: pnpm install --frozen-lockfile
-      - name: Configure Preview domains and apply main migrations
+      - name: Configure Preview URLs and apply main migrations
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.TAILOS_PREVIEW_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.TAILOS_PREVIEW_SETUP_CLOUDFLARE_API_TOKEN }}

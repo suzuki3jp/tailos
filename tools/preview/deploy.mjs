@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -9,15 +15,15 @@ import { webBrowserApiPath } from "../../packages/core/src/auth.ts";
 import { cloudflare, previewDatabase } from "./cloudflare.mjs";
 import {
   findApiDeploymentOrigin,
-  origins,
   previewName,
+  webPreviewOrigin,
   workers,
 } from "./config.mjs";
 
 const [number, sha, artifactDir] = process.argv.slice(2);
 const name = previewName(number);
 if (!/^[\da-f]{40}$/.test(sha ?? "")) throw new Error("Invalid commit SHA");
-const { web, api } = origins(name);
+const web = webPreviewOrigin(name);
 const digest = (key, purpose) =>
   createHmac("sha256", key).update(`${purpose}:${name}`).digest("base64url");
 const login = readLoginConfig(process.env, web);
@@ -32,9 +38,10 @@ const bucket = {
   binding: "RUN_ARTIFACTS",
   bucket_name: "tailos-preview-run-artifacts",
 };
-const [database, r2] = await Promise.all([
+const [database, r2, { result: workersSubdomain }] = await Promise.all([
   previewDatabase(),
   cloudflare(`r2/buckets/${bucket.bucket_name}`),
+  cloudflare("workers/subdomain"),
 ]);
 if (r2.result?.name !== bucket.bucket_name)
   throw new Error(
@@ -53,6 +60,7 @@ const wranglerEnv = {
 function deploy(kind, config, secrets) {
   const configPath = join(temp, `${kind}.json`);
   const secretPath = join(temp, `${kind}-secrets.json`);
+  const outputPath = join(temp, `${kind}-output.ndjson`);
   writeFileSync(
     configPath,
     JSON.stringify({
@@ -60,14 +68,14 @@ function deploy(kind, config, secrets) {
       compatibility_date: "2026-10-06",
       compatibility_flags: ["nodejs_compat"],
       workers_dev: false,
-      preview_urls: false,
+      preview_urls: kind === "api",
       no_bundle: true,
       ...config,
     }),
     { mode: 0o600 },
   );
   writeFileSync(secretPath, JSON.stringify(secrets), { mode: 0o600 });
-  const output = execFileSync(
+  execFileSync(
     "pnpm",
     [
       "--filter",
@@ -87,21 +95,26 @@ function deploy(kind, config, secrets) {
       "--json",
     ],
     {
-      env: wranglerEnv,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
+      env: { ...wranglerEnv, WRANGLER_OUTPUT_FILE_PATH: outputPath },
+      stdio: ["ignore", "ignore", "inherit"],
     },
   );
-  const expected = kind === "web" ? web : api;
-  const { preview, deployment } = JSON.parse(output);
-  if (
-    preview?.name !== name ||
-    !preview.urls?.some((url) => new URL(url).origin === expected)
-  )
+  // Wrangler can log additional modules to stdout even with --json.
+  const output = readFileSync(outputPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .find(({ type, version }) => type === "preview" && version === 1);
+  if (output?.worker_name !== workers[kind] || output.preview_name !== name)
     throw new Error(
-      `Configure the ${kind} Preview custom domain for ${expected}`,
+      `Wrangler did not report deployment of ${workers[kind]}/${name}`,
     );
-  return deployment;
+  if (
+    kind === "web" &&
+    !output.preview_urls?.some((url) => new URL(url).origin === web)
+  )
+    throw new Error(`Configure the Web Preview custom domain for ${web}`);
+  return output;
 }
 
 async function verify(origin, healthPath, isReady, headers) {
@@ -129,7 +142,7 @@ const serviceIs = (service) => async (response) => {
 
 try {
   const proxy = { TAILOS_PREVIEW_PROXY_SECRET: secret };
-  const deployment = deploy(
+  const apiDeployment = deploy(
     "api",
     {
       main: join(artifacts, "api/preview.js"),
@@ -147,7 +160,10 @@ try {
     },
     { ...login.secrets, ...proxy },
   );
-  const apiDeploymentOrigin = findApiDeploymentOrigin(deployment?.urls, api);
+  const apiDeploymentOrigin = findApiDeploymentOrigin(
+    apiDeployment,
+    workersSubdomain?.subdomain,
+  );
   await verify(apiDeploymentOrigin, "/health", serviceIs("tailos-api"), {
     "X-Tailos-Preview-Proxy": secret,
   });

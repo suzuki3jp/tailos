@@ -11,6 +11,27 @@ mise install
 mise exec -- pnpm install --frozen-lockfile
 ```
 
+## シードデータで画面を確認する
+
+GitHub の設定なしで、ダミー運用者とサンプルの Project、会話、終了済み Run、無効の Routine を用意できる。次のコマンドでシードを投入し、ログイン Cookie を JSON で取得する。
+
+```sh
+mise exec -- pnpm --silent --filter @tailos/api run db:seed --print-cookie
+```
+
+データと署名鍵は、チェックアウトごとの `apps/api/.wrangler/seed/` と `apps/api/.wrangler/seed.env` に保存される。再実行してもサンプルは重複せず、手動編集した内容も残る。データの投入だけなら `--print-cookie` を省略できる。
+
+API と Web は別々のターミナルで起動する。
+
+```sh
+mise exec -- pnpm --filter @tailos/api run dev:seeded
+mise exec -- pnpm --filter @tailos/web run dev
+```
+
+ブラウザーで `http://localhost:3000` を開き、開発者ツールの Cookie ストレージに JSON の `name` と `value` を登録する。ホストは `localhost`、Path は `/` にし、JSON の属性を使って保存してからページを再読み込みする。リモート開発環境では Web と API のポートを両方 `localhost` に転送すると、同じ手順で確認できる。
+
+E2E ではシードコマンドの標準出力をセットアップで読み取り、JSON を [Playwright の `context.addCookies`](https://playwright.dev/docs/api/class-browsercontext#browser-context-add-cookies) に渡せる。Cookie はジョブ内で扱い、テストログや成果物への出力を避ける。
+
 ## 認証設定
 
 ```sh

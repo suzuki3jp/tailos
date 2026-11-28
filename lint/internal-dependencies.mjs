@@ -125,6 +125,13 @@ function resolveModule(from, dependency, workspaces, files) {
   const importer = workspaces.byRoot.get(workspaceRoot(from));
   const imported = workspaces.byRoot.get(workspaceRoot(target));
   if (
+    importer?.root.startsWith("packages/") &&
+    imported?.root.startsWith("apps/")
+  )
+    throw new Error(
+      `${from}: shared packages cannot depend on apps (${specifier}). Move the shared contract to a package that the app can import.`,
+    );
+  if (
     importer &&
     imported &&
     importer !== imported &&
@@ -213,17 +220,30 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const graph = buildInternalGraph();
-  const entries = Array.from(graph, ([file, edges]) => [
-    file,
-    Object.fromEntries(
-      Array.from(edges, ([target, typeOnly]) => [
-        target,
-        typeOnly ? "type" : "runtime",
-      ]),
-    ),
-  ]);
-  process.stdout.write(
-    JSON.stringify(Object.fromEntries(entries), null, 2) + "\n",
-  );
+  try {
+    const graph = buildInternalGraph();
+    if (process.argv.includes("--check")) {
+      const cycle = findImportCycle(graph);
+      if (cycle)
+        throw new Error(
+          `Internal dependency cycle: ${cycle.join(" -> ")}. Move the shared contract to a module both can depend on, or remove the reverse import.`,
+        );
+    } else {
+      const entries = Array.from(graph, ([file, edges]) => [
+        file,
+        Object.fromEntries(
+          Array.from(edges, ([target, typeOnly]) => [
+            target,
+            typeOnly ? "type" : "runtime",
+          ]),
+        ),
+      ]);
+      process.stdout.write(
+        JSON.stringify(Object.fromEntries(entries), null, 2) + "\n",
+      );
+    }
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
 }

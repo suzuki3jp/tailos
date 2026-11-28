@@ -19,7 +19,7 @@
 - 同じ場所の `page.test.tsx` などから、対応するルート本体を検証のために import できる。テストから別のルートを参照することは許可しない。
 - query key・取得・mutation・invalidation は所有する slice にまとめる。Provider と QueryClient の生成は App。MCP キーの平文は mutation の返り値や cache に残さず画面の一時 state に閉じる。
 - `_pages` / Features / Entities / Shared から App / Worker への依存は禁止。Worker は公開設定だけを参照し、client / React / 画面を import しない。
-- `pnpm lint` は `lint:code`（Oxlint、API / Web の境界 rule）と `lint:fsd`（Steiger）を実行し、CI の lint job に含まれる。
+- Web の境界は `pnpm lint` で検証する。検査の登録先は [ルートの scripts](../../../../package.json) を参照。
 - Steiger は `0.9.0`、公式 plugin は `0.8.2`。`apps/web/steiger.config.ts` が正本。`src/app` と `src/worker` はフレームワーク規約のため除外し、独自 Oxlint rule が import の境界を補う。`_pages` の typo 診断だけを局所的に無効にし、依存検査は有効のまま。
 - `lint/web-architecture.test.mjs` は導入済み config と実際の CLI で正常例・禁止例を検証する。`pnpm test` と CI の test job に含まれる。
 - slice 内は相対 import。Shared の segment 間でも Steiger の import-locality に合わせて相対 import を使う。

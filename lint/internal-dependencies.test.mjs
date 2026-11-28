@@ -50,14 +50,6 @@ test("reports the path through a cycle with a type-only edge", () => {
   ]);
 });
 
-test("production internal imports are acyclic", () => {
-  const cycle = findImportCycle(buildInternalGraph());
-  assert.ok(
-    !cycle,
-    `Internal dependency cycle: ${cycle?.join(" -> ")}. Move the shared contract to a module both can depend on, or remove the reverse import.`,
-  );
-});
-
 function repositoryFixture(t) {
   const root = mkdtempSync(join(tmpdir(), "tailos-dependencies-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -170,5 +162,43 @@ test("production imports cannot route around the graph through test modules", (t
   assert.throws(
     () => buildInternalGraph(root),
     /production imports cannot reference test module apps\/runner\/src\/testing\.ts/,
+  );
+});
+
+test("apps may import shared contracts and packages cannot import apps", (t) => {
+  const { root, write } = repositoryFixture(t);
+  write(
+    "apps/api/package.json",
+    JSON.stringify({
+      name: "@tailos/api",
+      exports: { "./browser": { types: "./src/browser.ts" } },
+      dependencies: { "@tailos/core": "workspace:*" },
+    }),
+  );
+  write(
+    "packages/core/package.json",
+    JSON.stringify({
+      name: "@tailos/core",
+      exports: { "./model": "./src/model.ts" },
+      devDependencies: { "@tailos/api": "workspace:*" },
+    }),
+  );
+  write(
+    "apps/api/src/browser.ts",
+    'export type { Model } from "@tailos/core/model";',
+  );
+  write("packages/core/src/model.ts", "export type Model = string;");
+  assert.deepEqual(
+    buildInternalGraph(root).get("apps/api/src/browser.ts"),
+    new Map([["packages/core/src/model.ts", true]]),
+  );
+
+  write(
+    "packages/core/src/reverse.ts",
+    'import type { Model } from "@tailos/api/browser";',
+  );
+  assert.throws(
+    () => buildInternalGraph(root),
+    /shared packages cannot depend on apps \(@tailos\/api\/browser\)/,
   );
 });

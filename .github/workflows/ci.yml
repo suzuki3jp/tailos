@@ -51,7 +51,7 @@ jobs:
       - name: Run ${{ matrix.check }}
         run: pnpm run ${{ matrix.script }}
         # lint includes Oxlint (API/Web boundaries) and Steiger (FSD).
-        # test includes CLI regression fixtures for both Web linters.
+        # test includes lint regression fixtures and the internal dependency graph check.
 
       - name: Build the Web Worker
         if: matrix.check == 'typecheck'

@@ -56,21 +56,28 @@ export function moduleImports(filename, source) {
   return imports;
 }
 
+function workspaceRoot(file) {
+  return file.split("/").slice(0, 2).join("/");
+}
+
 function internalPath(from, specifier, workspaces) {
   if (specifier.startsWith("."))
     return posix.join(posix.dirname(from), specifier);
-  if (specifier.startsWith("@/")) {
-    const workspace = from.split("/").slice(0, 2).join("/");
-    return posix.join(workspace, "src", specifier.slice(2));
-  }
+  if (specifier.startsWith("@/"))
+    return posix.join(workspaceRoot(from), "src", specifier.slice(2));
   const workspaceImport = /^(@tailos\/[^/]+)(.*)$/.exec(specifier);
   if (!workspaceImport) return;
   const [, name, subpath] = workspaceImport;
-  const workspace = workspaces.get(name);
+  const workspace = workspaces.byName.get(name);
   const entry = workspace?.exports?.[`.${subpath}`];
   const target = typeof entry === "string" ? entry : entry?.types;
   if (!target)
     throw new Error(`${from}: ${specifier} is not a workspace export.`);
+  const importer = workspaces.byRoot.get(workspaceRoot(from));
+  if (importer && importer !== workspace && !importer.dependencies.has(name))
+    throw new Error(
+      `${from}: declare workspace dependency ${name} in ${importer.root}/package.json before importing ${specifier}.`,
+    );
   return posix.join(workspace.root, target);
 }
 
@@ -88,6 +95,17 @@ function resolveModule(from, specifier, workspaces, files) {
     throw new Error(
       `${from}: cannot resolve ${specifier} to a repository file.`,
     );
+  const importer = workspaces.byRoot.get(workspaceRoot(from));
+  const imported = workspaces.byRoot.get(workspaceRoot(target));
+  if (
+    importer &&
+    imported &&
+    importer !== imported &&
+    !specifier.startsWith("@tailos/")
+  )
+    throw new Error(
+      `${from}: ${specifier} reaches into ${imported.name}. Import from an export in ${imported.root}/package.json.`,
+    );
   return target;
 }
 
@@ -103,13 +121,25 @@ export function buildInternalGraph(root = repository) {
       .filter((file) => file && existsSync(join(root, file)))
       .sort(),
   );
-  const workspaces = new Map();
+  const workspaces = { byName: new Map(), byRoot: new Map() };
   for (const path of files) {
     if (!workspaceManifest.test(path)) continue;
-    const { name, exports } = JSON.parse(
-      readFileSync(join(root, path), "utf8"),
-    );
-    workspaces.set(name, { root: posix.dirname(path), exports });
+    const manifest = JSON.parse(readFileSync(join(root, path), "utf8"));
+    const workspace = {
+      name: manifest.name,
+      root: posix.dirname(path),
+      exports: manifest.exports,
+      dependencies: new Set(
+        Object.keys({
+          ...manifest.dependencies,
+          ...manifest.devDependencies,
+          ...manifest.optionalDependencies,
+          ...manifest.peerDependencies,
+        }),
+      ),
+    };
+    workspaces.byName.set(workspace.name, workspace);
+    workspaces.byRoot.set(workspace.root, workspace);
   }
 
   const graph = new Map();

@@ -70,4 +70,4 @@ flowchart LR
 | Agent と通信 | Node.js 22、esbuild、Docker、Codex app-server、Claude Agent SDK。Runner との内部 HTTP、タイムラインの WebSocket、外部向け JSON API と MCP は用途別の境界。 |
 | ローカルと CI | pnpm workspace、TypeScript project references、Vitest、Miniflare、Node test、Oxlint、Steiger、Oxfmt。実行順とコマンドは [CI](../../.github/workflows/ci.yml) に従う。 |
 | デプロイ | [本番](../deploy.md)と [PR Preview](../pr-previews.md)は別の Worker とデータを使う。Preview 同士で D1・R2 を共有するため、先行 migration の適用と公開済みコードの互換性が必要。Preview の確認範囲は Web・HTTP API・GitHub ログインで、Runner・Webhook・Cron の実行確認は本番相当の別経路が必要。 |
-| 規範の自動検査 | Oxlint が [API のレイヤー](../../lint/api-layers.mjs)と [Web の接続境界](../../lint/web-boundaries.mjs)を、Steiger が Web の slice を検査する。導入済み構成での禁止・許可例を lint テストが確認する。 |
+| 規範の自動検査 | Oxlint が [API のレイヤー](../../lint/api-layers.mjs)と [Web の接続境界](../../lint/web-boundaries.mjs)を、Steiger が Web の slice を検査する。CI のテストでは[内部グラフ](dependencies.md#現在のグラフを確認する)の型参照を含む循環と、境界の禁止・許可例を検査する。 |

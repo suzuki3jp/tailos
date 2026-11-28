@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Label } from "@/shared/ui/design-systems";
+import { Button, TextField } from "@/shared/ui/design-systems";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -180,22 +180,12 @@ export function DiagnosticsExplorer() {
           setSelected(null);
         }}
       >
-        <Label className="space-y-1">
-          <span className="block text-sm">Run ID</span>
-          <Input
-            className="h-9"
-            value={runInput}
-            onChange={(event) => setRunInput(event.target.value)}
-          />
-        </Label>
-        <Label className="space-y-1">
-          <span className="block text-sm">GitHub delivery ID</span>
-          <Input
-            className="h-9"
-            value={deliveryInput}
-            onChange={(event) => setDeliveryInput(event.target.value)}
-          />
-        </Label>
+        <TextField label="Run ID" value={runInput} onChange={setRunInput} />
+        <TextField
+          label="GitHub delivery ID"
+          value={deliveryInput}
+          onChange={setDeliveryInput}
+        />
         <Button type="submit" variant="outline" size="touch">
           検索
         </Button>

@@ -2,10 +2,9 @@
 
 import {
   Button,
-  Input,
-  Label,
   Select,
-  Textarea,
+  TextArea,
+  TextField,
 } from "@/shared/ui/design-systems";
 import { RoutinePanel } from "./routine-panel";
 import { useState, type FormEvent } from "react";
@@ -341,19 +340,14 @@ export function ProjectsPage() {
         <h2 className="text-lg font-medium">
           {editing ? "Project を編集" : "Project を追加"}
         </h2>
-        <Label>
-          名前
-          <Input
-            required
-            maxLength={100}
-            className="h-9"
-            value={settings.name}
-            disabled={busy}
-            onChange={(event) =>
-              setSettings({ ...settings, name: event.target.value })
-            }
-          />
-        </Label>
+        <TextField
+          label="名前"
+          isRequired
+          maxLength={100}
+          value={settings.name}
+          isDisabled={busy}
+          onChange={(name) => setSettings({ ...settings, name })}
+        />
         <Select
           label="リポジトリ"
           size="lg"
@@ -393,24 +387,18 @@ export function ProjectsPage() {
           リポジトリ候補を更新
         </Button>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Label>
-            Run の上限時間（分）
-            <Input
-              required
-              type="number"
-              min={1}
-              max={30}
-              step={1}
-              className="h-9"
-              value={settings.maxRunMinutes}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  maxRunMinutes: Number(e.target.value),
-                })
-              }
-            />
-          </Label>
+          <TextField
+            label="Run の上限時間（分）"
+            isRequired
+            type="number"
+            min={1}
+            max={30}
+            step={1}
+            value={String(settings.maxRunMinutes)}
+            onChange={(value) =>
+              setSettings({ ...settings, maxRunMinutes: Number(value) })
+            }
+          />
         </div>
         <div className="flex gap-3">
           <Button
@@ -456,13 +444,13 @@ export function ProjectsPage() {
               配列を貼り付けてください。登録履歴のない環境で一度だけ実行できます。UUID
               を発行し、既存 Session の紐付けも移します。
             </p>
-            <Textarea
+            <TextArea
               aria-label="移行する Project 設定の JSON"
-              required
+              isRequired
               rows={8}
-              className="font-mono text-sm"
+              textAreaClassName="font-mono"
               value={legacyJson}
-              onChange={(e) => setLegacyJson(e.target.value)}
+              onChange={setLegacyJson}
             />
             <Button
               variant="outline"

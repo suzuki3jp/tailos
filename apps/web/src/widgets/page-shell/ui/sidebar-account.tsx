@@ -26,7 +26,7 @@ export function SidebarAccount() {
           fallback={<IconUser aria-hidden="true" size={20} />}
         />
         <span className="flex min-w-0 flex-col gap-1.5">
-          <span className="truncate text-caption font-medium">
+          <span className="truncate text-caption leading-none font-medium">
             {data?.name ?? (unauthorized ? "Sign in" : "Account")}
           </span>
           {data && (

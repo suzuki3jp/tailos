@@ -2,10 +2,9 @@
 import {
   Button,
   Checkbox,
-  Input,
-  Label,
   Select,
-  Textarea,
+  TextArea,
+  TextField,
   type SelectOption,
 } from "@/shared/ui/design-systems";
 import { RequestState } from "@/widgets/request-state";
@@ -335,16 +334,13 @@ function RoutineEditor({ projectId }: { projectId: string }) {
         <h4 className="font-medium">
           {editing ? "Routine を編集" : "Routine を追加"}
         </h4>
-        <Label>
-          名前
-          <Input
-            required
-            maxLength={100}
-            className="h-9"
-            value={settings.name}
-            onChange={(e) => setSettings({ ...settings, name: e.target.value })}
-          />
-        </Label>
+        <TextField
+          label="名前"
+          isRequired
+          maxLength={100}
+          value={settings.name}
+          onChange={(name) => setSettings({ ...settings, name })}
+        />
         <Select
           label="起動"
           size="lg"
@@ -357,48 +353,34 @@ function RoutineEditor({ projectId }: { projectId: string }) {
           }}
         />
         {settings.trigger.type === "github.issue-label" && (
-          <Label>
-            起動ラベル
-            <Input
-              required
-              maxLength={50}
-              className="h-9"
-              value={settings.trigger.label}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  trigger: {
-                    version: 1,
-                    type: "github.issue-label",
-                    label: e.target.value,
-                  },
-                })
-              }
-            />
-          </Label>
-        )}
-        <Label>
-          起動を許可する GitHub ユーザー
-          <Input
-            required
-            className="h-9"
-            value={actors}
-            onChange={(e) => setActors(e.target.value)}
-            placeholder="login1, login2"
-          />
-        </Label>
-        <Label>
-          プロンプト
-          <Textarea
-            required
-            maxLength={4000}
-            rows={5}
-            value={settings.prompt}
-            onChange={(e) =>
-              setSettings({ ...settings, prompt: e.target.value })
+          <TextField
+            label="起動ラベル"
+            isRequired
+            maxLength={50}
+            value={settings.trigger.label}
+            onChange={(label) =>
+              setSettings({
+                ...settings,
+                trigger: { version: 1, type: "github.issue-label", label },
+              })
             }
           />
-        </Label>
+        )}
+        <TextField
+          label="起動を許可する GitHub ユーザー"
+          isRequired
+          value={actors}
+          onChange={setActors}
+          placeholder="login1, login2"
+        />
+        <TextArea
+          label="プロンプト"
+          isRequired
+          maxLength={4000}
+          rows={5}
+          value={settings.prompt}
+          onChange={(prompt) => setSettings({ ...settings, prompt })}
+        />
         <Select
           label="Model Provider"
           size="lg"

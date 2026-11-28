@@ -2,10 +2,9 @@
 
 import {
   Button,
-  Input,
-  Label,
   Select,
-  Textarea,
+  TextArea,
+  TextField,
 } from "@/shared/ui/design-systems";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -104,13 +103,13 @@ export function McpKeysPage() {
               このキーはこの画面を閉じると再表示できません。Agent
               の設定にコピーしてください。
             </p>
-            <Textarea
+            <TextArea
               aria-label="発行した API key"
-              readOnly
-              spellCheck={false}
+              isReadOnly
+              spellCheck="false"
               rows={2}
               value={issued.token}
-              className="resize-none p-3 font-mono text-sm"
+              textAreaClassName="resize-none font-mono"
             />
             <div className="flex flex-wrap gap-3">
               <Button
@@ -141,17 +140,14 @@ export function McpKeysPage() {
             権限は Session・会話・実行記録の読み取り専用です。
           </p>
           <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
-            <Label>
-              キー名
-              <Input
-                required
-                maxLength={80}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="例: 手元の AI Agent"
-                className="h-9"
-              />
-            </Label>
+            <TextField
+              label="キー名"
+              isRequired
+              maxLength={80}
+              value={name}
+              onChange={setName}
+              placeholder="例: 手元の AI Agent"
+            />
             <Select
               label="有効期間"
               size="lg"

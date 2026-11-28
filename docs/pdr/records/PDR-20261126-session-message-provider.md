@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261126-session-message-provider
 key: sessions.continue-message
-status: accepted
+status: superseded
 date: "2026-11-26"
 areas: [sessions, web, api]
 keywords: [Session, 続き, メッセージ, 送信, セッション画面, 入力欄, 実行設定, モード, plan, implement, requestId, 順番待ち, Model Provider, Codex, Claude]

@@ -208,11 +208,8 @@ export async function dispatchIssueEvent(
             projectRevision: record.revision,
           },
           // A comment is the user's message; the Routine says what to do
-          // with it, reading the repository without changing it.
-          ...(event.kind === "comment" && {
-            instructions: routine.prompt,
-            mode: "plan" as const,
-          }),
+          // with it.
+          ...(event.kind === "comment" && { instructions: routine.prompt }),
           repository,
           trigger,
         };

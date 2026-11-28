@@ -459,7 +459,9 @@ async function runTurns(
 ) {
   if (job.githubContext && !job.checkout)
     throw new Error("GitHub issue context requires a repository checkout");
-  const implementation = !!job.checkout && job.mode !== "plan";
+  // Every repository Turn may change its work: what it does is up to its
+  // prompt.
+  const writable = !!job.checkout;
   const githubReader = job.checkout
     ? createGitHubReader(
         job.checkout,
@@ -475,8 +477,8 @@ async function runTurns(
     JSON.stringify({
       engine: "claude",
       version: process.env.TAILOS_CLAUDE_AGENT_SDK_VERSION ?? "unknown",
-      sandbox: implementation ? "workspace-write" : "read-only",
-      ...(implementation && { commandNetwork: "proxied" }),
+      sandbox: writable ? "workspace-write" : "read-only",
+      ...(writable && { commandNetwork: "proxied" }),
     }),
   );
   const toolSpans = new Map<string, string>();
@@ -498,9 +500,8 @@ async function runTurns(
     ...(job.effort && { effort: job.effort as EffortLevel }),
   };
 
-  // Plan mode gets no command execution, so it cannot change the workspace.
   // Skill lets the Agent use the skills of the target repository.
-  const tools = implementation
+  const tools = writable
     ? ["Read", "Glob", "Grep", "Skill", "Edit", "Write", "Bash"]
     : ["Read", "Glob", "Grep", "Skill"];
   const outputSchema = replySchema(job);
@@ -528,8 +529,8 @@ async function runTurns(
   let agentError: unknown;
   let proxy: Awaited<ReturnType<ClaudeRuntime["startProxy"]>> | undefined;
   try {
-    if (implementation) proxy = await runtime.startProxy();
-    if (implementation && !(await runtime.sandboxAvailable(signal))) {
+    if (writable) proxy = await runtime.startProxy();
+    if (writable && !(await runtime.sandboxAvailable(signal))) {
       signal.throwIfAborted();
       throw new AgentSandboxUnavailable(
         "Claude Code command sandbox unavailable",
@@ -620,7 +621,7 @@ async function runTurns(
                 ? { [tailosServerName]: runtime.tailosServer(tailosTools) }
                 : {},
               hooks: { PreToolUse: [{ hooks: [fileGuard] }] },
-              ...(implementation && {
+              ...(writable && {
                 sandbox: {
                   enabled: true,
                   // Never run a command outside the sandbox.

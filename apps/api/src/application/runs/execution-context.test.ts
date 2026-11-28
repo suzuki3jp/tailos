@@ -44,10 +44,20 @@ test("stored contexts from before triggers are read as the matching issue trigge
     }),
   ).toEqual({
     ...base,
-    mode: "plan",
     repository,
     trigger: { kind: "github.issue-comment", issueNumber: 8 },
   });
+});
+
+test("stored contexts drop the removed execution mode", () => {
+  const trigger = { kind: "github.issue-comment", issueNumber: 8 };
+  for (const mode of ["plan", "implement"])
+    expect(
+      v.parse(ExecutionContext, { ...base, mode, repository, trigger }),
+    ).toEqual({ ...base, repository, trigger });
+  expect(
+    v.parse(ExecutionContext, { version: 1, engine: "fake", mode: "plan" }),
+  ).toEqual({ version: 1, engine: "fake" });
 });
 
 test("each trigger kind carries only its own values, and repository Runs need one", () => {
@@ -91,7 +101,6 @@ test("stored contexts keep reading after the network setting was removed", () =>
     }),
   ).toEqual({
     ...base,
-    mode: "plan",
     repository,
     trigger: { kind: "github.issue-comment", issueNumber: 8 },
   });

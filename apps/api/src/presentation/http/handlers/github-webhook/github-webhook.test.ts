@@ -192,18 +192,18 @@ test("runs plan comments as the plan Routine's Session and rejects ineligible co
   const [started] = receipt.results;
   assert(started?.runId);
   expect(started.disposition).toBe("started");
-  // The comment is the message; the Routine's prompt says what to do.
-  expect(
-    JSON.parse(
-      (await db
-        .prepare("SELECT execution_context FROM runs")
-        .first<string>("execution_context"))!,
-    ),
-  ).toMatchObject({
-    mode: "plan",
+  // The comment is the message; the Routine's prompt says what to do, with
+  // the same permissions as any other Turn.
+  const context = JSON.parse(
+    (await db
+      .prepare("SELECT execution_context FROM runs")
+      .first<string>("execution_context"))!,
+  );
+  expect(context).toMatchObject({
     instructions: planningPrompt,
     trigger: { kind: "github.issue-comment", issueNumber: 8 },
   });
+  expect(context).not.toHaveProperty("mode");
   expect(
     await db
       .prepare("SELECT body FROM session_messages WHERE seq = 1")

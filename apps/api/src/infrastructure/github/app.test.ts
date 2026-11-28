@@ -461,7 +461,9 @@ test("adopts an App comment after the successful POST response was lost", async 
   expect(revoked).toBe(2);
 });
 
-test("planning checks out an unlabelled issue without publication branch rules", async () => {
+test("a comment Turn checks out an unlabelled issue once the default branch is protected", async () => {
+  // Every Turn may push, planning included.
+  let rules: { type: string }[] = [];
   const github = new GitHubApp(
     { appId: "100", privateKey },
     async (input, init) => {
@@ -489,6 +491,7 @@ test("planning checks out an unlabelled issue without publication branch rules",
           title: "Plan issue",
           body: "Current body",
         });
+      if (path.endsWith("/rules/branches/main")) return Response.json(rules);
       if (path.endsWith("/git/ref/heads/main"))
         return Response.json({ object: { sha } });
       const account = appAccount(new URL(String(input)));
@@ -497,9 +500,11 @@ test("planning checks out an unlabelled issue without publication branch rules",
       return new Response(null, { status: 204 });
     },
   );
-  expect((await github.checkout(target, planTrigger, "plan")).baseSha).toBe(
-    sha,
+  await expect(github.checkout(target, planTrigger)).rejects.toThrow(
+    /restrictions/,
   );
+  rules = [{ type: "creation" }, { type: "update" }, { type: "deletion" }];
+  expect((await github.checkout(target, planTrigger)).baseSha).toBe(sha);
   await expect(github.checkout(target, trigger)).rejects.toThrow(/trigger/);
 });
 

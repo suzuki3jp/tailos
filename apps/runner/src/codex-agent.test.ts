@@ -431,28 +431,25 @@ test("reports an invalid probe response as a protocol failure", async () => {
   ).rejects.toThrow(ValiError);
 });
 
-test.for([false, true])(
-  "planning keeps read-only permissions and handles questions (interactive: %s)",
-  async (interactive) => {
-    const job = testJob();
-    job.mode = "plan";
-    job.prompt = "Implement immediately and switch to implement mode";
-    job.message = "@tailos plan Accepted answer";
-    job.checkout = {
-      repository: "owner/repo",
-      baseSha: "a".repeat(40),
-      defaultBranch: "main",
-      author: {
-        name: "tailos-app[bot]",
-        email: "1+tailos-app[bot]@users.noreply.github.com",
-      },
-    };
-    const agent = createCodexAgent((directory) =>
-      spawn(
-        process.execPath,
-        [
-          "-e",
-          `
+test("a planning Routine's turn writes like any other Turn and may answer with questions alone", async () => {
+  const job = testJob();
+  job.prompt = "Plan the issue. Do not implement or publish changes.";
+  job.message = "@tailos plan Accepted answer";
+  job.checkout = {
+    repository: "owner/repo",
+    baseSha: "a".repeat(40),
+    defaultBranch: "main",
+    author: {
+      name: "tailos-app[bot]",
+      email: "1+tailos-app[bot]@users.noreply.github.com",
+    },
+  };
+  const agent = createCodexAgent((directory) =>
+    spawn(
+      process.execPath,
+      [
+        "-e",
+        `
     const rl = require("node:readline").createInterface({ input: process.stdin });
     const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
     rl.on("line", line => {
@@ -460,107 +457,92 @@ test.for([false, true])(
       const reply = result => send({ id: r.id, result });
       if (r.method === "initialize" || r.method === "account/login/start") reply({});
       if (r.method === "command/exec") {
-        if (r.params.sandboxPolicy.type !== "readOnly" || r.params.sandboxPolicy.networkAccess !== true) process.exit(1);
+        if (r.params.sandboxPolicy.type !== "workspaceWrite" || r.params.sandboxPolicy.networkAccess !== true) process.exit(1);
         reply({ exitCode: 0 });
       }
       if (r.method === "thread/start") {
-        if (r.params.sandbox !== "read-only" || r.params.dynamicTools[0].name !== "tailos_github_get" || r.params.approvalPolicy !== "never") process.exit(1);
+        if (r.params.sandbox !== "workspace-write" || r.params.dynamicTools[0].name !== "tailos_github_get" || r.params.approvalPolicy !== "never") process.exit(1);
         reply({ thread: { id: "plan" } });
       }
       if (r.method === "turn/start") {
-        if (!r.params.input[0].text.includes("Accepted answer")) process.exit(1);
-        if (r.params.sandboxPolicy.type !== "readOnly" || r.params.outputSchema.required.includes("headline") || r.params.input[0].text.includes("Conventional Commits")) process.exit(1);
+        const text = r.params.input[0].text;
+        if (!text.includes("Accepted answer") || /read-only|planPresented|needsAnswer/.test(text)) process.exit(1);
+        if (r.params.sandboxPolicy.type !== "workspaceWrite" || JSON.stringify(r.params.outputSchema.required) !== JSON.stringify(["reply", "sessionTitle"])) process.exit(1);
         reply({});
-        if (${interactive}) {
-          send({ id: "question", method: "item/tool/requestUserInput", params: {} });
-          return;
-        }
-        send({ method: "item/completed", params: { threadId: "plan", item: { type: "agentMessage", text: JSON.stringify({ reply: "Which API?", planPresented: false, needsAnswer: true }) } } });
+        send({ method: "item/completed", params: { threadId: "plan", item: { type: "agentMessage", text: JSON.stringify({ reply: "Which API?", sessionTitle: null }) } } });
         send({ method: "turn/completed", params: { threadId: "plan", turn: { status: "completed" } } });
       }
     });
   `,
-        ],
-        { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
-      ),
-    );
-    if (interactive) {
-      await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
-        "Interactive planning requests are disabled",
-      );
-      return;
-    }
-    await expect(agent.run(job, AbortSignal.timeout(5000))).resolves.toEqual({
-      reply: "Which API?",
-      plan: { planPresented: false, needsAnswer: true },
-    });
-  },
-);
+      ],
+      { cwd: directory, detached: true, stdio: ["pipe", "pipe", "ignore"] },
+    ),
+  );
+  await expect(agent.run(job, AbortSignal.timeout(5000))).resolves.toEqual({
+    reply: "Which API?",
+  });
+});
 
-test.for(["plan", "implement"] as const)(
-  "retrieves the structured issue through the agent tool and rejects missing or partial reads (%s)",
-  async (mode) => {
-    for (const outcome of [
-      "complete",
-      "skipped",
-      "failed",
-      "partial",
-      "edited",
-      "title-edited",
-      "diagnostics-failed",
-    ] as const) {
-      const job = replyJob(mode);
-      job.githubContext = {
-        kind: "issue",
-        number: 17,
-        contentHash: await githubIssueDigest({
-          title: "Fetched private title",
-          body: "Fetched private body" + "長".repeat(32_000),
-        }),
-      };
-      job.prompt = "Work on the assigned issue";
-      const changed = ["edited", "title-edited", "diagnostics-failed"].includes(
-        outcome,
-      );
-      job.diagnostics = {
-        traceId: `run/${job.runId}`,
-        parentSpanId: `run/${job.runId}`,
-        producerId: randomUUID(),
-        url: "https://tailos.example/diagnostics",
-        bearer: "b".repeat(64),
-        expiresAt: Date.now() + 60_000,
-      };
-      const sent: string[] = [];
-      const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
-        sent.push(String(init?.body));
-        return new Response(null, { status: 204 });
-      });
-      const end = diagnostics.end.bind(diagnostics);
-      const recordedReasons: string[] = [];
-      diagnostics.end = (span, attributes, body) => {
-        if (attributes?.reason) recordedReasons.push(attributes.reason);
-        if (
-          outcome === "diagnostics-failed" &&
-          attributes?.reason === "issue_changed"
-        ) {
-          throw new Error("diagnostic recording failed");
-        }
-        end(span, attributes, body);
-      };
-      let fetches = 0;
-      const agent = createCodexAgent(
-        (directory) =>
-          spawn(
-            process.execPath,
-            [
-              "-e",
-              `
+test("retrieves the structured issue through the agent tool and rejects missing or partial reads", async () => {
+  for (const outcome of [
+    "complete",
+    "skipped",
+    "failed",
+    "partial",
+    "edited",
+    "title-edited",
+    "diagnostics-failed",
+  ] as const) {
+    const job = replyJob("repository");
+    job.githubContext = {
+      kind: "issue",
+      number: 17,
+      contentHash: await githubIssueDigest({
+        title: "Fetched private title",
+        body: "Fetched private body" + "長".repeat(32_000),
+      }),
+    };
+    job.prompt = "Work on the assigned issue";
+    const changed = ["edited", "title-edited", "diagnostics-failed"].includes(
+      outcome,
+    );
+    job.diagnostics = {
+      traceId: `run/${job.runId}`,
+      parentSpanId: `run/${job.runId}`,
+      producerId: randomUUID(),
+      url: "https://tailos.example/diagnostics",
+      bearer: "b".repeat(64),
+      expiresAt: Date.now() + 60_000,
+    };
+    const sent: string[] = [];
+    const diagnostics = new RunnerDiagnostics(job, async (_url, init) => {
+      sent.push(String(init?.body));
+      return new Response(null, { status: 204 });
+    });
+    const end = diagnostics.end.bind(diagnostics);
+    const recordedReasons: string[] = [];
+    diagnostics.end = (span, attributes, body) => {
+      if (attributes?.reason) recordedReasons.push(attributes.reason);
+      if (
+        outcome === "diagnostics-failed" &&
+        attributes?.reason === "issue_changed"
+      ) {
+        throw new Error("diagnostic recording failed");
+      }
+      end(span, attributes, body);
+    };
+    let fetches = 0;
+    const agent = createCodexAgent(
+      (directory) =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `
 const assert = require("node:assert/strict");
 const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
 const complete = () => {
-  const result = ${mode === "plan"}
-    ? { reply: "Plan based on fetched requirements", planPresented: true, needsAnswer: false }
-    : { reply: "Implemented fetched requirements", headline: "feat: implement the issue" };
+  const result = { reply: "Implemented fetched requirements", sessionTitle: null };
   send({ method: "item/completed", params: { threadId: "source", item: { type: "agentMessage", text: JSON.stringify(result) } } });
   send({ method: "turn/completed", params: { threadId: "source", turn: { status: "completed" } } });
 };
@@ -598,77 +580,76 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
     complete();
   }
 });`,
-            ],
-            {
-              cwd: directory,
-              detached: true,
-              stdio: ["pipe", "pipe", "ignore"],
-            },
-          ),
-        async (url, init) => {
-          fetches++;
-          expect(String(url)).toBe(
-            "https://api.github.com/repos/owner/repo/issues/17",
-          );
-          expect(new Headers(init?.headers).get("Authorization")).toBeNull();
-          if (outcome === "failed") return new Response(null, { status: 404 });
-          return Response.json({
-            number: 17,
-            title:
-              outcome === "title-edited"
-                ? "Unapproved title"
-                : "Fetched private title",
-            body:
-              changed && outcome !== "title-edited"
-                ? "Unapproved edit"
-                : "Fetched private body" + "長".repeat(32_000),
-            state: "open",
-            html_url: "https://github.com/owner/repo/issues/17",
-          });
-        },
-      );
-      const result = agent.run(
-        job,
-        AbortSignal.timeout(5000),
-        process.cwd(),
-        diagnostics,
-      );
-      if (outcome === "complete") {
-        await expect(result).resolves.toMatchObject({
-          reply: expect.stringContaining("fetched requirements"),
-        });
-      } else {
-        await expect(result).rejects.toThrow(
-          "The assigned GitHub issue was not read completely",
+          ],
+          {
+            cwd: directory,
+            detached: true,
+            stdio: ["pipe", "pipe", "ignore"],
+          },
+        ),
+      async (url, init) => {
+        fetches++;
+        expect(String(url)).toBe(
+          "https://api.github.com/repos/owner/repo/issues/17",
         );
-      }
-      expect(fetches).toBe(outcome === "skipped" ? 0 : 1);
-      await diagnostics.finish();
-      expect(recordedReasons).toEqual(changed ? ["issue_changed"] : []);
-      const records = sent.flatMap(
-        (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
-      );
-      const mismatch = records.filter(
-        (record) => record.attributes.reason === "issue_changed",
-      );
-      expect(mismatch).toHaveLength(
-        changed && outcome !== "diagnostics-failed" ? 1 : 0,
-      );
-      if (mismatch.length) {
-        expect(mismatch[0]).toMatchObject({
-          name: "span.finished",
-          attributes: { operation: "tool", outcome: "failed" },
+        expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+        if (outcome === "failed") return new Response(null, { status: 404 });
+        return Response.json({
+          number: 17,
+          title:
+            outcome === "title-edited"
+              ? "Unapproved title"
+              : "Fetched private title",
+          body:
+            changed && outcome !== "title-edited"
+              ? "Unapproved edit"
+              : "Fetched private body" + "長".repeat(32_000),
+          state: "open",
+          html_url: "https://github.com/owner/repo/issues/17",
         });
-        expect(mismatch[0]!.parentSpanId).toBeDefined();
-      }
-      if (changed) {
-        expect(sent.join("")).not.toContain("Unapproved");
-        expect(sent.join("")).not.toContain("Fetched private body");
-        expect(sent.join("")).not.toContain("checkout-token");
-      }
+      },
+    );
+    const result = agent.run(
+      job,
+      AbortSignal.timeout(5000),
+      process.cwd(),
+      diagnostics,
+    );
+    if (outcome === "complete") {
+      await expect(result).resolves.toMatchObject({
+        reply: expect.stringContaining("fetched requirements"),
+      });
+    } else {
+      await expect(result).rejects.toThrow(
+        "The assigned GitHub issue was not read completely",
+      );
     }
-  },
-);
+    expect(fetches).toBe(outcome === "skipped" ? 0 : 1);
+    await diagnostics.finish();
+    expect(recordedReasons).toEqual(changed ? ["issue_changed"] : []);
+    const records = sent.flatMap(
+      (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
+    );
+    const mismatch = records.filter(
+      (record) => record.attributes.reason === "issue_changed",
+    );
+    expect(mismatch).toHaveLength(
+      changed && outcome !== "diagnostics-failed" ? 1 : 0,
+    );
+    if (mismatch.length) {
+      expect(mismatch[0]).toMatchObject({
+        name: "span.finished",
+        attributes: { operation: "tool", outcome: "failed" },
+      });
+      expect(mismatch[0]!.parentSpanId).toBeDefined();
+    }
+    if (changed) {
+      expect(sent.join("")).not.toContain("Unapproved");
+      expect(sent.join("")).not.toContain("Fetched private body");
+      expect(sent.join("")).not.toContain("checkout-token");
+    }
+  }
+});
 
 async function replyFixture(
   t: TestContext,
@@ -706,7 +687,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   }
   if (r.method !== "turn/start") return;
   assert.equal(r.params.threadId, "reply-thread");
-  if (${!!job.checkout || job.mode === "plan"}) {
+  if (${!!job.checkout}) {
     assert.deepEqual(r.params.outputSchema.properties.reply, { type: "string" });
   } else {
     assert.equal(r.params.outputSchema, undefined);
@@ -727,11 +708,9 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     return;
   }
   if (answer !== null) {
-    const text = ${job.mode === "plan"}
-      ? JSON.stringify({ reply: answer, planPresented: false, needsAnswer: true })
-      : ${!!job.checkout}
-        ? JSON.stringify({ reply: answer, headline: turns.length === 1 ? "fix: preserve the changes" : "docs: shorten the reply" })
-        : answer;
+    const text = ${!!job.checkout}
+      ? JSON.stringify({ reply: answer, sessionTitle: null })
+      : answer;
     send({ method: "item/completed", params: { threadId: "reply-thread", item: { type: "agentMessage", text } } });
   }
   send({ method: "turn/completed", params: { threadId: "reply-thread", turn: { status: "completed" } } });
@@ -759,11 +738,12 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
   };
 }
 
-function replyJob(mode: "plain" | "implement" | "plan") {
+// A repository Turn keeps its work when its reply cannot be shortened; a
+// plain answer fails instead.
+function replyJob(kind: "plain" | "repository") {
   const job = testJob();
-  if (mode === "implement") job.deadlineAt = Date.now() + 120_000;
-  if (mode !== "plain") {
-    job.mode = mode;
+  if (kind === "repository") {
+    job.deadlineAt = Date.now() + 120_000;
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
@@ -777,10 +757,10 @@ function replyJob(mode: "plain" | "implement" | "plan") {
   return job;
 }
 
-test.for(["plain", "implement", "plan"] as const)(
+test.for(["plain", "repository"] as const)(
   "asks for a shorter %s reply in the same thread without truncating it",
-  async (mode, t) => {
-    const job = replyJob(mode);
+  async (kind, t) => {
+    const job = replyJob(kind);
     const final = "Which behavior should the implementation preserve?";
     const { agent, turns } = await replyFixture(t, job, [
       "x".repeat(8001),
@@ -788,9 +768,6 @@ test.for(["plain", "implement", "plan"] as const)(
     ]);
     expect(await agent.run(job, AbortSignal.timeout(5000))).toEqual({
       reply: final,
-      ...(mode === "plan" && {
-        plan: { planPresented: false, needsAnswer: true },
-      }),
     });
     const requests = await turns();
     expect(requests).toHaveLength(2);
@@ -799,7 +776,7 @@ test.for(["plain", "implement", "plan"] as const)(
 );
 
 test("accepts the exact reply limit without requesting a revision", async (t) => {
-  const job = replyJob("plan");
+  const job = replyJob("repository");
   const reply = "x".repeat(8000);
   const { agent, turns } = await replyFixture(t, job, [reply]);
   expect(await agent.run(job, AbortSignal.timeout(5000))).toMatchObject({
@@ -809,7 +786,7 @@ test("accepts the exact reply limit without requesting a revision", async (t) =>
 });
 
 test("measures the saved reply after secret redaction", async (t) => {
-  const job = replyJob("plan");
+  const job = replyJob("repository");
   job.access.accessToken = "short";
   const { agent, turns } = await replyFixture(t, job, [
     "x".repeat(7994) + "short",
@@ -826,7 +803,7 @@ test("measures the saved reply after secret redaction", async (t) => {
 test.for([true, false])(
   "bounds reply revisions to two and accepts a valid final revision (%s)",
   async (succeeds, t) => {
-    const job = replyJob("plan");
+    const job = replyJob("plain");
     const { agent, turns } = await replyFixture(t, job, [
       "x".repeat(8001),
       "x".repeat(8100),
@@ -841,16 +818,17 @@ test.for([true, false])(
 );
 
 test("does not reuse a previous answer when the revision has no reply", async (t) => {
-  const job = replyJob("plan");
+  const job = replyJob("plain");
   const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
+  // The empty revision is refused instead of the earlier, too long answer.
   await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
-    SyntaxError,
+    ValiError,
   );
   expect(await turns()).toHaveLength(2);
 });
 
 test("does not start a reply revision without enough time remaining", async (t) => {
-  const job = replyJob("plan");
+  const job = replyJob("plain");
   job.deadlineAt = Date.now() + 3000;
   const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001)]);
   await expect(agent.run(job, AbortSignal.timeout(5000))).rejects.toThrow(
@@ -862,7 +840,7 @@ test("does not start a reply revision without enough time remaining", async (t) 
 test.for(["revisions", "deadline"] as const)(
   "preserves implementation work when reply repair reaches its %s limit",
   async (limit, t) => {
-    const job = replyJob("implement");
+    const job = replyJob("repository");
     if (limit === "deadline") job.deadlineAt = Date.now() + 59_000;
     const count = limit === "deadline" ? 1 : 3;
     const { agent, turns } = await replyFixture(
@@ -879,7 +857,7 @@ test.for(["revisions", "deadline"] as const)(
 );
 
 test("a stalled implementation revision leaves time for publication and stops the agent", async (t) => {
-  const job = replyJob("implement");
+  const job = replyJob("repository");
   job.deadlineAt = Date.now() + 65_000;
   let started = () => {};
   const revisionStarted = new Promise<void>((resolve) => {
@@ -907,7 +885,7 @@ test("a stalled implementation revision leaves time for publication and stops th
 });
 
 test("an invalid implementation revision preserves the completed work", async (t) => {
-  const job = replyJob("implement");
+  const job = replyJob("repository");
   const { agent, turns } = await replyFixture(t, job, ["x".repeat(8001), null]);
   const result = await agent.run(job, AbortSignal.timeout(5000));
   expect(result.reply).toContain("要約を取得できませんでした");
@@ -915,7 +893,7 @@ test("an invalid implementation revision preserves the completed work", async (t
 });
 
 test("an aborted revision stops the agent and cleans up its workspace", async (t) => {
-  const job = replyJob("plan");
+  const job = replyJob("repository");
   const controller = new AbortController();
   const { agent, turns, codexHome } = await replyFixture(
     t,
@@ -1252,7 +1230,7 @@ test.for([
 );
 
 test("lets an implementation write its git directory, and answers a retired tool", async () => {
-  const job = replyJob("implement");
+  const job = replyJob("repository");
   const gitDir = "/tmp/tailos-git-test";
   const agent = createCodexAgent((directory) =>
     spawn(

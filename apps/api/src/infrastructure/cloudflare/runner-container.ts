@@ -816,7 +816,6 @@ export class RunnerContainer
     );
     const base = {
       version: 1 as const,
-      ...(context.mode === "plan" && { mode: "plan" as const }),
       runId,
       prompt: instructions ?? prompt,
       ...(instructions && { message: prompt }),
@@ -998,9 +997,7 @@ export class RunnerContainer
           status: "failed",
           errorCode: "repository_unavailable",
         } as const;
-      const checkout = await github
-        .checkout(target, trigger, request.context.mode)
-        .catch(() => null);
+      const checkout = await github.checkout(target, trigger).catch(() => null);
       if (!checkout)
         return {
           status: "failed",
@@ -1110,14 +1107,6 @@ export class RunnerContainer
     const status = await this.readRunnerStatus(runId);
     if (status.status !== "running") await this.closeGitHubEgress();
     if (status.status !== "succeeded") return status;
-    if (context.mode === "plan")
-      return status.plan
-        ? status
-        : ({
-            status: "failed",
-            errorCode: "agent_failed",
-            events: status.events,
-          } as const);
     if (!repository || !trigger) return status;
     // The Agent pushes and opens pull requests itself: the Run's result shows
     // those of the branches it pushed. They are only shown, so a lookup that

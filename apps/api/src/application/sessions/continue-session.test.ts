@@ -26,7 +26,6 @@ const previous = {
   connectionId: "codex/c42c7de5-938d-4f93-a6af-d43bb0e7b65c",
   model: "old-model",
   effort: "low",
-  mode: "plan",
   instructions: "Plan the issue.",
   routine: {
     id: "00000000-0000-4000-8000-000000000002",
@@ -82,11 +81,19 @@ test("the next Turn keeps the latest Turn's settings, with only the model and ef
   const chosen = deps();
   await continueSession({ ...input, model: "gpt-5.5" }, chosen.deps);
   const { model: _model, effort: _effort, ...settings } = previous;
-  // Planning stays read-only with its instructions.
+  // Planning keeps its instructions.
   expect(JSON.parse(chosen.sent[0]!.executionContext)).toEqual({
     ...settings,
     model: "gpt-5.5",
   });
+
+  // A planning Turn saved with the removed read-only mode is continued with
+  // the same permissions as any other.
+  const stored = deps({
+    latestTurn: async () => JSON.stringify({ ...previous, mode: "plan" }),
+  });
+  await continueSession(input, stored.deps);
+  expect(JSON.parse(stored.sent[0]!.executionContext)).toEqual(previous);
 });
 
 test("the Session keeps its Model Provider, whose models and connection it checks", async () => {

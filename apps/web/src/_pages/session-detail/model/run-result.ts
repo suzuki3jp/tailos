@@ -8,8 +8,9 @@ const pullRequestUrl = (value: unknown) => {
 };
 
 /**
- * What a finished Run left to show: its plan, or the pull requests of the
- * branches it pushed. Older Runs kept one pull request.
+ * What a finished Run left to show: the pull requests of the branches it
+ * pushed. Older Runs kept one pull request, and older planning Runs kept
+ * whether they presented a plan.
  */
 export function runResult(result: string | null): {
   plan?: string;

@@ -354,39 +354,34 @@ test("reports a sandbox startup failure as a failed job", async (t) => {
   });
 });
 
-test("execution modes preserve legacy jobs and validate planning contracts", () => {
-  const legacy = {
+test("jobs and results carry no execution mode, and stored contexts drop it", () => {
+  const job = {
     version: 1,
     engine: "fake",
     runId: randomUUID(),
     prompt: "Investigate",
     deadlineAt: Date.now() + 1000,
   };
-  expect(v.safeParse(RunnerJobSchema, legacy).success).toBe(true);
+  expect(v.safeParse(RunnerJobSchema, job).success).toBe(true);
+  // Every Turn runs with the same permissions: a job cannot ask for a mode.
+  expect(v.safeParse(RunnerJobSchema, { ...job, mode: "plan" }).success).toBe(
+    false,
+  );
   expect(
-    v.safeParse(RunnerJobSchema, { ...legacy, mode: "plan" }).success,
-  ).toBe(true);
-  expect(
-    v.safeParse(RunnerJobSchema, { ...legacy, mode: "write" }).success,
-  ).toBe(false);
-  expect(
-    v.parse(ExecutionContext, { version: 1, engine: "fake" }).mode,
-  ).toBeUndefined();
-  expect(
-    v.parse(ExecutionContext, { version: 1, engine: "fake", mode: "plan" })
-      .mode,
-  ).toBe("plan");
-  expect(
-    v.safeParse(ExecutionContext, { version: 1, engine: "fake", mode: "write" })
-      .success,
-  ).toBe(false);
+    v.parse(ExecutionContext, { version: 1, engine: "fake", mode: "plan" }),
+  ).toEqual({ version: 1, engine: "fake" });
   const result = {
     status: "succeeded",
     reply: "Which behavior?",
-    plan: { planPresented: false, needsAnswer: true },
     events: [],
   };
   expect(v.safeParse(RunnerStatus, result).success).toBe(true);
+  expect(
+    v.safeParse(RunnerStatus, {
+      ...result,
+      plan: { planPresented: false, needsAnswer: true },
+    }).success,
+  ).toBe(false);
   expect(
     v.safeParse(RunnerStatus, { ...result, reply: "x".repeat(8001) }).success,
   ).toBe(false);

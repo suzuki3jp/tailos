@@ -412,7 +412,6 @@ export class GitHubApp {
   async checkout(
     target: RepositoryTarget,
     trigger: RunTrigger,
-    mode?: "plan" | "implement",
   ): Promise<GitHubCheckout> {
     const issueTrigger = triggerIssue(trigger);
     const { token } = await this.token(target, {
@@ -447,23 +446,19 @@ export class GitHubApp {
       )
         throw new Error("GitHub issue no longer matches the trigger");
       const branch = encodeURIComponent(target.defaultBranch);
-      if (mode !== "plan") {
-        const rules = v.parse(
-          v.array(v.object({ type: v.string() })),
-          await this.json(
-            `${repo}/rules/branches/${branch}?per_page=100`,
-            token,
-          ),
-        );
-        if (
-          !["creation", "update", "deletion"].every((required) =>
-            rules.some((rule) => rule.type === required),
-          )
+      // Every Turn may push, so the default branch must be protected.
+      const rules = v.parse(
+        v.array(v.object({ type: v.string() })),
+        await this.json(`${repo}/rules/branches/${branch}?per_page=100`, token),
+      );
+      if (
+        !["creation", "update", "deletion"].every((required) =>
+          rules.some((rule) => rule.type === required),
         )
-          throw new Error(
-            "The default branch must have active creation, update and deletion restrictions",
-          );
-      }
+      )
+        throw new Error(
+          "The default branch must have active creation, update and deletion restrictions",
+        );
       const base = v.parse(
         refSchema,
         await this.json(`${repo}/git/ref/heads/${branch}`, token),

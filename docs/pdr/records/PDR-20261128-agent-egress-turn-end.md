@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261128-agent-egress-turn-end
 key: agent.network.egress
-status: accepted
+status: superseded
 date: "2026-11-28"
 areas: [agent, runner, github, security, api]
 keywords: [外部通信, 通信許可, networkAccess, enableInternet, プロキシ, 認証情報, GitHub トークン, gh, git, CA 証明書, interceptOutboundHttps, Outbound Worker, プロンプトインジェクション, 制御用ポート, 差し込みを止める, Turn の終わり, バックグラウンドのプロセス, push の記録]

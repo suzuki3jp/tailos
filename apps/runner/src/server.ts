@@ -161,15 +161,13 @@ async function execute(
               agent.run(input, signal, cwd, diagnostics, conversation, gitDir),
             undefined,
             diagnostics,
-            input.mode,
             continuity,
           )
         : await agent
             .run(input, signal, undefined, diagnostics)
-            .then(({ reply, plan, sessionTitle }) => ({
+            .then(({ reply, sessionTitle }) => ({
               reply,
               ...(sessionTitle && { sessionTitle }),
-              ...(input.mode === "plan" && { plan }),
             }));
     signal.throwIfAborted();
     terminal = v.parse(RunnerStatus, {

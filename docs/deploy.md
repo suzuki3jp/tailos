@@ -120,7 +120,7 @@ GitHub の **Settings → Developer settings → OAuth Apps** でログイン専
 
 恒久的な API エラー、または一時障害で通算 20 回の送信試行に達した通知は permanent 状態で停止する。原因を解消して手動で再送する場合は、該当する通知の `error_category` を NULL、`next_attempt_at` を 0、`attempts` を 0 に戻す。レート制限は指定された待機時間とバックオフに従って再試行する。
 
-既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Agent の GitHub 通信には、対象リポジトリに限定した App の権限のトークンを Worker が差し込む。Agent が git と gh でコミット・push・PR 作成を行い、Worker は成功した Turn が push したブランチに対応する PR を探して結果に記録する。[Git による公開](pdr/records/PDR-20261128-agent-git-publication.md)
+既定ブランチに、作成・更新・削除を制限する有効な ruleset を適用する。管理者など必要な主体に限定して迂回を許可し、Tailos の GitHub App を bypass に含めない。Agent の GitHub 通信には、対象リポジトリに限定した App の権限のトークンを Worker が差し込む。Agent が git と gh でコミット・push・PR 作成を行い、Worker は成功した Turn が push したブランチに対応する PR を探して結果に記録する。[Git による公開](pdr/records/PDR-20261129-agent-git-publication-no-modes.md)
 
 デプロイ後に `/login` から GitHub でログインし、`/connect` で ChatGPT を接続する。初回ログインで Tailos のユーザーが作られる。接続が済んだら、`/projects` でリポジトリを選び、「Routine を管理」から起動ラベル・許可ユーザー・プロンプト・必要な model / effort を保存して有効にする。無効状態なら接続やモデル情報を検証できなくても保存できるが、有効化には検証が必要になる。その後、許可されたアカウントで Private リポジトリのテスト Issue にラベルを付ける。Webhook の配信結果の `results` 配列に含まれる各 `sessionId` を `/sessions/<sessionId>` に指定すると、依頼、返答、Run の結果を確認できる。
 
@@ -133,7 +133,7 @@ Codex・Claude の Run は `standard-3`（8 GiB、2 vCPU）で起動する。Run
 
 Runner イメージは `codex-linux-sandbox` を Codex のネイティブ実行ファイルへのリンクとして `/usr/local/bin` に配置する。Codex は `/tmp` 配下の使い捨て `CODEX_HOME` には helper の別名を作成しないため、外部の bubblewrap が PATH から helper を起動できるようにする。Codex の更新でパッケージ内の配置が変わった場合はイメージのビルドを失敗させ、配置を見直す。
 
-Agent のコマンドは常に外部と通信できる。依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信できるため、プロンプトインジェクションなどで非公開ソースや読み取り可能なデータが外部に送信される可能性がある。GitHub の認証情報は Worker が管理する。[Agent の外部通信と GitHub 認証](pdr/records/PDR-20261128-agent-egress-turn-end.md)
+Agent のコマンドは常に外部と通信できる。依存関係のスクリプトを含む Agent のコマンドが任意の宛先に通信できるため、プロンプトインジェクションなどで非公開ソースや読み取り可能なデータが外部に送信される可能性がある。GitHub の認証情報は Worker が管理する。[Agent の外部通信と GitHub 認証](pdr/records/PDR-20261129-agent-egress-no-modes.md)
 
 - リポジトリのある Run では、`github.com` と `api.github.com` への HTTPS を Worker（`GitHubEgress`）が受け、Run 用のトークンを付けて GitHub に転送する。コンテナ内の gh にはダミーのトークンだけを置き、横取り用の CA を gh・git・Node が信頼するよう Runner の起動時に設定する。
 - Run 用のトークンは対象リポジトリに限定し、GitHub App の権限をすべて持つ。Agent は gh や git で、対象リポジトリの Issue・PR へのコメント、ラベル変更、既定ブランチ以外への push、PR 作成などを行える。既定ブランチは下記の ruleset で守る。
@@ -146,13 +146,13 @@ Agent のコマンドは常に外部と通信できる。依存関係のスク�
 
 ### Issue 調査用の計画実行
 
-API が受付時に `mode: "plan"` を決め、Runner は作業領域を読み取り専用にする。Issue のタイトルと本文は受付時のハッシュと照合する。結果の `planPresented` と `needsAnswer` は D1 の Run に、説明本文は Session のメッセージに保存する。[計画会話](pdr/records/PDR-20261125-planning-tables-dropped.md)、[Issue の参照](pdr/records/PDR-20261124-routine-github-context.md)
+計画の Turn も、ほかの Turn と同じ権限（作業ツリーと git の管理ディレクトリに書き込めるサンドボックス）で動く。計画を返し、実装や公開をしないことは plan Routine のプロンプトで求める。マイグレーション 0016 が、既定のまま変更されていない plan Routine のプロンプトを、計画の進め方を含む新しい既定の文に書き換える。Issue のタイトルと本文は受付時のハッシュと照合する。説明本文は Session のメッセージに保存する。既定ブランチの保護ルールがないリポジトリでは、計画の Turn も始まらない。[Turn の権限](pdr/records/PDR-20261129-turn-permissions.md)、[計画会話](pdr/records/PDR-20261129-planning-routine-writable.md)、[Issue の参照](pdr/records/PDR-20261129-routine-github-context-no-modes.md)
 
 保存上限を超える返答は、共通の Turn 処理が同じ会話で短縮を再要求する。上限と構造は [Runner の共有契約](../packages/core/src/runner.ts)と [Turn の実装](../apps/runner/src/agent-turns.ts)、再要求の理由は [返答の短縮](pdr/records/PDR-20261113-003.md) を参照する。
 
 ### Issue 内で計画を相談する
 
-GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。
+GitHub App 設定で **Issue comment** の購読を追加する。Issues の書き込み権限と、既存 installation の権限変更時の追加承認は上記の手順を使う。運用者のログインと Codex 接続、Project の plan Routine（許可ユーザーを含む）の設定も必要。マイグレーション 0013 が既存の Project ごとに有効な plan Routine を作り、Project の許可ユーザーを移す（[判断](pdr/records/PDR-20261129-planning-routine-writable.md)）。
 
 許可されたアカウントで open な Issue の新規コメント先頭に `@tailos plan` を投稿する。plan Routine の Session で Agent が計画または質問を Issue にコメントするので、`@tailos <回答・修正依頼>` で続ける。再度の `@tailos plan` も同じ Session で続ける。編集や削除では再実行せず、引用やコードフェンス中のメンションは受け付けない。実装は label の Routine から開始し、コメントでは起動しない。
 

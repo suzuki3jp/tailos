@@ -176,9 +176,11 @@ test.for(["label", "comment"] as const)(
     const row = await f.DB.prepare(
       "SELECT execution_context, deadline_at - created_at AS timeout FROM runs",
     ).first<{ execution_context: string; timeout: number }>();
-    expect(JSON.parse(row!.execution_context)).toMatchObject(
-      kind === "label" ? {} : { mode: "plan", instructions: planningPrompt },
+    const context = JSON.parse(row!.execution_context);
+    expect(context).toMatchObject(
+      kind === "label" ? {} : { instructions: planningPrompt },
     );
+    expect(context).not.toHaveProperty("mode");
     expect(row!.timeout).toBe(120_000);
   },
 );

@@ -242,32 +242,32 @@ test("commands reach the internet only through the Runner's proxy, stopped after
   });
 });
 
-test("gives a planning turn no tool that can change the workspace", async (t) => {
+test("gives a planning Routine's turn the same tools and sandbox as any other", async (t) => {
   const cwd = await workspace(t);
-  const { calls, agent } = runtime([
-    [success({ reply: "Plan", planPresented: true, needsAnswer: false })],
-  ]);
+  const { calls, agent } = runtime([[success({ reply: "Plan" })]]);
 
   const result = await agent().run(
-    job({ checkout, mode: "plan" }),
+    job({ checkout, prompt: "Plan the issue.", message: "@tailos plan" }),
     new AbortController().signal,
     cwd,
   );
 
-  expect(result).toEqual({
-    reply: "Plan",
-    plan: { planPresented: true, needsAnswer: false },
-  });
+  expect(result).toEqual({ reply: "Plan" });
   const { options } = calls[0]!;
-  expect(options.tools).toEqual(["Read", "Glob", "Grep", "Skill"]);
-  expect(options.allowedTools).toEqual([
+  expect(options.tools).toEqual([
     "Read",
     "Glob",
     "Grep",
     "Skill",
-    "mcp__tailos__github_get",
+    "Edit",
+    "Write",
+    "Bash",
   ]);
-  expect(options.sandbox).toBeUndefined();
+  expect(options.sandbox).toMatchObject({
+    enabled: true,
+    failIfUnavailable: true,
+    allowUnsandboxedCommands: false,
+  });
 });
 
 test("serves the GitHub tool from the Runner and requires the assigned issue to be read", async (t) => {
@@ -453,16 +453,18 @@ test("reports an unavailable command sandbox instead of running without it", asy
   ).rejects.toBeInstanceOf(AgentSandboxUnavailable);
   expect(blocked.calls).toEqual([]);
 
-  // Planning runs no command, so it does not depend on the sandbox.
-  const planning = runtime(
-    [[success({ reply: "Plan", planPresented: true, needsAnswer: false })]],
-    false,
-  );
+  // Planning runs commands too, so it needs the sandbox as well.
+  const planning = runtime([[success({ reply: "Plan" })]], false);
   await expect(
     planning
       .agent()
-      .run(job({ checkout, mode: "plan" }), new AbortController().signal, cwd),
-  ).resolves.toMatchObject({ reply: "Plan" });
+      .run(
+        job({ checkout, prompt: "Plan the issue.", message: "@tailos plan" }),
+        new AbortController().signal,
+        cwd,
+      ),
+  ).rejects.toBeInstanceOf(AgentSandboxUnavailable);
+  expect(planning.calls).toEqual([]);
 });
 
 test.each([

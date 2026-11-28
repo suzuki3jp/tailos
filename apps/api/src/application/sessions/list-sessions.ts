@@ -1,4 +1,8 @@
 import * as v from "valibot";
+import {
+  decodePageCursor,
+  encodePageCursor,
+} from "@/application/pagination/cursor.ts";
 
 export type SessionPosition = { updatedAt: number; id: string };
 export type SessionSummary = SessionPosition & {
@@ -43,16 +47,7 @@ export function sessionListInput(query: URLSearchParams) {
   let before: SessionPosition | undefined;
   if (cursors.length) {
     try {
-      const cursor = cursors[0]!;
-      if (!/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
-      const bytes = Uint8Array.from(
-        atob(cursor.replaceAll("-", "+").replaceAll("_", "/")),
-        (c) => c.charCodeAt(0),
-      );
-      before = v.parse(
-        position,
-        JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
-      );
+      before = v.parse(position, decodePageCursor(cursors[0]));
     } catch {
       return null;
     }
@@ -78,16 +73,7 @@ export async function listSessions(
   const last = items.at(-1);
   const nextCursor =
     rows.length > input.limit && last
-      ? btoa(
-          String.fromCharCode(
-            ...new TextEncoder().encode(
-              JSON.stringify({ updatedAt: last.updatedAt, id: last.id }),
-            ),
-          ),
-        )
-          .replaceAll("+", "-")
-          .replaceAll("/", "_")
-          .replace(/=+$/, "")
+      ? encodePageCursor({ updatedAt: last.updatedAt, id: last.id })
       : null;
   return { items, nextCursor };
 }

@@ -9,7 +9,7 @@
 | 状態 | 領域 | 確認した重複・境界・次の判定 |
 | --- | --- | --- |
 | 完了 | Web の状態・データ取得・エラー | Home、Routine、Project の Session 詳細を Shared API のエラー変換に移行した。[ラウンド 1](#ラウンド-1-web-の初期取得エラー)を参照。 |
-| 実施候補 | API データ契約と共通インフラ | Project と Session のカーソルは同じ UTF-8 JSON / Base64URL の変換を別々に実装。位置・版・並び順・不正クエリの規則はリソース固有。転送表現だけの共有と既発行トークンの互換性を検証する。 |
+| 完了 | API データ契約と共通インフラ | Project と Session のカーソルを共通の転送形式に移行した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)を参照。 |
 | 実施候補 | API モジュール境界 | `Bindings` が具象 Durable Object の型を取り込み、型依存が循環している。実際の RPC 呼び出しを調べ、必要な型契約だけ公開する構成と具象型が自動で追従する構成を比較する。 |
 | 要調査 | ドメインとデータアクセス | Run の状態集合が application の型、Drizzle、SQL、Web の判定に現れる。過去 migration と部分インデックスに関わるリテラルを確認し、実行時の型と判定の共有範囲を決める。 |
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
@@ -31,4 +31,12 @@
 - **移行**。`prefetchNavigation`、`prefetchRoutines`、`prefetchProjectSession` を同じ変換に移行した。四つあった status 抽出を一つにし、Home と Routine の抽出専用ファイルを削除した。
 - **契約と検証**。エラーの公開名・文言、既知の HTTP status、不明時の省略または null を従来どおりにした。独立した差分確認で三つの server 入口と表示側を追った。共有の回帰テストが、成功値、pending の除外、二つのエラーフィールドの安全な変換、サーバー cache の非変更を確認する。Home の既存テストが期限と再試行を確認する。
 - **参照した判断**。[初期取得の期限](../pdr/records/PDR-20261118-home-prefetch-deadline.md)、[Routine の画面](../pdr/records/PDR-20261128-routine-pages.md)、[Session のリアルタイム配信](../pdr/records/PDR-20261121-session-realtime-transport.md)。内部実装の整理で、新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。
+
+## ラウンド 2 一覧 API のカーソル
+
+- **比較と決定**。Project と Session が変換を個別に持つ方式、一覧のリクエスト全体を抽象化する方式、トークンの変換だけを共有する方式を比較した。UTF-8 JSON と Base64URL の変換を一つにし、位置のスキーマ、版、クエリの解釈、並び順の責務は各一覧に置いた。共有実装を削除するとトークンの変換が両方に戻る。
+- **移行**。Project 一覧と、アカウントおよび Project スコープの Session 一覧を新しい関数に移行した。局所的な二つの変換を削除し、復号後は各入口の Valibot スキーマが検証する。
+- **契約と検証**。旧形式のトークンを明示する回帰テストを先に通した。Unicode の Project 名と同じ日時の Session をページングし、旧トークンを受け付けて同じトークンを発行することを API 経由で確認した。差分レビューで malformed cursor の 400 と所有者条件も確認した。
+- **参照した判断**。[Project 一覧](../pdr/records/PDR-20261116-project-account-list.md)、[Session 一覧](../pdr/records/PDR-20261116-session-list-contract.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。

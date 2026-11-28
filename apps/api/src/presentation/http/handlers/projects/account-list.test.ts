@@ -84,7 +84,16 @@ test("account summaries page across duplicate and Unicode names without exposing
     expect(response.status).toBe(200);
     const page = await readPage(response);
     seen.push(...page.items);
-    cursor = page.nextCursor;
+    if (page.nextCursor) {
+      const [last] = page.items;
+      cursor = Buffer.from(
+        JSON.stringify({ version: 1, name: last.name, id: last.id }),
+        "utf8",
+      ).toString("base64url");
+      expect(page.nextCursor).toBe(cursor);
+    } else {
+      cursor = null;
+    }
   } while (cursor !== null);
   expect(seen.map((item) => item.name)).toEqual([
     "Alpha",

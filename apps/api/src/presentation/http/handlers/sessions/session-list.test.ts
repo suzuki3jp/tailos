@@ -71,9 +71,12 @@ test("session listing authenticates the owner and pages tied timestamps without 
     updatedAt: 10,
     latestRun: null,
   });
+  // The token issued by the original Session endpoint for { updatedAt: 10, id: "b" }.
+  const issuedCursor = "eyJ1cGRhdGVkQXQiOjEwLCJpZCI6ImIifQ";
+  expect(page.nextCursor).toBe(issuedCursor);
   const last = v.parse(
     pageSchema,
-    await (await send(`?limit=2&cursor=${page.nextCursor}`)).json(),
+    await (await send(`?limit=2&cursor=${issuedCursor}`)).json(),
   );
   expect(last.items.map((item: { id: string }) => item.id)).toEqual(["a"]);
   expect(last.nextCursor).toBeNull();

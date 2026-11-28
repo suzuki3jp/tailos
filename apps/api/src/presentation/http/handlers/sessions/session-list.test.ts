@@ -228,3 +228,73 @@ test("scopes project session pages by owner and project, including histories of 
   });
   expect(JSON.stringify(triggered)).not.toContain('"executionContext"');
 });
+
+test("lists only the Sessions a Routine keeps for the owner", async (t) => {
+  const db = await createTestDb(t);
+  const env = testLoginBindings(db);
+  const operator = await createTestOperator(env);
+  const projectId = crypto.randomUUID();
+  const routineId = crypto.randomUUID();
+  const otherRoutineId = crypto.randomUUID();
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO projects (id, name, owner_id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, 'Project', ?, 42, '{}', 1, 1, ?)",
+      )
+      .bind(projectId, operator.id, operator.id),
+    ...[routineId, otherRoutineId].map((id) =>
+      db
+        .prepare(
+          "INSERT INTO routines (id, project_id, config, created_at, updated_at, updated_by) VALUES (?, ?, '{}', 1, 1, ?)",
+        )
+        .bind(id, projectId, operator.id),
+    ),
+    ...(
+      [
+        ["older", operator.id, 10],
+        ["newer", operator.id, 20],
+        ["other-routine", operator.id, 30],
+        ["unlinked", operator.id, 40],
+        ["foreign", "other-owner", 50],
+      ] as const
+    ).map(([id, owner, time]) =>
+      db
+        .prepare(
+          "INSERT INTO sessions (id, owner_id, project_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(id, owner, projectId, time),
+    ),
+    ...(
+      [
+        ["older", operator.id, routineId, 1],
+        ["newer", operator.id, routineId, 2],
+        ["other-routine", operator.id, otherRoutineId, 3],
+        ["foreign", "other-owner", routineId, 4],
+      ] as const
+    ).map(([session, owner, routine, issue]) =>
+      db
+        .prepare(
+          "INSERT INTO routine_sessions (owner_id, project_id, routine_id, repository_id, issue_number, session_id, last_message_at) VALUES (?, ?, ?, 42, ?, ?, 1)",
+        )
+        .bind(owner, projectId, routine, issue, session),
+    ),
+  ]);
+  const send = (query: string) =>
+    app.request(
+      `${env.TAILOS_PUBLIC_ORIGIN}/v1/projects/${projectId}/sessions${query}`,
+      { headers: { Cookie: operator.cookie } },
+      env,
+    );
+  for (const query of [
+    "?routineId=",
+    "?routineId=not-a-uuid",
+    `?routineId=${routineId}&routineId=${routineId}`,
+  ])
+    expect((await send(query)).status, query).toBe(400);
+  const page = v.parse(
+    pageSchema,
+    await (await send(`?limit=10&routineId=${routineId}`)).json(),
+  );
+  expect(page.items.map((item) => item.id)).toEqual(["newer", "older"]);
+  expect(page.nextCursor).toBeNull();
+});

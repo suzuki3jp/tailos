@@ -23,6 +23,8 @@ export type SessionListStore = {
     limit: number,
     before?: SessionPosition,
     projectId?: string,
+    /** Only the Sessions this Routine keeps for its issues. */
+    routineId?: string,
   ): Promise<SessionSummary[]>;
 };
 const position = v.strictObject({
@@ -63,12 +65,14 @@ export async function listSessions(
   ownerId: string,
   input: NonNullable<ReturnType<typeof sessionListInput>>,
   projectId?: string,
+  routineId?: string,
 ) {
   const rows = await store.list(
     ownerId,
     input.limit + 1,
     input.before,
     projectId,
+    routineId,
   );
   const items = rows.slice(0, input.limit);
   const last = items.at(-1);

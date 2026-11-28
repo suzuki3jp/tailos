@@ -4,6 +4,8 @@
 
 ファイル単位の実行時 import に循環は 0 件。型参照を合わせると、API の `bindings.ts`、`runner-container.ts`、`run-start.ts`、`github-egress.ts`、`model-egress.ts`、`session-stream.ts` が 1 つの強連結成分になった。表は階層を集約しているため、ファイル単位では循環していない双方向の参照も含む。
 
+[Bindings の整理](progress.md#ラウンド-3-cloudflare-bindings-の依存方向)の後は、同じ方法で 265 ファイルと 639 件の内部参照を検査し、実行時・型参照ともに循環は 0 件だった。以下の表は着手前の参照点として残す。
+
 矢印の向きはインポートする側から依存先へ。`(型)` は同じ辺に実行時の参照がないことを示す。各表の相対パスはそのセクションのルートから。
 
 ## API

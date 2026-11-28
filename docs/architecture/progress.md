@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 完了 | Web の状態・データ取得・エラー | Home、Routine、Project の Session 詳細を Shared API のエラー変換に移行した。[ラウンド 1](#ラウンド-1-web-の初期取得エラー)を参照。 |
 | 完了 | API データ契約と共通インフラ | Project と Session のカーソルを共通の転送形式に移行した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)を参照。 |
-| 実施候補 | API モジュール境界 | `Bindings` が具象 Durable Object の型を取り込み、型依存が循環している。実際の RPC 呼び出しを調べ、必要な型契約だけ公開する構成と具象型が自動で追従する構成を比較する。 |
+| 完了 | API モジュール境界 | `Bindings` を RPC 契約の所有者にし、具象 Durable Object との型循環を解消した。[ラウンド 3](#ラウンド-3-cloudflare-bindings-の依存方向)を参照。 |
 | 要調査 | ドメインとデータアクセス | Run の状態集合が application の型、Drizzle、SQL、Web の判定に現れる。過去 migration と部分インデックスに関わるリテラルを確認し、実行時の型と判定の共有範囲を決める。 |
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
 | 要調査 | ログと可観測性 | Runner の収集と API の検査・保存で共通 redactor を利用。イベントの表現と再試行を比較するときは、配送の保証と保存の保証を別々に追う。 |
@@ -40,3 +40,11 @@
 - **契約と検証**。旧形式のトークンを明示する回帰テストを先に通した。Unicode の Project 名と同じ日時の Session をページングし、旧トークンを受け付けて同じトークンを発行することを API 経由で確認した。差分レビューで malformed cursor の 400 と所有者条件も確認した。
 - **参照した判断**。[Project 一覧](../pdr/records/PDR-20261116-project-account-list.md)、[Session 一覧](../pdr/records/PDR-20261116-session-list-contract.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。
+
+## ラウンド 3 Cloudflare Bindings の依存方向
+
+- **比較と決定**。ランタイムから消える型循環を許容する方式、具象クラスごとに環境型を切る方式、`Bindings` に必要な RPC の型を宣言する方式を比較した。呼び出し側と実装が一つの短い契約を参照する方法を採用した。この契約を除くと呼び出し側は再び実装クラスを参照する。
+- **移行**。Runner の受付、ヘルスチェック、診断、Egress と SessionStream の通知が必要とする型を定義した。R2 の形も既存の型を移し、以前の宣言を削除した。DO の名前、メソッド、ストレージキー、通信経路は既存の構成で動く。
+- **契約と検証**。DO 実装の `implements` と TypeScript が RPC を照合する。Oxlint が `Bindings` から infrastructure への型 import を拒否し、許可される application と Workers の型をテストした。差分レビュー後の構文解析でファイル単位の循環は実行時・型参照とも 0 件だった。
+- **参照した判断**。[Session の継続](../pdr/records/PDR-20261128-session-continuity-branches.md)、[Session のリアルタイム配信](../pdr/records/PDR-20261121-session-realtime-transport.md)。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、Preview API Worker の Wrangler dry-run、差分の空白検査が成功した。

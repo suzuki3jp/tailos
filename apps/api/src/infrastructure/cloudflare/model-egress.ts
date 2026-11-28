@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { Bindings } from "@/bindings.ts";
+import type { Bindings, ModelAccess } from "@/bindings.ts";
 
 /** The model API hosts whose HTTPS traffic from a Codex Run is intercepted. */
 export const codexEgressHosts = ["chatgpt.com"] as const;
@@ -51,13 +51,6 @@ export function isClaudePath(pathname: string) {
 
 /** The Run whose access is added, and the Session whose Runner holds it. */
 export type ModelEgressProps = { sessionId: string; runId?: string };
-
-/** The Run's current Codex access, issued outside the container. */
-export type ModelAccess = {
-  accessToken: string;
-  accountId: string;
-  accessVersion: string;
-};
 
 const denied = (status: number, message: string) =>
   new Response(message, {

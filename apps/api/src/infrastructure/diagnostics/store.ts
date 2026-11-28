@@ -24,7 +24,7 @@ import type {
   TriggerDiagnostic,
 } from "@/application/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
-import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
+import type { RunArtifactsBucket } from "@/bindings.ts";
 
 export async function digestDiagnostic(text: string) {
   const digest = await crypto.subtle.digest(

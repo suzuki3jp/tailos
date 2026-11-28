@@ -16,7 +16,7 @@ import {
   timelineObservation,
   type TimelineReader,
 } from "@/application/sessions/timeline.ts";
-import type { RunArtifactsBucket } from "@/infrastructure/r2/run-artifacts.ts";
+import type { RunArtifactsBucket } from "@/bindings.ts";
 
 export function timelineNotification(db: D1Database, runId: string) {
   return db

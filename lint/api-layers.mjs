@@ -11,6 +11,7 @@
  * infrastructure may also import application modules. Only composition
  * modules may connect presentation to infrastructure. Cloudflare Bindings
  * are available to presentation and infrastructure as a type-only import.
+ * Bindings declare the platform contracts and cannot import their adapters.
  *
  * Application modules can import shared contracts from @tailos/core and
  * use Valibot. Presentation keeps HTTP dependencies such as Hono, and
@@ -50,7 +51,7 @@ const layerImports = {
   application: new Set(["application"]),
   presentation: new Set(["presentation", "application"]),
   infrastructure: new Set(["infrastructure", "application"]),
-  bindings: new Set(["application", "infrastructure"]),
+  bindings: new Set(["application"]),
 };
 
 export default {
@@ -102,6 +103,13 @@ export default {
               (from !== "bindings" || typeOnly)
             )
               return;
+            if (from === "bindings" && to === "infrastructure") {
+              report(
+                node,
+                `API bindings cannot import infrastructure (${specifier}). Declare the platform contract in bindings.ts and have the adapter implement it.`,
+              );
+              return;
+            }
             report(
               node,
               `API ${from} cannot import ${to ?? "outside src"} (${specifier}).`,

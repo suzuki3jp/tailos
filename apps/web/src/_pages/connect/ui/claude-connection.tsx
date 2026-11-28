@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Label } from "@/shared/ui/design-systems";
+import { Button, TextField } from "@/shared/ui/design-systems";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
@@ -93,19 +93,17 @@ export function ClaudeConnection() {
           手元で <code>claude setup-token</code>{" "}
           を実行し、表示された長期トークンを貼り付けてください。保存したトークンは再表示できません。
         </p>
-        <Label>
-          トークン
-          <Input
-            required
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="sk-ant-oat01-…"
-            className="h-9 font-mono"
-          />
-        </Label>
+        <TextField
+          label="トークン"
+          isRequired
+          type="password"
+          autoComplete="off"
+          spellCheck="false"
+          value={token}
+          onChange={setToken}
+          placeholder="sk-ant-oat01-…"
+          inputClassName="font-mono"
+        />
         <Button
           type="submit"
           variant="default"

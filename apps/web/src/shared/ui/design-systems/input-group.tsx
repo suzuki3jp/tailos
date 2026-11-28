@@ -4,9 +4,11 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/cn";
 
+import {
+  Input as AriaInput,
+  TextArea as AriaTextArea,
+} from "react-aria-components/TextField";
 import { Button } from "./button";
-import { Input } from "./input";
-import { Textarea } from "./textarea";
 
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
@@ -130,9 +132,10 @@ function InputGroupInput({
   ...props
 }: React.ComponentProps<"input">) {
   return (
-    <Input
+    <AriaInput
       data-slot="input-group-control"
       className={cn(
+        "h-8 w-full min-w-0 px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
         "flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
         className,
       )}
@@ -146,9 +149,10 @@ function InputGroupTextarea({
   ...props
 }: React.ComponentProps<"textarea">) {
   return (
-    <Textarea
+    <AriaTextArea
       data-slot="input-group-control"
       className={cn(
+        "flex field-sizing-content min-h-16 w-full px-2.5 text-base transition-colors outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
         "flex-1 resize-none rounded-none border-0 bg-transparent py-2 shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
         className,
       )}

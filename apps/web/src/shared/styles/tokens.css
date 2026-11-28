@@ -20,6 +20,7 @@
   --destructive: #a42b2b;
   --border: #ded4c3;
   --input: var(--border);
+  --input-focus: #bdb4a6;
   --ring: #d4d4d4;
   --message: #ceb384;
   --unread: var(--link);
@@ -66,6 +67,7 @@
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-input-focus: var(--input-focus);
   --color-ring: var(--ring);
   --color-message: var(--message);
   --color-unread: var(--unread);

@@ -24,7 +24,7 @@ decided_by: suzuki3jp
 Project の Session 画面の入力欄から、その Session に続きのメッセージを送れるようにする。送ったメッセージは、その Session の次の Turn になる。
 
 - 送れるのは Project の所有者だけとする。Project が削除された Session や、まだ Turn のない Session には送れない。
-- Session が作業中（進行中の Turn か、順番待ちのメッセージがある）のときは送れない。入力欄も送信できない状態にする（[実行モデルの判断](PDR-20261123-execution-model.md)）。
+- Session が作業中（進行中の Turn か、順番待ちのメッセージがある）のときは送れない。入力欄も送信できない状態にする（[実行モデルの判断](PDR-20261129-execution-model-no-modes.md)）。
 - 次の Turn は、直前の Turn の実行設定を引き継ぐ。Routine の指示、リポジトリ、起動元がこれにあたる。入力欄で選べるのは、直前の Turn と同じ Model Provider のモデルと effort だけで、選ばなければ直前の Turn と同じにする。Provider は切り替えない（[Session の Provider の判断](PDR-20261126-session-agent-provider.md)）。
 - Turn の権限は Session の始まり方によらず同じである（[Turn の権限の判断](PDR-20261129-turn-permissions.md)）。計画の Routine で始まった Session でも、続きのメッセージで実装を頼めば、Agent は Routine の指示と依頼に沿って同じ Session で作業を進められる。別の Routine で始め直す必要はない。
 - メッセージは利用者のメッセージとして Session に保存し、Session の順番待ちを通して Turn にする。時間上限は Project の今の設定とする。
@@ -47,7 +47,7 @@ Project の Session 画面の入力欄から、その Session に続きのメッ
 - 直前の Turn の起動元をそのまま使うので、label で始まった Session では、その Issue の label が外れていると Turn の開始の確認で失敗する。Issue の本文が起動後に編集されていると、Agent は Issue の本文を指示として読めない。
 - 計画の Routine の指示は続きの Turn にも引き継ぐ。既定の指示は実装や公開をしないよう求めているので、続きで実装を頼んだときにどう動くかは、指示と依頼を読んだ Agent の判断になる。
 - 保存済みの直前の Turn の設定に `mode` があっても、読み込むときに無視し、次の Turn には引き継がない。
-- ホームの入力欄から新しい Session を始める挙動は変えない（[ホームからの開始の判断](PDR-20261126-home-message-start-provider.md)）。
+- ホームの入力欄から新しい Session を始める挙動は変えない（[ホームからの開始の判断](PDR-20261129-home-message-start-no-modes.md)）。
 
 ## 選択肢と影響
 

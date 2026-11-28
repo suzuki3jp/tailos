@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261123-execution-model
 key: execution.model
-status: accepted
+status: superseded
 date: "2026-11-23"
 areas: [triggers, sessions, agent, github]
 keywords: [実行モデル, リアーキ, Trigger, Routine, Session, Turn, Connector, 疎結合, 入力, 出力, 順番待ち, inbox, plan, 計画会話, メッセージ]

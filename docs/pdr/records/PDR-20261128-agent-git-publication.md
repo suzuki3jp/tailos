@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261128-agent-git-publication
 key: publication.tool
-status: accepted
+status: superseded
 date: "2026-11-28"
 areas: [github, agent, sessions]
 keywords: [公開, 公開ツール, tailos_publish, PR, コミット, push, git push, gh pr create, 署名付きコミット, 作業ブランチ, 複数の PR, ブランチ名, マージ, 載せ直し, Run の結果, コミットの作者, GitHub App の bot, receive-pack, ブランチ保護]

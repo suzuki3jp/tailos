@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261124-routine-github-context
 key: runner.github-context-acquisition
-status: accepted
+status: superseded
 date: "2026-11-24"
 areas: [runner, planning, github, triggers]
 keywords: [設定可能プロンプト, 固定prompt, label, plan, issue_comment, githubContext, contentHash, bodyOffset, スナップショット, planning_input_too_large]

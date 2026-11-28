@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261118-configurable-triggers
 key: triggers.configurable-execution
-status: accepted
+status: superseded
 date: "2026-11-18"
 areas: [triggers, runs, projects]
 keywords: [Routine, トリガー, プロンプト, prompt, model, effort, label, cron, PR, 抽象化]

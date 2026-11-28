@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261126-home-message-start-provider
 key: sessions.home-message-start
-status: accepted
+status: superseded
 date: "2026-11-26"
 areas: [web, sessions, triggers, agent, github]
 keywords: [ホーム, 入力欄, Composer, メッセージ, 送信, Session 作成, Run 開始, web.message, trigger, variant, 起動元, Issue なし, requestId, 二重送信, リダイレクト, Model Provider, Codex, Claude]

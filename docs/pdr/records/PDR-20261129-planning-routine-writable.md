@@ -47,7 +47,7 @@ decided_by: suzuki3jp
 
 ## 理由
 
-計画も実装も「Session に届いたメッセージに、権限の範囲で Agent が応える」同じ実行で表せる（[実行モデルの判断](PDR-20261123-execution-model.md)）。計画だけが受付・入力の固定・返信を専用に持つと、Session の続きや新しい起動元を足すたびに両方の経路で整合を取る必要がある。
+計画も実装も「Session に届いたメッセージに、権限の範囲で Agent が応える」同じ実行で表せる（[実行モデルの判断](PDR-20261129-execution-model-no-modes.md)）。計画だけが受付・入力の固定・返信を専用に持つと、Session の続きや新しい起動元を足すたびに両方の経路で整合を取る必要がある。
 
 会話全体をジョブに埋め込む方式では、32 KiB を超えた会話が `planning_input_too_large` で止まる。Session の引き継ぎで Codex の会話を再開すれば、会話の長さはジョブの大きさに影響しない。
 
@@ -62,8 +62,8 @@ plan Routine を読み取り専用で動かさないのは、権限をハーネ�
 [計画会話専用のテーブルを DROP した判断](PDR-20261125-planning-tables-dropped.md) の後継として、plan Routine を読み取り専用で動かす規則をなくし、計画の進め方を既定のプロンプトに移す。それ以外は前の判断を引き継ぐ。計画会話専用のテーブルは、旧計画会話の記録を調べ直す理由しかなく、本番で plan Routine による計画会話が動くことを確かめたので DROP した。
 
 - この段階では、コメントで起動する Routine は plan だけにし、コマンド語は `plan` に固定する。利用者が plan Routine で変えられるのは、プロンプト・モデル・effort・許可ユーザー・有効か無効か。ほかのコマンド語やコメント起動の Routine の追加は後続とする。
-- Agent の GitHub 操作はプロキシで制限しない（[Agent の外部通信と GitHub の認証情報](PDR-20261128-agent-egress-turn-end.md)）。plan の Agent は gh で Issue にコメントでき、プロンプトに従わなければ push や PR の作成もできる。GitHub 操作の制限（suzuki3jp/tailos#130）は後続とする。
-- GitHub の任意のコメントは、メッセージとして取り込まない。Issue の内容の照合と全文取得は [Issue の参照の判断](PDR-20261124-routine-github-context.md) に従う。
+- Agent の GitHub 操作はプロキシで制限しない（[Agent の外部通信と GitHub の認証情報](PDR-20261129-agent-egress-no-modes.md)）。plan の Agent は gh で Issue にコメントでき、プロンプトに従わなければ push や PR の作成もできる。GitHub 操作の制限（suzuki3jp/tailos#130）は後続とする。
+- GitHub の任意のコメントは、メッセージとして取り込まない。Issue の内容の照合と全文取得は [Issue の参照の判断](PDR-20261129-routine-github-context-no-modes.md) に従う。
 - prompt の上限 4,000 文字、Agent の返答の上限 8,000 文字と、意味を保って要約する方針は維持する。
 
 ## 選択肢と影響

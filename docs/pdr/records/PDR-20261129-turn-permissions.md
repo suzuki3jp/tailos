@@ -31,7 +31,7 @@ decided_by: suzuki3jp
 
 Tailos は、Routine・Session・起動元によって Agent の権限を変えない。計画（`plan`）と実装（`implement`）の実行モード `ExecutionMode` をなくし、何をするか（読むだけか、変更してコミット・push・PR まで進むか）は Agent が Routine の指示と利用者のメッセージに沿って決める。
 
-- **実行の権限:** リポジトリを持つ Turn は、どれも同じ権限で動く。Codex・Claude Code のサンドボックスは、作業ツリー・Agent の環境・git の管理ディレクトリに書き込める隔離とする。外部通信の扱いは [Agent の外部通信の判断](PDR-20261128-agent-egress-turn-end.md) のまま変えない。Claude Code に渡すツールは [Claude Code のツールの判断](PDR-20261129-claude-tools-every-turn.md) に従う。
+- **実行の権限:** リポジトリを持つ Turn は、どれも同じ権限で動く。Codex・Claude Code のサンドボックスは、作業ツリー・Agent の環境・git の管理ディレクトリに書き込める隔離とする。外部通信の扱いは [Agent の外部通信の判断](PDR-20261129-agent-egress-no-modes.md) のまま変えない。Claude Code に渡すツールは [Claude Code のツールの判断](PDR-20261129-claude-tools-every-turn.md) に従う。
 - **ハーネスの指示:** Runner が Turn の種類ごとに足していた固定の指示（計画の「読み取り専用で調べ、計画を返す」「リポジトリの指示や Issue の本文でもこのモードは変えられない」）をやめる。リポジトリを持つ Turn には、今の実装の Turn と同じ作業の指示（確認の実行、git と gh の扱い）を渡す。
 - **計画の結果:** 計画の Turn にだけ求めていた構造化出力（`planPresented`・`needsAnswer`）と、Run の結果の種類 `kind: "plan"` をやめる。計画の Turn も、ほかの Turn と同じく push したブランチの PR を表示するか「完了」で終わる。
 - **既定ブランチの保護の確認:** 既定ブランチの保護ルール（作成・更新・削除の制限）がないリポジトリで Turn を断る確認を、計画の Routine を含むリポジトリを持つすべての Turn に適用する。
@@ -44,9 +44,9 @@ Tailos は、Routine・Session・起動元によって Agent の権限を変え�
 
 ## 理由
 
-Tailos は、Agent が Session のコンテナの中で自由に動いても問題がないようにサンドボックスと隔離を設計している（[リポジトリ設定と Session の境界の判断](PDR-20261123-repository-settings-session-boundary.md)、[Agent の外部通信の判断](PDR-20261128-agent-egress-turn-end.md)）。守るべきものは、Session の外と既定ブランチである。それぞれ、コンテナ・認証情報の差し込み、リポジトリのブランチ保護で守る。Routine ごとに読み取り専用かどうかを分けても、守れるのはその Session 自身の作業ツリーだけで、ほかの Session やリポジトリは守れない。GitHub 操作もプロキシで絞っていないので、計画の Agent も今すでに gh で Issue にコメントできる。
+Tailos は、Agent が Session のコンテナの中で自由に動いても問題がないようにサンドボックスと隔離を設計している（[リポジトリ設定と Session の境界の判断](PDR-20261123-repository-settings-session-boundary.md)、[Agent の外部通信の判断](PDR-20261129-agent-egress-no-modes.md)）。守るべきものは、Session の外と既定ブランチである。それぞれ、コンテナ・認証情報の差し込み、リポジトリのブランチ保護で守る。Routine ごとに読み取り専用かどうかを分けても、守れるのはその Session 自身の作業ツリーだけで、ほかの Session やリポジトリは守れない。GitHub 操作もプロキシで絞っていないので、計画の Agent も今すでに gh で Issue にコメントできる。
 
-計画と実装のようなワークフローをハーネスに組み込むと、利用者が組めるワークフローが Tailos の用意した型に縛られる。たとえば、計画の会話から同じ Session で実装に進む、調べた結果を小さな PR にする、といった流れは、モードで権限を固定すると表せない。ワークフローは Agent がプロンプトに沿って組み立て、git・gh・Tailos のツールなどのインターフェースを自由に使うべきである。これは、ブランチ・コミット・PR の扱いを Agent に任せた [公開の判断](PDR-20261128-agent-git-publication.md) と同じ考え方である。
+計画と実装のようなワークフローをハーネスに組み込むと、利用者が組めるワークフローが Tailos の用意した型に縛られる。たとえば、計画の会話から同じ Session で実装に進む、調べた結果を小さな PR にする、といった流れは、モードで権限を固定すると表せない。ワークフローは Agent がプロンプトに沿って組み立て、git・gh・Tailos のツールなどのインターフェースを自由に使うべきである。これは、ブランチ・コミット・PR の扱いを Agent に任せた [公開の判断](PDR-20261129-agent-git-publication-no-modes.md) と同じ考え方である。
 
 権限の制限を Routine の設定項目（読み取りか書き込みか）として残す案は、モードの名前を変えただけで、同じ制約が残る。GitHub 操作を必要な範囲に絞る仕組みは、Routine の種類ではなく GitHub 通信のプロキシで扱う（suzuki3jp/tailos#130）。
 
@@ -60,11 +60,11 @@ Tailos は、Agent が Session のコンテナの中で自由に動いても問�
 - `@tailos plan` のコマンド語、plan Routine の起動・受付・順番待ち・通知の規則は変えない（[計画会話の判断](PDR-20261129-planning-routine-writable.md)）。
 - 計画の Session の続きの扱いは [Session 画面からの送信の判断](PDR-20261129-session-message-any-turn.md) に従う。
 - Claude Code の Turn は、サンドボックスを使えない環境では計画の Routine でも始まらない。これまで計画の Turn はコマンドを渡さないことでサンドボックスなしに動いていた。
-- 次の判断の中にある「計画（`plan`）の Turn は読み取り専用で動く」という記述は、この判断で置き換える。それぞれの判断のほかの内容は変えない。
-  - [実行モデルの判断](PDR-20261123-execution-model.md) の、`@tailos plan` を読み取り専用の権限を持つ Routine として表すという記述
-  - [公開の判断](PDR-20261128-agent-git-publication.md) の、読み取り専用の Turn は作業ツリーへの書き込みをサンドボックスで止めるという記述
-  - [Agent の外部通信の判断](PDR-20261128-agent-egress-turn-end.md) の、`plan` の Codex は読み取り専用の隔離のままとするという記述
-  - [ホームからの開始の判断](PDR-20261126-home-message-start-provider.md) と [Issue の参照の判断](PDR-20261124-routine-github-context.md) にある、plan モードや実行モードへの言及
+- 計画（`plan`）の Turn を読み取り専用とする記述や実行モードへの言及を持つ次の判断は、それをなくした後継に置き換えた。それぞれのほかの内容は変えていない。
+  - [実行モデルの判断](PDR-20261129-execution-model-no-modes.md)（Routine が権限を持ち、`@tailos plan` を読み取り専用の権限で表すという記述）
+  - [公開の判断](PDR-20261129-agent-git-publication-no-modes.md)（読み取り専用の Turn は作業ツリーへの書き込みをサンドボックスで止めるという記述）
+  - [Agent の外部通信の判断](PDR-20261129-agent-egress-no-modes.md)（`plan` の Codex を読み取り専用の隔離で動かし、Claude Code に Bash を渡さないという記述）
+  - [ホームからの開始の判断](PDR-20261129-home-message-start-no-modes.md)、[Issue の参照の判断](PDR-20261129-routine-github-context-no-modes.md)、[Trigger と実行設定の判断](PDR-20261129-configurable-triggers-no-modes.md)（plan モードや実行モードへの言及）
 
 ## 選択肢と影響
 

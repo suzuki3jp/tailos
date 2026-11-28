@@ -131,3 +131,11 @@
 - **移行とレビュー**。Project store、Routine 設定、D1、Project API、ローカル seed の参照を移し、参照されていない旧入力の型 export を削除した。スキーマの内容が同一であることを差分で照合した。PDR のパス検索用メタデータを更新し、決定章と理由は維持した。
 - **参照した判断**。[D1 への設定集約](../pdr/records/PDR-20261114-project-config-source.md)、[Project 名](../pdr/records/PDR-20261116-project-name-validation.md)、[Project と Routine の分担](../pdr/records/PDR-20261124-project-settings-routine-actors.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、PDR 検査、差分の空白検査が成功した。
+
+## 全体の検証結果
+
+- 本番用と保守用コードを含む内部グラフは 272 ファイル、実行時の辺 527、型だけの辺 138。重複する参照はファイルの組ごとに集計し、実行時と型参照を合わせた循環は 0 件。CI は循環と workspace の公開境界を確認する。
+- Node.js 22 の隔離 worktree で `pnpm format:check`、`pnpm lint`、`pnpm test`、`pnpm typecheck` が成功した。Node と Vitest で合計 509 テスト。PDR は 131 件の記録を検証した。
+- Web Worker、CI の Preview 成果物（API・Web）、本番設定の Wrangler dry-run による API Worker と Linux 向け Runner イメージをビルドした。実際の環境への公開、GitHub OAuth、実際の Provider との通信は手元の検証範囲外。
+- Run 状態整理の前後で Drizzle の生成 SQL が一致した。マイグレーションと依存バージョンは更新せず、既発行カーソルと旧 Project インポートは既存の入口を通して検証した。
+- 残る設計変更と運用判断は上のタスクプールで「確認待ち」として管理する。各ラウンドの差分は実装後にレビューした。別のレビュアーによる確認は未実施。

@@ -15,15 +15,15 @@ import { webBrowserApiPath } from "../../packages/core/src/auth.ts";
 import { cloudflare, previewDatabase } from "./cloudflare.mjs";
 import {
   findApiDeploymentOrigin,
-  origins,
   previewName,
+  webPreviewOrigin,
   workers,
 } from "./config.mjs";
 
 const [number, sha, artifactDir] = process.argv.slice(2);
 const name = previewName(number);
 if (!/^[\da-f]{40}$/.test(sha ?? "")) throw new Error("Invalid commit SHA");
-const { web, api } = origins(name);
+const web = webPreviewOrigin(name);
 const digest = (key, purpose) =>
   createHmac("sha256", key).update(`${purpose}:${name}`).digest("base64url");
 const login = readLoginConfig(process.env, web);
@@ -38,9 +38,10 @@ const bucket = {
   binding: "RUN_ARTIFACTS",
   bucket_name: "tailos-preview-run-artifacts",
 };
-const [database, r2] = await Promise.all([
+const [database, r2, { result: workersSubdomain }] = await Promise.all([
   previewDatabase(),
   cloudflare(`r2/buckets/${bucket.bucket_name}`),
+  cloudflare("workers/subdomain"),
 ]);
 if (r2.result?.name !== bucket.bucket_name)
   throw new Error(
@@ -67,7 +68,7 @@ function deploy(kind, config, secrets) {
       compatibility_date: "2026-10-06",
       compatibility_flags: ["nodejs_compat"],
       workers_dev: false,
-      preview_urls: false,
+      preview_urls: kind === "api",
       no_bundle: true,
       ...config,
     }),
@@ -108,12 +109,12 @@ function deploy(kind, config, secrets) {
     throw new Error(
       `Wrangler did not report deployment of ${workers[kind]}/${name}`,
     );
-  const expected = kind === "web" ? web : api;
-  if (!output.preview_urls?.some((url) => new URL(url).origin === expected))
-    throw new Error(
-      `Configure the ${kind} Preview custom domain for ${expected}`,
-    );
-  return output.deployment_urls;
+  if (
+    kind === "web" &&
+    !output.preview_urls?.some((url) => new URL(url).origin === web)
+  )
+    throw new Error(`Configure the Web Preview custom domain for ${web}`);
+  return output;
 }
 
 async function verify(origin, healthPath, isReady, headers) {
@@ -141,7 +142,7 @@ const serviceIs = (service) => async (response) => {
 
 try {
   const proxy = { TAILOS_PREVIEW_PROXY_SECRET: secret };
-  const apiDeploymentUrls = deploy(
+  const apiDeployment = deploy(
     "api",
     {
       main: join(artifacts, "api/preview.js"),
@@ -159,7 +160,10 @@ try {
     },
     { ...login.secrets, ...proxy },
   );
-  const apiDeploymentOrigin = findApiDeploymentOrigin(apiDeploymentUrls, api);
+  const apiDeploymentOrigin = findApiDeploymentOrigin(
+    apiDeployment,
+    workersSubdomain?.subdomain,
+  );
   await verify(apiDeploymentOrigin, "/health", serviceIs("tailos-api"), {
     "X-Tailos-Preview-Proxy": secret,
   });

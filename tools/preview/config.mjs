@@ -4,47 +4,46 @@ export const workers = {
 };
 
 export const previewZone = "tailos.app";
-export const previewDomains = {
-  api: `preview-api.${previewZone}`,
-  web: `preview.${previewZone}`,
-};
+export const webPreviewDomain = `preview.${previewZone}`;
 
 export function previewName(number) {
   if (!/^[1-9]\d*$/.test(number ?? "")) throw new Error("Invalid PR number");
   return `pr-${number}`;
 }
 
-export function origins(name) {
-  return {
-    web: `https://${name}.${previewDomains.web}`,
-    api: `https://${name}.${previewDomains.api}`,
-  };
+export function webPreviewOrigin(name) {
+  return `https://${name}.${webPreviewDomain}`;
 }
 
-export function findApiDeploymentOrigin(urls, apiOrigin) {
-  const [name, ...domain] = new URL(apiOrigin).hostname.split(".");
-  const suffix = "." + domain.join(".");
+export function findApiDeploymentOrigin(
+  { deployment_id: id, deployment_urls: urls },
+  subdomain,
+) {
+  if (
+    typeof subdomain !== "string" ||
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)
+  )
+    throw new Error("Cloudflare did not return a valid Workers subdomain");
+  if (
+    typeof id !== "string" ||
+    !/^[a-f\d]{8}(?:-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})?$/.test(id)
+  )
+    throw new Error(
+      "Wrangler did not report a valid API Preview deployment ID",
+    );
+
+  // Remove this workers.dev workaround once Workers can fetch Preview custom domains.
+  // https://github.com/cloudflare/developer-platform/issues/119
+  const domain = `${workers.api}.${subdomain}.workers.dev`;
+  const origins = [id, id.slice(0, 8)].map(
+    (label) => `https://${label}-${domain}`,
+  );
   for (const value of urls ?? []) {
     const url = URL.parse(value);
-    if (
-      url?.protocol !== "https:" ||
-      url.href !== url.origin + "/" ||
-      url.port ||
-      !url.hostname.endsWith(suffix)
-    ) {
-      continue;
-    }
-    // Cloudflare can use either the deployment ID alone or ID followed by the Preview name.
-    const label = url.hostname.slice(0, -suffix.length);
-    const id = label.endsWith(`-${name}`)
-      ? label.slice(0, -name.length - 1)
-      : label;
-    if (
-      /^[a-f\d]{8}(?:-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})?$/.test(id)
-    )
+    if (url && url.href === `${url.origin}/` && origins.includes(url.origin))
       return url.origin;
   }
   throw new Error(
-    "Cloudflare did not return a deployment URL on the API Preview domain",
+    `Cloudflare did not return a workers.dev deployment URL for ${workers.api}; enable its Preview URLs`,
   );
 }

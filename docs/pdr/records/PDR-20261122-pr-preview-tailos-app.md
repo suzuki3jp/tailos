@@ -2,7 +2,7 @@
 schema: 1
 id: PDR-20261122-pr-preview-tailos-app
 key: deployment.pr-previews
-status: accepted
+status: superseded
 date: "2026-11-22"
 decided_by: suzuki3jp
 areas: [deployment, web, api, auth]

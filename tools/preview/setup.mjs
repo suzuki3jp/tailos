@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cloudflare, previewDatabase } from "./cloudflare.mjs";
-import { previewDomains, previewZone, workers } from "./config.mjs";
+import { previewZone, webPreviewDomain, workers } from "./config.mjs";
 
 const domainsPath = "workers/domains";
 
@@ -12,13 +12,14 @@ function isPreviewOnly(domain) {
   return domain?.enabled === false && domain.previews_enabled === true;
 }
 
-async function domainChange(kind, hostname) {
+async function webDomainChange() {
+  const hostname = webPreviewDomain;
   const query = new URLSearchParams({ hostname });
   const { result } = await cloudflare(`${domainsPath}?${query}`);
   if (!Array.isArray(result) || result.length > 1)
     throw new Error(`Unexpected Cloudflare domain list for ${hostname}`);
   const [current] = result;
-  const service = workers[kind];
+  const service = workers.web;
   if (
     result.length &&
     (current?.hostname !== hostname || current.service !== service)
@@ -71,22 +72,38 @@ function applyMigrations(database) {
 
 export async function setupPreview(migrate = applyMigrations) {
   const database = await previewDatabase();
-  const changes = await Promise.all(
-    Object.entries(previewDomains).map(([kind, hostname]) =>
-      domainChange(kind, hostname),
-    ),
-  );
-  for (const json of changes.filter(Boolean)) {
-    const { result } = await cloudflare(domainsPath, { method: "PUT", json });
+  const apiSubdomainPath = `workers/scripts/${workers.api}/subdomain`;
+  const [web, { result: api }] = await Promise.all([
+    webDomainChange(),
+    cloudflare(apiSubdomainPath),
+  ]);
+  if (web) {
+    const { result } = await cloudflare(domainsPath, {
+      method: "PUT",
+      json: web,
+    });
     if (
       !isPreviewOnly(result) ||
-      result.hostname !== json.hostname ||
-      result.service !== json.service
+      result.hostname !== web.hostname ||
+      result.service !== web.service
     )
       throw new Error(
-        `Cloudflare did not configure Preview-only routing for ${json.hostname}`,
+        `Cloudflare did not configure Preview-only routing for ${web.hostname}`,
       );
-    process.stdout.write(`Configured ${json.hostname} on ${json.service}\n`);
+    process.stdout.write(`Configured ${web.hostname} on ${web.service}\n`);
+  }
+  if (!isPreviewOnly(api)) {
+    const { result } = await cloudflare(apiSubdomainPath, {
+      method: "POST",
+      json: { enabled: false, previews_enabled: true },
+    });
+    if (!isPreviewOnly(result))
+      throw new Error(
+        `Cloudflare did not configure workers.dev Preview URLs for ${workers.api}`,
+      );
+    process.stdout.write(
+      `Enabled workers.dev Preview URLs for ${workers.api}\n`,
+    );
   }
   migrate(database);
 }

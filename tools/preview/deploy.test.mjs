@@ -11,7 +11,8 @@ test("publishes Previews using Wrangler's output file when stdout contains modul
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const script = fileURLToPath(new URL("./deploy.mjs", import.meta.url));
   const output = join(temp, "github-output");
-  const upstream = "https://a1b2c3d4.preview-api.tailos.app";
+  const upstream =
+    "https://a1b2c3d4-tailos-preview-api.preview-account.workers.dev";
   const web = "https://pr-123.preview.tailos.app";
   writeFileSync(
     join(temp, "pnpm"),
@@ -21,12 +22,16 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const api = args[1] === "@tailos/api";
 const config = JSON.parse(fs.readFileSync(args[args.indexOf("--config") + 1]));
-if (!api) assert.equal(config.previews.vars.TAILOS_PREVIEW_API_ORIGIN, "${upstream}");
+assert.equal(config.workers_dev, false);
+assert.equal(config.preview_urls, api);
+if (api) assert.equal(config.previews.vars.TAILOS_WEB_ORIGIN, "${web}");
+else assert.equal(config.previews.vars.TAILOS_PREVIEW_API_ORIGIN, "${upstream}");
 const preview = {
   type: "preview", version: 1,
   worker_name: api ? "tailos-preview-api" : "tailos-preview-web",
   preview_name: "pr-123",
-  preview_urls: [api ? "https://pr-123.preview-api.tailos.app" : "${web}"],
+  preview_urls: [api ? "https://pr-123-tailos-preview-api.preview-account.workers.dev" : "${web}"],
+  deployment_id: "a1b2c3d4-1234-1234-1234-123456789abc",
   deployment_urls: api ? ["${upstream}"] : [],
 };
 console.log("Attaching additional modules:");
@@ -47,7 +52,11 @@ globalThis.fetch = async (input, options) => {
   const url = new URL(input);
   const ok = (data) => Response.json(data);
   if (url.hostname === "api.cloudflare.com") {
-    const name = url.pathname.includes("/d1/") ? "tailos-preview" : "tailos-preview-run-artifacts";
+    const path = url.pathname.split("/").slice(5).join("/");
+    if (path === "workers/subdomain")
+      return ok({ success: true, result: { subdomain: "preview-account" } });
+    assert.ok(path.startsWith("d1/database/") || path === "r2/buckets/tailos-preview-run-artifacts");
+    const name = path.startsWith("d1/") ? "tailos-preview" : "tailos-preview-run-artifacts";
     return ok({ success: true, result: { name } });
   }
   if (url.origin === "${upstream}") {

@@ -15,7 +15,7 @@
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
 | 完了 | ログと可観測性 | Codex と Claude が GitHub 取得の診断と Agent 向け結果の変換を共有。[ラウンド 5](#ラウンド-5-runner-の-github-取得診断)を参照。診断の収集・保存・再送はそれぞれの保証を持つ。 |
 | 完了 | Runner の Adapter と共通処理 | Codex と Claude のコマンド環境を一つの定義へ移行した。[ラウンド 6](#ラウンド-6-runner-のコマンド環境)を参照。 |
-| 要調査 | UI と命名 | Shared のデザインシステム、共通 PageShell、互換用の管理画面で異なるレイアウトの入口がある。既存ルート・PDR の適用範囲を根拠に、再利用できる同責務の部品だけを確認する。 |
+| 完了 | UI と表示ルール | Sidebar と Routine 詳細の Recent Sessions の上限を Session に集約した。[ラウンド 8](#ラウンド-8-recent-sessions-の表示ルール)を参照。レイアウトの適用範囲には既存の互換要件がある。 |
 | 要調査 | テスト・ビルド | Vitest 設定、パッケージ scripts、モノレポでの型検査の繰り返しを確認する。Worker ビルド、Runner バンドル、Preview の公開用ビルドは異なる成果物を持つ。 |
 | 完了 | 依存規範の自動検査 | 内部の型参照を含む循環を CI で検出する。[ラウンド 7](#ラウンド-7-内部依存の循環検査)を参照。 |
 | 確認待ち | Run 実行とストレージの大きな再設計 | `runner-container.ts` は Run 進行、継続、Egress リース、診断の責務を併せ持つ。DO クラス・ストレージキー・責務の所有者を移す場合は、継続中 Session の移行とロールバックを人間と確認するまで保留する。 |
@@ -79,4 +79,12 @@
 - **比較と決定**。手動の構文解析、別の検査ツールの導入、現在の Vite の構文解析を使う CI テストを比較した。既存のパーサーで同じファイル依存を検査し、調査用の JSON にも出せるようにした。
 - **契約と検証**。型 import、再 export、動的 import、require を同じ検査で扱う。作業開始時のコミットに検査を適用し、`bindings.ts → runner-container.ts → bindings.ts` が検出されることを確認した。現行の 269 ファイルに実行時・型参照を含む内部循環は 0 件。AST の入力形式と循環経路をテストした。
 - **参照した判断**。既存の [API レイヤー規則](../../lint/api-layers.mjs)と [Web の FSD 規則](../../.agents/skills/fsd/SKILL.md) を参照した。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。
+
+## ラウンド 8 Recent Sessions の表示ルール
+
+- **比較と決定**。各ビューが同じ件数を個別に持つ方法、表示とデータ取得を一つの部品にまとめる方法、採択済みの上限だけを Session のモデルで共有する方法を比較した。Sidebar はアカウント全体の取得結果を表示上限で切り、Routine 詳細は Routine で絞った取得を使う。Home 本文には別に定めた上限と追加取得がある。
+- **移行**。Sidebar と Routine 詳細を共通の上限へ移行した。取得した Session を重複なく並べる処理を Session の表示モデルに置き、Sidebar と Home の既存の呼び出しは同じ公開入口を使う。Sidebar の二つの HTTP status 抽出は Shared API に移行した。
+- **契約と検証**。Routine 詳細の既存 API パス・`routineId`・10 件の取得を、変更前後のテストで確認した。Sidebar のテストが 10 件の上限・重複排除・401 の表示分担・他の失敗時の再試行を確認する。差分レビューで Home の 5 件の扱いと Query の設定を確認した。
+- **参照した判断**。[Sidebar](../pdr/records/PDR-20261128-sidebar-recent-sessions.md)、[Routine 詳細](../pdr/records/PDR-20261128-routine-pages.md)、[Home 本文](../pdr/records/PDR-20261118-home-recent-sessions-limit.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。

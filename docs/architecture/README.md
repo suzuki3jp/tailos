@@ -30,7 +30,7 @@ flowchart LR
 
 1. `bootstrap/http.ts` が API のユースケース、認証、D1・Cloudflare・GitHub の実装を組み立てる。GitHub の署名検証の後、Issue イベントを Project と Routine に照合する。Web からの開始・追送と Issue からの受付は、別々の入力条件を持つ。
 2. D1 が受付と重複防止、Session と Run の関連、Run の進行を保存する。RunnerContainer が Session 単位でアラームを使い、`advanceRun` が選んだ次の処理を行う。Worker の Cron は D1 を照合し、処理待ちの Run、Inbox、Issue 通知、タイムライン通知、期限切れの記録を扱う。
-3. Runner の内部 HTTP サーバーが共有ジョブスキーマを検証し、Adapter がプロバイダー固有の会話と応答を扱う。Runner の作業領域は Session の再開に必要な情報を R2 に保存する。DO のコンテナスナップショットは復元を速める。
+3. Runner の内部 HTTP サーバーが共有ジョブスキーマを検証し、Adapter がプロバイダー固有の会話と応答を扱う。RunnerContainer が Session の再開に必要な情報を R2 に保存する。DO のコンテナスナップショットは復元を速める。
 4. 診断イベントから表示用のタイムラインを API で投影する。HTTP でスナップショットと履歴を読み、SessionStream がコミット済みの更新を WebSocket で配信する。MCP は所有者の Session、Run、診断などを照会する。
 
 ## モジュールの責務と公開境界
@@ -60,6 +60,13 @@ flowchart LR
 | UI の選択、入力、表示 | Project 選択はページシェルに渡す Client Provider。フォームや表示の状態は該当 slice | TanStack Query は API データの複製。SSR の cache はリクエスト単位 |
 | UI の見た目と部品 | [デザインシステム](../design-system/README.md) の所有範囲、Web Shared の tokens と primitives | 新しい共通シェルと互換用の管理画面は [採択済みの適用範囲](../pdr/records/PDR-20261128-web-design-compatibility.md) を使う |
 | デプロイ設定・判断 | Worker の wiring は Wrangler 設定と deploy scripts、プロダクト判断は PDR の採択済みレコード | Preview 設定はビルド時に生成、PDR の SQLite は再生成可能な検索索引 |
+
+## D1 の整合性
+
+- 起点メッセージと Run、Run に紐づくメッセージは複合外部キーで同じ Session 内に限定する。起点メッセージを一意にし、進行中の Run を Session ごとに一件に制限する。更新は元の状態を条件に行い、完了時は結果と Agent の返答を同じ D1 バッチで保存する。
+- Issue 起動は Routine ごとに独立して受付ける。`routine_sessions` が所有者・Project・Routine・リポジトリ・Issue に対して一つの Session を指す。進行中に届いた入力は `session_inbox` で順番を待つ。保存時に Project と Routine の版を照合し、同じ配送の再送は既存受付を返す。旧データ形式の範囲は [Issue 受付の判断](../pdr/records/PDR-20261124-issue-routine-dispatch.md) を参照。
+- Web の Home は Project と最初の依頼から新しい Session を作る。Session 画面の追送は所有者の既存 Session に入り、進行中の Run や未処理の入力があれば受け付けない。連打・再送は `requestId` で判定する。[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)
+- 削除済み Project と Routine の履歴は参照用に保持する。設定の変更は新規受付に反映し、受付済みメッセージの実行設定を上書きしない。旧設定のインポートは明示的な [運用手順](../deploy.md#既存-project-設定の-d1-移行)で扱う。
 
 ## 技術と検証
 

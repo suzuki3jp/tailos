@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 afterEach(() => {
   vi.doUnmock("../config");
   vi.doUnmock("cloudflare:workers");
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.resetModules();
 });
@@ -26,6 +27,7 @@ test.each([
       apiOrigin: origin,
       browserApiBaseUrl: `${origin}/v1`,
       usesWebApiProxy: false,
+      isPreview: false,
     }));
     const { createServerApi } = await import("./server-client");
     const http = vi.fn<typeof fetch>(
@@ -62,6 +64,7 @@ test("uses the production binding for SSR and sends only the host cookie", async
     apiOrigin: "https://tailos.app",
     browserApiBaseUrl: "https://tailos.app/api/v1",
     usesWebApiProxy: true,
+    isPreview: false,
   }));
   vi.doMock("cloudflare:workers", () => ({ env: { BROWSER_API: { fetch } } }));
   const { createServerApi } = await import("./server-client");
@@ -77,6 +80,39 @@ test("uses the production binding for SSR and sends only the host cookie", async
     "__Host-tailos.session_token=new",
   );
   expect(init).toMatchObject({ cache: "no-store", redirect: "manual" });
+});
+
+test("sends only the Preview session cookie to the pinned API deployment", async () => {
+  vi.stubEnv("VITE_TAILOS_PREVIEW_ORIGIN", "https://pr-123.preview.tailos.app");
+  const upstream = "https://a1b2c3d4-pr-123.preview-api.tailos.app";
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json([]));
+  const production = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  vi.doMock("cloudflare:workers", () => ({
+    env: {
+      TAILOS_PREVIEW_API_ORIGIN: upstream,
+      TAILOS_PREVIEW_PROXY_SECRET: "test-preview-proxy",
+      BROWSER_API: { fetch: production },
+    },
+  }));
+  const { createServerApi } = await import("./server-client");
+  const api = createServerApi(
+    "__Host-tailos.session_token=production; __Host-tailos-preview.session_token=preview; tracking=ignored",
+  );
+
+  expect((await api.projects.$get()).status).toBe(200);
+  expect(production).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledOnce();
+  const request = fetch.mock.calls[0][0] as Request;
+  expect(request.url).toBe(`${upstream}/api/v1/projects`);
+  expect(request.headers.get("Cookie")).toBe(
+    "__Host-tailos-preview.session_token=preview",
+  );
+  expect(request.headers.get("X-Tailos-Preview-Proxy")).toBe(
+    "test-preview-proxy",
+  );
+  expect(request.redirect).toBe("manual");
+  expect(request.cache).toBe("no-store");
 });
 
 test.each(["request", "query"])(

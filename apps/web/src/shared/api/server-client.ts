@@ -1,14 +1,23 @@
 import {
   loginSessionCookieName,
+  previewLoginSessionCookieName,
   webLoginSessionCookieName,
 } from "@tailos/core/auth";
-import { apiOrigin, usesWebApiProxy } from "../config";
+import { apiOrigin, isPreview, usesWebApiProxy } from "../config";
+import {
+  fetchBrowserApi,
+  type BrowserApiBindings,
+} from "../config/index.server";
 import { createApiClient } from "./client";
 
+function sessionCookieName() {
+  if (isPreview) return previewLoginSessionCookieName;
+  if (usesWebApiProxy) return webLoginSessionCookieName;
+  return `${apiOrigin.startsWith("https:") ? "__Secure-" : ""}${loginSessionCookieName}`;
+}
+
 export function createServerApi(cookieHeader: string, signal?: AbortSignal) {
-  const name = usesWebApiProxy
-    ? webLoginSessionCookieName
-    : `${apiOrigin.startsWith("https:") ? "__Secure-" : ""}${loginSessionCookieName}`;
+  const name = sessionCookieName();
   const sessionCookie = cookieHeader
     .split(";")
     .map((cookie) => cookie.trim())
@@ -29,9 +38,6 @@ export function createServerApi(cookieHeader: string, signal?: AbortSignal) {
     if (!usesWebApiProxy) return fetch(input, options);
 
     const { env } = await import("cloudflare:workers");
-    const binding = (env as { BROWSER_API?: Fetcher }).BROWSER_API;
-    return binding
-      ? binding.fetch(input, options)
-      : new Response(null, { status: 503 });
+    return fetchBrowserApi(env as BrowserApiBindings, input, options);
   });
 }

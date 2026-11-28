@@ -21,13 +21,15 @@ export default defineConfig(({ command }) => ({
       config:
         command === "build"
           ? {
-              services: [
-                {
-                  binding: "BROWSER_API",
-                  service: "tailos-api",
-                  entrypoint: "BrowserApiProxy",
-                },
-              ],
+              services: process.env.VITE_TAILOS_PREVIEW_ORIGIN
+                ? []
+                : [
+                    {
+                      binding: "BROWSER_API",
+                      service: "tailos-api",
+                      entrypoint: "BrowserApiProxy",
+                    },
+                  ],
               assets: {
                 binding: "ASSETS",
                 run_worker_first: [webBrowserApiPath, `${webBrowserApiPath}/*`],

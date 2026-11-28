@@ -8,6 +8,7 @@ const render = vi.hoisted(() =>
 vi.mock("vinext/server/fetch-handler", () => ({ default: { fetch: render } }));
 vi.mock("@/shared/config", () => ({
   apiOrigin: "https://tailos.app",
+  isPreview: false,
   usesWebApiProxy: true,
 }));
 

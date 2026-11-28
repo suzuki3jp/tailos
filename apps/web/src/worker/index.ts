@@ -1,23 +1,23 @@
 import { loginSessionCookieName, webBrowserApiPath } from "@tailos/core/auth";
 import handler from "vinext/server/fetch-handler";
-import { apiOrigin, usesWebApiProxy } from "@/shared/config";
+import { apiOrigin, isPreview, usesWebApiProxy } from "@/shared/config";
+import {
+  fetchBrowserApi,
+  type BrowserApiBindings,
+} from "@/shared/config/index.server";
 
 const legacyCookieName = `__Secure-${loginSessionCookieName}`;
 
 export default {
   async fetch(request: Request, env, ctx) {
     const { origin, pathname, hostname } = new URL(request.url);
-    const isProductionWeb = usesWebApiProxy && origin === apiOrigin;
-    if (
+    const isApiRequest =
       usesWebApiProxy &&
       (pathname === webBrowserApiPath ||
-        pathname.startsWith(`${webBrowserApiPath}/`))
-    ) {
-      if (!isProductionWeb) return new Response(null, { status: 404 });
-      return env.BROWSER_API
-        ? env.BROWSER_API.fetch(request, { redirect: "manual" })
-        : new Response(null, { status: 503 });
-    }
+        pathname.startsWith(`${webBrowserApiPath}/`));
+    if ((isPreview || isApiRequest) && origin !== apiOrigin)
+      return new Response(null, { status: 404 });
+    if (isApiRequest) return fetchBrowserApi(env, request);
 
     const nonce = btoa(
       String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))),
@@ -56,7 +56,9 @@ export default {
     securedResponse.headers.set("X-Frame-Options", "DENY");
     securedResponse.headers.set("X-Content-Type-Options", "nosniff");
     if (
-      isProductionWeb &&
+      !isPreview &&
+      usesWebApiProxy &&
+      origin === apiOrigin &&
       request.headers
         .get("Cookie")
         ?.split(";")
@@ -69,4 +71,4 @@ export default {
     }
     return securedResponse;
   },
-} satisfies ExportedHandler<{ ASSETS: Fetcher; BROWSER_API?: Fetcher }>;
+} satisfies ExportedHandler<{ ASSETS: Fetcher } & BrowserApiBindings>;

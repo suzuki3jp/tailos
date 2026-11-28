@@ -31,6 +31,7 @@ export type Bindings = BrowserApiOrigins & {
     getByName(name: string): ConnectionControl & ClaudeConnectionControl;
   };
   BETTER_AUTH_SECRET?: string;
+  TAILOS_PREVIEW?: "true";
   TAILOS_GITHUB_OAUTH_CLIENT_ID?: string;
   TAILOS_GITHUB_OAUTH_CLIENT_SECRET?: string;
   TAILOS_OPERATOR_GITHUB_ID?: string;

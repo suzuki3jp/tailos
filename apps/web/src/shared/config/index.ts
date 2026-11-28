@@ -1,1 +1,6 @@
-export { apiOrigin, browserApiBaseUrl, usesWebApiProxy } from "./api-origin";
+export {
+  apiOrigin,
+  browserApiBaseUrl,
+  isPreview,
+  usesWebApiProxy,
+} from "./api-origin";

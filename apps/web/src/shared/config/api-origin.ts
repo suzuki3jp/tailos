@@ -1,9 +1,12 @@
 import { directBrowserApiPath, webBrowserApiPath } from "@tailos/core/auth";
 
+const previewOrigin = import.meta.env.VITE_TAILOS_PREVIEW_ORIGIN;
+export const isPreview = Boolean(previewOrigin);
 export const usesWebApiProxy =
-  !import.meta.env.DEV && !import.meta.env.VITE_API_ORIGIN;
+  isPreview || (!import.meta.env.DEV && !import.meta.env.VITE_API_ORIGIN);
 export const apiOrigin = new URL(
-  import.meta.env.VITE_API_ORIGIN ??
+  previewOrigin ??
+    import.meta.env.VITE_API_ORIGIN ??
     (import.meta.env.DEV ? "http://localhost:8787" : "https://tailos.app"),
 ).origin;
 export const browserApiBaseUrl = new URL(

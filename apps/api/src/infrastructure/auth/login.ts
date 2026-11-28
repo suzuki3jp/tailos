@@ -5,6 +5,7 @@ import {
 import {
   directBrowserApiPath,
   loginSessionCookieName,
+  previewLoginCookiePrefix,
   webBrowserApiPath,
   webLoginCookiePrefix,
 } from "@tailos/core/auth";
@@ -71,7 +72,10 @@ export function createLoginAuth(env: Bindings) {
             // Better Auth would otherwise add its own __Secure- prefix.
             useSecureCookies: false,
             defaultCookieAttributes: { secure: true },
-            cookiePrefix: webLoginCookiePrefix,
+            cookiePrefix:
+              env.TAILOS_PREVIEW === "true"
+                ? previewLoginCookiePrefix
+                : webLoginCookiePrefix,
           }
         : { cookies: { session_token: { name: loginSessionCookieName } } }),
     },

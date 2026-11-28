@@ -17,8 +17,7 @@ const routeModule =
 const reactAriaModule =
   /^(?:(?:react-aria(?:-components)?|react-stately)(?:\/|$)|@(?:react-aria|react-aria-components|react-stately|react-types)\/)/;
 
-const rawTagReplacements = new Map([
-  ["a", "Use Link from next/link."],
+const formTagReplacements = new Map([
   ["select", "Use the Design Systems Select."],
   ["button", "Use the Design Systems Button."],
   ["label", "Use the Design Systems Label or Select's label prop."],
@@ -172,9 +171,16 @@ export function createWebBoundaryRule(root) {
             report(node, "Place Web source in an FSD layer, app, or worker.");
         },
         JSXOpeningElement(node) {
-          if (inDesignSystems || node.name.type !== "JSXIdentifier") return;
+          if (node.name.type !== "JSXIdentifier") return;
           const tag = node.name.name;
-          const replacement = rawTagReplacements.get(tag);
+          if (from && tag === "a") {
+            report(
+              node.name,
+              "Raw <a> is not allowed in Web modules. Use Link from next/link.",
+            );
+          }
+          if (inDesignSystems) return;
+          const replacement = formTagReplacements.get(tag);
           if (replacement) {
             report(
               node.name,

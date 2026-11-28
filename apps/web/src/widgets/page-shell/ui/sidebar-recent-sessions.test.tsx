@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -9,7 +9,7 @@ import {
 import { SidebarRecentSessions } from "./sidebar-recent-sessions";
 
 vi.mock("next/link", () => ({
-  default: (props: ComponentProps<"a">) => <a {...props} />,
+  default: (props: ComponentProps<"a">) => createElement("a", props),
 }));
 
 afterEach(() => vi.unstubAllGlobals());

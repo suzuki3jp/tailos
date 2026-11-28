@@ -50,14 +50,14 @@ export function SessionRow({
       </Link>
       <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-9 text-caption text-muted-foreground">
         {session.trigger && (
-          <a
+          <Link
             href={session.trigger.url}
             className="rounded-sm hover:underline"
             title={session.trigger.repository}
           >
             Triggered by Issue #{session.trigger.number} ·{" "}
             {session.trigger.repository}
-          </a>
+          </Link>
         )}
         <time
           dateTime={new Date(session.updatedAt).toISOString()}

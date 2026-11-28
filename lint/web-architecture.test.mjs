@@ -99,8 +99,16 @@ test("Oxlint rejects direct React Aria imports outside the design system", async
   }
 });
 
-test("Oxlint rejects raw form tags outside the real design system", async (t) => {
-  const tags = ["select", "button", "label", "option", "input", "textarea"];
+test("Oxlint rejects raw links and form tags outside the real design system", async (t) => {
+  const tags = [
+    "a",
+    "select",
+    "button",
+    "label",
+    "option",
+    "input",
+    "textarea",
+  ];
   const cases = Object.fromEntries(
     tags.map((tag) => [
       `src/_pages/example/ui/${tag}.test.tsx`,
@@ -113,6 +121,7 @@ test("Oxlint rejects raw form tags outside the real design system", async (t) =>
       "export const control = <button />;",
   });
   assert.equal(result.status, 1, result.output);
+  assert.ok(result.output.includes("Use Link from next/link"), result.output);
   for (const tag of tags) {
     assert.ok(
       result.output.includes(`Raw <${tag}> is only allowed`),
@@ -126,12 +135,12 @@ test("Oxlint rejects raw form tags outside the real design system", async (t) =>
   );
 });
 
-test("Oxlint allows form tags in the design system and components elsewhere", async (t) => {
+test("Oxlint allows form tags in the design system and Link elsewhere", async (t) => {
   const result = await boundaryFixture(t, {
     "src/shared/ui/design-systems/fields.tsx":
       "export const controls = <><label><input /></label><select><option /></select><button /><textarea /></>;",
     "src/_pages/example/ui/fields.tsx":
-      'import { Button, Select } from "@/shared/ui/design-systems"; export const controls = <><Button /><Select /><form /></>;',
+      'import Link from "next/link"; import { Button, Select } from "@/shared/ui/design-systems"; export const controls = <><Link href="/" /><Button /><Select /><form /></>;',
   });
   assert.equal(result.status, 0, result.output);
 });

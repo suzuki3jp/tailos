@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, test, vi } from "vitest";
@@ -6,7 +6,7 @@ import { accountProfileQueryOptions } from "@/entities/account";
 import { SidebarAccount } from "./sidebar-account";
 
 vi.mock("next/link", () => ({
-  default: (props: ComponentProps<"a">) => <a {...props} />,
+  default: (props: ComponentProps<"a">) => createElement("a", props),
 }));
 
 const profile = {

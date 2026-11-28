@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { agentEngineLabels } from "@tailos/core/models";
 import { RequestState } from "@/widgets/request-state";
@@ -102,23 +103,23 @@ export function SessionDetail({ id }: { id: string }) {
                   <p className="break-all font-mono text-xs text-muted-foreground">
                     {run.id}
                   </p>
-                  <a
+                  <Link
                     href={`/diagnostics?runId=${encodeURIComponent(run.id)}`}
                     className="action"
                   >
                     実行記録を調べる
-                  </a>
+                  </Link>
                   {run.errorCode && (
                     <p className="wrap-anywhere font-mono text-sm text-danger">
                       {run.errorCode}
                     </p>
                   )}
                   {urls?.map((url) => (
-                    <a key={url} href={url} className="action">
+                    <Link key={url} href={url} className="action">
                       {urls.length > 1
                         ? `Pull Request #${url.split("/").pop()} を開く`
                         : "Pull Request を開く"}
-                    </a>
+                    </Link>
                   ))}
                 </li>
               );

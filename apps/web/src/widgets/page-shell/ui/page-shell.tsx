@@ -108,12 +108,12 @@ export function PageShell({
       )}
       lang="en"
     >
-      <a
+      <Link
         href="#page-content"
         className="sr-only z-50 rounded-md bg-background p-3 focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
       >
         Skip to content
-      </a>
+      </Link>
       <aside
         aria-label="Project sidebar"
         className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex"

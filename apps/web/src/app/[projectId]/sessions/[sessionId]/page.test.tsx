@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
 import Page from "./page";
@@ -7,7 +7,7 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 vi.mock("next/link", () => ({
-  default: (props: ComponentProps<"a">) => <a {...props} />,
+  default: (props: ComponentProps<"a">) => createElement("a", props),
 }));
 
 afterEach(() => vi.unstubAllGlobals());

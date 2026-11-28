@@ -17,7 +17,8 @@ const routeModule =
 const reactAriaModule =
   /^(?:(?:react-aria(?:-components)?|react-stately)(?:\/|$)|@(?:react-aria|react-aria-components|react-stately|react-types)\/)/;
 
-const formTagReplacements = new Map([
+const rawTagReplacements = new Map([
+  ["a", "Use Link from next/link."],
   ["select", "Use the Design Systems Select."],
   ["button", "Use the Design Systems Button."],
   ["label", "Use the Design Systems Label or Select's label prop."],
@@ -173,7 +174,7 @@ export function createWebBoundaryRule(root) {
         JSXOpeningElement(node) {
           if (inDesignSystems || node.name.type !== "JSXIdentifier") return;
           const tag = node.name.name;
-          const replacement = formTagReplacements.get(tag);
+          const replacement = rawTagReplacements.get(tag);
           if (replacement) {
             report(
               node.name,

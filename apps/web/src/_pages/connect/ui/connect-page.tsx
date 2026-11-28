@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/shared/ui/design-systems";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RequestState } from "@/widgets/request-state";
@@ -46,14 +47,14 @@ export function ConnectPage() {
               {status.userCode}
             </code>
           </p>
-          <a
+          <Link
             className="action action-primary"
             href={status.verificationUrl}
             target="_blank"
             rel="noopener noreferrer"
           >
             ChatGPT を開く
-          </a>
+          </Link>
           <p role="status" className="text-sm text-muted-foreground">
             接続が完了すると自動で更新します。
           </p>

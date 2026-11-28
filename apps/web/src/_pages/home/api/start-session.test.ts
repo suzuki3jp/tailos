@@ -48,5 +48,12 @@ test("surfaces the status and error code without retrying", async () => {
     status: 503,
     code: undefined,
   });
-  expect(http).toHaveBeenCalledTimes(2);
+  http.mockImplementation(async () =>
+    Response.json({ error: { message: "internal details" } }, { status: 500 }),
+  );
+  await expect(startSession(input)).rejects.toMatchObject({
+    status: 500,
+    code: undefined,
+  });
+  expect(http).toHaveBeenCalledTimes(3);
 });

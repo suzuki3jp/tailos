@@ -2,12 +2,14 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   routinesQueryOptions,
+  RoutineRequestError,
+  type Routine,
+} from "@/entities/routine";
+import {
   routineHistoryQueryOptions,
   saveRoutine,
   deleteRoutine,
-  RoutineRequestError,
   type RoutineSettings,
-  type Routine,
 } from "./routines";
 afterEach(() => vi.unstubAllGlobals());
 const projectId = "00000000-0000-4000-8000-000000000001";

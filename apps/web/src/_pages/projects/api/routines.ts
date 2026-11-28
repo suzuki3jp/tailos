@@ -1,12 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
-import { api } from "@/shared/api";
+import { api, responseErrorCode } from "@/shared/api";
 import { RoutineRequestError, type Routine } from "@/entities/routine";
-export {
-  routinesQueryOptions,
-  routinesKey,
-  RoutineRequestError,
-  type Routine,
-} from "@/entities/routine";
 const routes = api.projects[":projectId"].routines;
 export type RoutineSettings = Omit<
   Routine,
@@ -32,17 +26,9 @@ export function routineHistoryQueryOptions(projectId: string, before?: number) {
     },
   });
 }
-async function check(response: {
-  ok: boolean;
-  status: number;
-  json(): Promise<unknown>;
-}) {
+async function check(response: Pick<Response, "ok" | "status" | "json">) {
   if (response.ok) return;
-  const body = await response.json().catch(() => null);
-  const error =
-    body && typeof body === "object" && "error" in body
-      ? body.error
-      : undefined;
+  const error = await responseErrorCode(response);
   if (error === "configuration_unverified")
     throw new Error(
       "Model Provider の接続、または既定モデルで effort を使えるかを確認できません。有効にするには接続を確認するか、モデルを指定してください。無効状態なら保存できます。",

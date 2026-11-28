@@ -1,5 +1,5 @@
 import type { AgentEngine } from "@tailos/core/models";
-import { api } from "@/shared/api";
+import { api, responseErrorCode } from "@/shared/api";
 
 export type SendMessageInput = {
   projectId: string;
@@ -34,17 +34,10 @@ export async function sendMessage(
     },
     json,
   });
-  if (response.status !== 201) {
-    const body: unknown = await response.json().catch(() => null);
+  if (response.status !== 201)
     throw new SendMessageError(
       response.status,
-      typeof body === "object" &&
-        body !== null &&
-        "error" in body &&
-        typeof body.error === "string"
-        ? body.error
-        : undefined,
+      await responseErrorCode(response),
     );
-  }
   return response.json();
 }

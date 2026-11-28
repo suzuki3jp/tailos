@@ -20,11 +20,13 @@ import {
   RoutineRequestError,
   routinesQueryOptions,
   routinesKey,
+  type Routine,
+} from "@/entities/routine";
+import {
   routineHistoryKey,
   routineHistoryQueryOptions,
   saveRoutine,
   deleteRoutine,
-  type Routine,
   type RoutineSettings,
 } from "../api/routines";
 

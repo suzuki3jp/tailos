@@ -30,6 +30,7 @@ import {
   createGitHubReader,
   githubTool,
   githubToolCallSchema,
+  readGitHubTool,
 } from "@/github-tool.ts";
 import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
 import { retiredToolCallSchema, retiredToolResult } from "@/retired-tools.ts";
@@ -383,37 +384,11 @@ async function runTurn(
     if (method === "item/tool/call" && githubReader && threadId) {
       const call = v.parse(githubToolCallSchema, params);
       if (call.threadId !== threadId) throw new Error("Unexpected tool thread");
-      const span = diagnostics?.start(
-        "tool",
-        JSON.stringify({
-          name: "tailos_github_get",
-          arguments: call.arguments,
-        }),
-        agentSpan,
-      );
-      try {
-        const { diagnosticReason, ...result } = await githubReader.read(
-          call.arguments,
-        );
-        if (span) {
-          try {
-            diagnostics?.end(
-              span,
-              {
-                outcome: result.success ? "succeeded" : "failed",
-                ...(diagnosticReason ? { reason: diagnosticReason } : {}),
-              },
-              JSON.stringify(result),
-            );
-          } catch {
-            // Recording diagnostics must not change the tool result or turn.
-          }
-        }
-        return result;
-      } catch (error) {
-        if (span) diagnostics?.end(span, { outcome: "failed" });
-        throw error;
-      }
+      return readGitHubTool(githubReader, call.arguments, {
+        name: githubTool.name,
+        diagnostics,
+        parentSpan: agentSpan,
+      });
     }
     if (method !== "account/chatgptAuthTokens/refresh") {
       if (job.mode === "plan")

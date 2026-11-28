@@ -38,7 +38,11 @@ import {
   runAgentTurns,
   type RepositoryJob,
 } from "@/agent-turns.ts";
-import { createGitHubReader, githubTool } from "@/github-tool.ts";
+import {
+  createGitHubReader,
+  githubTool,
+  readGitHubTool,
+} from "@/github-tool.ts";
 import { claudeTranscriptPath } from "@/continuity.ts";
 import {
   continuityNotice,
@@ -55,7 +59,7 @@ import {
 } from "@/diagnostic-operations.ts";
 
 type ClaudeJob = Extract<RepositoryJob, { engine: "claude" }>;
-type GitHubRead = ReturnType<typeof createGitHubReader>["read"];
+type GitHubRead = (input: unknown) => ReturnType<typeof readGitHubTool>;
 /** The Tailos tools Claude Code gets, each run in the Runner process. */
 type TailosTools = { read?: GitHubRead };
 
@@ -488,40 +492,16 @@ async function runTurns(
     }),
   );
   const toolSpans = new Map<string, string>();
-  const readGitHub: GitHubRead = async (input) => {
-    if (!githubReader) throw new Error("GitHub tool requires a checkout");
-    const span = diagnostics?.start(
-      "tool",
-      JSON.stringify({ name: githubToolName, arguments: input }),
-      agentSpan,
-    );
-    try {
-      const result = await githubReader.read(input);
-      if (span) {
-        try {
-          const { diagnosticReason, ...recorded } = result;
-          diagnostics?.end(
-            span,
-            {
-              outcome: result.success ? "succeeded" : "failed",
-              ...(diagnosticReason ? { reason: diagnosticReason } : {}),
-            },
-            JSON.stringify(recorded),
-          );
-        } catch {
-          // Recording diagnostics must not change the tool result or turn.
-        }
+  const tailosTools: TailosTools = githubReader
+    ? {
+        read: (input) =>
+          readGitHubTool(githubReader, input, {
+            name: githubToolName,
+            diagnostics,
+            parentSpan: agentSpan,
+          }),
       }
-      return result;
-    } catch (error) {
-      if (span) diagnostics?.end(span, { outcome: "failed" });
-      throw error;
-    }
-  };
-
-  const tailosTools: TailosTools = {
-    ...(githubReader && { read: readGitHub }),
-  };
+    : {};
   const tailosToolNames = githubReader ? [githubToolName] : [];
   if (supportsSelection("claude", job.model, job.effort))
     throw new Error("Requested model or effort is unavailable");

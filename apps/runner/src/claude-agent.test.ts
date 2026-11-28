@@ -117,6 +117,7 @@ function recorder() {
     operation: string;
     body?: string;
     outcome?: string;
+    reason?: string;
     result?: string;
   }> = [];
   const outputs: string[] = [];
@@ -128,6 +129,7 @@ function recorder() {
     end(spanId, attributes, body) {
       const span = spans[Number(spanId)]!;
       span.outcome = attributes?.outcome;
+      span.reason = attributes?.reason;
       span.result = body;
     },
     output: (_spanId, body) => void outputs.push(body),
@@ -306,6 +308,49 @@ test("serves the GitHub tool from the Runner and requires the assigned issue to 
     }),
     outcome: "succeeded",
   });
+});
+
+test("records a changed issue in the GitHub tool span without returning its content", async (t) => {
+  const cwd = await workspace(t);
+  const { diagnostics, spans } = recorder();
+  const { agent } = runtime([
+    async (_call, tool) => {
+      const result = await tool!({ kind: "issue", number: 7 });
+      expect(result.success).toBe(false);
+      expect(result.contentItems[0]?.text).toContain(
+        "changed after authorization",
+      );
+      expect(result.contentItems[0]?.text).not.toContain("Private edited body");
+      return [success({ reply: "Done", headline: null })];
+    },
+  ]);
+  await expect(
+    agent(async () =>
+      Response.json({
+        number: 7,
+        title: "Broken widget",
+        body: "Private edited body",
+        state: "open",
+        html_url: "https://github.com/acme/widgets/issues/7",
+      }),
+    ).run(
+      job({
+        checkout,
+        githubContext: {
+          kind: "issue",
+          number: 7,
+          contentHash: "a".repeat(64),
+        },
+      }),
+      new AbortController().signal,
+      cwd,
+      diagnostics,
+    ),
+  ).rejects.toThrow("not read completely");
+  const span = spans.find(({ operation }) => operation === "tool");
+  expect(span).toMatchObject({ outcome: "failed", reason: "issue_changed" });
+  expect(span?.result).not.toContain("Private edited body");
+  expect(span?.result).not.toContain("diagnosticReason");
 });
 
 test("records commands, file changes, tools and replies without an exit code", async (t) => {

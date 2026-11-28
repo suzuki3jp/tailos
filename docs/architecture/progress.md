@@ -13,8 +13,8 @@
 | 完了 | API モジュール境界 | `Bindings` を RPC 契約の所有者にし、具象 Durable Object との型循環を解消した。[ラウンド 3](#ラウンド-3-cloudflare-bindings-の依存方向)を参照。 |
 | 完了 | ドメインとデータアクセス | Run の状態と進行中の判定を Core に集約した。[ラウンド 4](#ラウンド-4-run-の状態と進行中の判定)を参照。 |
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
-| 要調査 | ログと可観測性 | Runner の収集と API の検査・保存で共通 redactor を利用。イベントの表現と再試行を比較するときは、配送の保証と保存の保証を別々に追う。 |
-| 要調査 | Runner の Adapter と共通処理 | Codex と Claude が prompt・Turn 手順を共有し、各 Adapter が SDK と会話の復元を実装。共通化は再開失敗・診断・作業状態が同じ箇所から判断する。 |
+| 完了 | ログと可観測性 | Codex と Claude が GitHub 取得の診断と Agent 向け結果の変換を共有。[ラウンド 5](#ラウンド-5-runner-の-github-取得診断)を参照。診断の収集・保存・再送はそれぞれの保証を持つ。 |
+| 実施候補 | Runner の Adapter と共通処理 | Codex と Claude のコマンド環境のディレクトリ・変数が重複。プロバイダー固有の認証・会話状態と分かれた環境として共通化する。 |
 | 要調査 | UI と命名 | Shared のデザインシステム、共通 PageShell、互換用の管理画面で異なるレイアウトの入口がある。既存ルート・PDR の適用範囲を根拠に、再利用できる同責務の部品だけを確認する。 |
 | 要調査 | テスト・ビルド | Vitest 設定、パッケージ scripts、モノレポでの型検査の繰り返しを確認する。Worker ビルド、Runner バンドル、Preview の公開用ビルドは異なる成果物を持つ。 |
 | 確認待ち | Run 実行とストレージの大きな再設計 | `runner-container.ts` は Run 進行、継続、Egress リース、診断の責務を併せ持つ。DO クラス・ストレージキー・責務の所有者を移す場合は、継続中 Session の移行とロールバックを人間と確認するまで保留する。 |
@@ -56,3 +56,11 @@
 - **契約と検証**。変更前後の Drizzle 出力で 25 テーブルの SQL が一致した。D1 の実マイグレーションを適用するテストで Run の CHECK と三つの部分インデックスを照合した。差分レビューで SQL のリテラル、MCP の入力値、Web の再取得の条件を確認した。
 - **参照した判断**。[実行モデル](../pdr/records/PDR-20261123-execution-model.md)、[Issue の順番待ち](../pdr/records/PDR-20261124-issue-routine-dispatch.md)、[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、API Worker の Wrangler dry-run（コンテナのビルドを省略）、差分の空白検査が成功した。
+
+## ラウンド 5 Runner の GitHub 取得診断
+
+- **比較と決定**。Adapter ごとに診断を維持する方法、汎用 span API を変更する方法、GitHub 取得の入口で診断して Agent 用の結果を返す方法を比較した。GitHub Reader と同じモジュールに置き、取得の診断理由を結果から除く責務を共有した。
+- **移行**。Codex の RPC と Claude の MCP から同じ関数を呼ぶようにした。各 Adapter はプロトコル、ツール名、対象 Turn の照合を所有する。二つの診断・結果変換を削除した。
+- **契約と検証**。Claude の回帰テストを変更前に通し、編集後の Issue 本文をツール結果にも診断本文にも入れず、診断属性に `issue_changed` が残ることを確認した。既存の Codex テストは取得・再試行・診断失敗・診断理由の除去を通す。レビューでは両 Adapter のツール公開条件と診断データを確認した。
+- **参照した判断**。[Routine の Issue 参照](../pdr/records/PDR-20261124-routine-github-context.md)、[Runner の失敗診断](../pdr/records/PDR-20261119-runner-failure-diagnostics.md)。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。Runner のテストに本番バンドルの起動確認を含む。

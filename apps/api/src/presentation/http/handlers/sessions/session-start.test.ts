@@ -278,7 +278,9 @@ test("the Session page sends the next message once the Session is idle, keeping 
   ).json()) as { sessionId: string; runId: string };
   const path = `/${started.sessionId}/messages`;
   const message = { requestId: crypto.randomUUID(), message: "Also log it" };
-  expect((await send({ ...message, message: " " }, { path })).status).toBe(400);
+  const invalid = await send({ ...message, message: " " }, { path });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({ error: "invalid_input" });
   expect(
     (await send(message, { path, headers: { Origin: env.TAILOS_WEB_ORIGIN } }))
       .status,

@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { validator } from "hono/validator";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 import {
@@ -17,6 +16,7 @@ import {
   type ProjectStore,
 } from "@/application/projects/store.ts";
 import type { Bindings } from "@/bindings.ts";
+import { jsonInput } from "@/presentation/http/middlewares/json-input.ts";
 import type {
   createOperatorAuth,
   OperatorEnv,
@@ -45,14 +45,6 @@ const pageQuery = v.object({
   ),
   cursor: v.optional(v.string()),
 });
-function jsonInput<T extends v.GenericSchema>(schema: T) {
-  return validator("json", (value: v.InferInput<T>, c) => {
-    const parsed = v.safeParse(schema, value);
-    return parsed.success
-      ? parsed.output
-      : c.json({ error: "invalid_input" as const }, 400);
-  });
-}
 export function createProjectRoutes(
   store: (env: Bindings) => ProjectStore,
   repositories: (env: Bindings) => ProjectRepositories,

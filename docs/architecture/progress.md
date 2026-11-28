@@ -9,7 +9,7 @@
 | 状態 | 領域 | 確認した重複・境界・次の判定 |
 | --- | --- | --- |
 | 完了 | Web の状態・データ取得・エラー | 初期取得のエラーと API の失敗コード読み取りを Shared API に集約した。[ラウンド 1](#ラウンド-1-web-の初期取得エラー)と [ラウンド 12](#ラウンド-12-web-の-api-失敗コード)を参照。 |
-| 完了 | API データ契約と共通インフラ | Project と Session のカーソルを共通の転送形式に移行した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)を参照。 |
+| 完了 | API データ契約と共通インフラ | 一覧カーソルと書き込み時の JSON 入力検証を共通化した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)と [ラウンド 13](#ラウンド-13-api-の-json-入力検証)を参照。 |
 | 完了 | API モジュール境界 | `Bindings` を RPC 契約の所有者にし、具象 Durable Object との型循環を解消した。[ラウンド 3](#ラウンド-3-cloudflare-bindings-の依存方向)を参照。 |
 | 完了 | ドメインとデータアクセス | Run の状態と進行中の判定を Core に集約した。[ラウンド 4](#ラウンド-4-run-の状態と進行中の判定)を参照。 |
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
@@ -115,3 +115,10 @@
 - **移行とレビュー**。各操作の重複変換と、Project 画面を経由していた Routine エンティティの再 export を削除した。HTTP status、認証失敗、既存 Session の作業中エラー、Routine の接続未確認に対する文言と操作をテストした。コードが無い失敗と文字列以外の失敗値を受け取るテストを追加した。
 - **参照した判断**。[Home からの開始](../pdr/records/PDR-20261126-home-message-start-provider.md)、[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)、[Routine の保存](../pdr/records/PDR-20261118-routine-configuration-validation.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。
+
+## ラウンド 13 API の JSON 入力検証
+
+- **比較と決定**。各ルートに同じ変換を持つ方式、検証後の業務判断まで共通化する方式、Hono が受け取った JSON の形だけを middleware で確認する方式を比較した。Valibot で不正値を `400 invalid_input` にする機構を集約し、入力のスキーマと後続の業務判断は元の責務に置いた。
+- **移行とレビュー**。Project 設定、Routine 設定、Session 追送を移行した。二つの同じ検証関数と追送のインライン検証を削除した。Home の新規 Session 開始には Provider の初回選択もあり、既存のケース分けを使う。三つの API のテストを強化し、変更前後で不正な JSON 値が同じ status と応答になることを確認した。
+- **参照した判断**。[Routine の保存](../pdr/records/PDR-20261118-routine-configuration-validation.md)、[Project 設定の範囲](../pdr/records/PDR-20261124-project-settings-routine-actors.md)、[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。本番設定の Wrangler dry-run で API Worker と Runner イメージのビルドも成功した。

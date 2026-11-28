@@ -1,41 +1,21 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { InferResponseType } from "hono/client";
 import { api } from "@/shared/api";
+import { RoutineRequestError, type Routine } from "@/entities/routine";
+export {
+  routinesQueryOptions,
+  routinesKey,
+  RoutineRequestError,
+  type Routine,
+} from "@/entities/routine";
 const routes = api.projects[":projectId"].routines;
-export type Routine = InferResponseType<
-  typeof routes.$get,
-  200
->["routines"][number];
 export type RoutineSettings = Omit<
   Routine,
   "id" | "projectId" | "revision" | "deletedAt"
 >;
-export const routinesKey = (projectId: string) => [
-  "project-routines",
-  projectId,
-];
 export const routineHistoryKey = (projectId: string) => [
   "routine-history",
   projectId,
 ];
-export class RoutineRequestError extends Error {
-  constructor(readonly status: number) {
-    super("Routine を取得できませんでした。");
-  }
-}
-export function routinesQueryOptions(projectId: string) {
-  return queryOptions({
-    queryKey: routinesKey(projectId),
-    queryFn: async ({ signal }) => {
-      const response = await routes.$get(
-        { param: { projectId } },
-        { init: { signal } },
-      );
-      if (!response.ok) throw new RoutineRequestError(response.status);
-      return response.json();
-    },
-  });
-}
 export function routineHistoryQueryOptions(projectId: string, before?: number) {
   return queryOptions({
     queryKey: [...routineHistoryKey(projectId), before],

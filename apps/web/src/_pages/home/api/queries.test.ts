@@ -6,6 +6,8 @@ import {
   accountSessionsQueryOptions,
 } from "@/entities/session";
 
+// The Session entity also exports its row, which links with next/link.
+vi.mock("next/link", () => ({ default: () => null }));
 afterEach(() => vi.unstubAllGlobals());
 function queryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

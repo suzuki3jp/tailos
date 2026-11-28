@@ -11,6 +11,8 @@ import { accountSessionsQueryOptions } from "@/entities/session";
 import { accountProfileQueryOptions } from "@/entities/account";
 import { apiOrigin } from "@/shared/config";
 
+// The Session entity also exports its row, which links with next/link.
+vi.mock("next/link", () => ({ default: () => null }));
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();

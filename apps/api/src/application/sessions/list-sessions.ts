@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import type { RunStatus } from "@tailos/core/run-status";
 import {
   decodePageCursor,
   encodePageCursor,
@@ -17,7 +18,7 @@ export type SessionSummary = SessionPosition & {
   createdAt: number;
   latestRun: {
     id: string;
-    status: "queued" | "running" | "succeeded" | "failed";
+    status: RunStatus;
     errorCode: string | null;
   } | null;
 };

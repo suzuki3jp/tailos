@@ -4,6 +4,7 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/server";
 import * as z from "zod";
+import { runStatuses } from "@tailos/core/run-status";
 import type { InspectionStore } from "@/application/inspection/inspection.ts";
 
 const usage = {
@@ -180,9 +181,7 @@ export function inspectionMcp(store: InspectionStore, ownerId: string) {
             "List your executions, newest first, optionally for one session or status. Pass nextCursor as before to fetch older rows.",
           inputSchema: z.strictObject({
             sessionId: id.optional(),
-            status: z
-              .enum(["queued", "running", "succeeded", "failed"])
-              .optional(),
+            status: z.enum(runStatuses).optional(),
             before: position.optional(),
             limit: pageSize,
           }),

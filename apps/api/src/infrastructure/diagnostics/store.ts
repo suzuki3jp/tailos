@@ -25,6 +25,7 @@ import type {
 } from "@/application/diagnostics/store.ts";
 import { DiagnosticStorageLimit } from "@/application/diagnostics/store.ts";
 import type { RunArtifactsBucket } from "@/bindings.ts";
+import { activeRunStatusSql } from "@/infrastructure/d1/run-status.ts";
 
 export async function digestDiagnostic(text: string) {
   const digest = await crypto.subtle.digest(
@@ -455,7 +456,7 @@ export async function expireDiagnostics(
     .prepare(`DELETE FROM diagnostic_traces WHERE id IN (
     SELECT id FROM diagnostic_traces t WHERE expires_at <= ?
     AND NOT EXISTS (SELECT 1 FROM diagnostic_artifacts a WHERE a.trace_id = t.id AND a.deleted_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.run_id AND r.status IN ('queued', 'running')) LIMIT 50)`)
+    AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.run_id AND r.status IN ${activeRunStatusSql}) LIMIT 50)`)
     .bind(now)
     .run();
 }

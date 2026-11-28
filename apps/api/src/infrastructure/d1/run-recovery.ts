@@ -1,9 +1,10 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { activeRunStatusSql } from "./run-status.ts";
 
 export async function listDueRunIds(db: D1Database, now: number) {
   const due = await db
     .prepare(
-      `SELECT id FROM runs WHERE status IN ('queued', 'running')
+      `SELECT id FROM runs WHERE status IN ${activeRunStatusSql}
      AND (next_action_at IS NULL OR next_action_at <= ?)
      ORDER BY next_action_at, id LIMIT 25`,
     )

@@ -1,4 +1,5 @@
 import type { WriteRunArtifacts } from "@/application/runs/artifacts.ts";
+import type { RunStatus } from "@tailos/core/run-status";
 import {
   ExecutionContext,
   type RunnerEvent,
@@ -6,7 +7,6 @@ import {
 } from "@tailos/core/runner";
 import * as v from "valibot";
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunInput = {
   messageId: string;
   executionContext: string;

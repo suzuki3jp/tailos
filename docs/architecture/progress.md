@@ -11,7 +11,7 @@
 | 完了 | Web の状態・データ取得・エラー | Home、Routine、Project の Session 詳細を Shared API のエラー変換に移行した。[ラウンド 1](#ラウンド-1-web-の初期取得エラー)を参照。 |
 | 完了 | API データ契約と共通インフラ | Project と Session のカーソルを共通の転送形式に移行した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)を参照。 |
 | 完了 | API モジュール境界 | `Bindings` を RPC 契約の所有者にし、具象 Durable Object との型循環を解消した。[ラウンド 3](#ラウンド-3-cloudflare-bindings-の依存方向)を参照。 |
-| 要調査 | ドメインとデータアクセス | Run の状態集合が application の型、Drizzle、SQL、Web の判定に現れる。過去 migration と部分インデックスに関わるリテラルを確認し、実行時の型と判定の共有範囲を決める。 |
+| 完了 | ドメインとデータアクセス | Run の状態と進行中の判定を Core に集約した。[ラウンド 4](#ラウンド-4-run-の状態と進行中の判定)を参照。 |
 | 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
 | 要調査 | ログと可観測性 | Runner の収集と API の検査・保存で共通 redactor を利用。イベントの表現と再試行を比較するときは、配送の保証と保存の保証を別々に追う。 |
 | 要調査 | Runner の Adapter と共通処理 | Codex と Claude が prompt・Turn 手順を共有し、各 Adapter が SDK と会話の復元を実装。共通化は再開失敗・診断・作業状態が同じ箇所から判断する。 |
@@ -48,3 +48,11 @@
 - **契約と検証**。DO 実装の `implements` と TypeScript が RPC を照合する。Oxlint が `Bindings` から infrastructure への型 import を拒否し、許可される application と Workers の型をテストした。差分レビュー後の構文解析でファイル単位の循環は実行時・型参照とも 0 件だった。
 - **参照した判断**。[Session の継続](../pdr/records/PDR-20261128-session-continuity-branches.md)、[Session のリアルタイム配信](../pdr/records/PDR-20261121-session-realtime-transport.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、Preview API Worker の Wrangler dry-run、差分の空白検査が成功した。
+
+## ラウンド 4 Run の状態と進行中の判定
+
+- **比較と決定**。API だけで状態を共有する方式、SQL の結果を Web へ追加する方式、既存の状態値と進行中の部分集合を Core に置く方式を比較した。API と Web が同じ状態と判定を参照し、D1 が同じ一覧から SQL を生成する方法を採用した。Runner 内部の応答は待機中の Run を表さないため、既存の別契約を使う。
+- **移行**。Run 実行・Session 一覧・照会の型、MCP のバリデーション、D1 の受付・復旧・診断・スキーマ、Web の Session 詳細の判定を移行した。保存済みの状態値と既存 migration は引き継ぐ。
+- **契約と検証**。変更前後の Drizzle 出力で 25 テーブルの SQL が一致した。D1 の実マイグレーションを適用するテストで Run の CHECK と三つの部分インデックスを照合した。差分レビューで SQL のリテラル、MCP の入力値、Web の再取得の条件を確認した。
+- **参照した判断**。[実行モデル](../pdr/records/PDR-20261123-execution-model.md)、[Issue の順番待ち](../pdr/records/PDR-20261124-issue-routine-dispatch.md)、[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、API Worker の Wrangler dry-run（コンテナのビルドを省略）、差分の空白検査が成功した。

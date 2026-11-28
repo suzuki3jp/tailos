@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import { runStatuses } from "@tailos/core/run-status";
+import { activeRunStatusSql, runStatusSql } from "./run-status.ts";
 import {
   check,
   foreignKey,
@@ -203,7 +205,7 @@ export const runs = sqliteTable(
       .references(() => sessions.id),
     startMessageId: text("start_message_id").notNull().unique(),
     status: text({
-      enum: ["queued", "running", "succeeded", "failed"],
+      enum: runStatuses,
     }).notNull(),
     concurrencyKey: text("concurrency_key"),
     executionContext: text("execution_context").notNull(),
@@ -222,21 +224,18 @@ export const runs = sqliteTable(
       columns: [t.sessionId, t.startMessageId],
       foreignColumns: [sessionMessages.sessionId, sessionMessages.id],
     }),
-    check(
-      "run_status",
-      sql`${t.status} in ('queued', 'running', 'succeeded', 'failed')`,
-    ),
+    check("run_status", sql`${t.status} in ${sql.raw(runStatusSql)}`),
     uniqueIndex("one_active_run_per_session")
       .on(t.sessionId)
-      .where(sql`${t.status} in ('queued', 'running')`),
+      .where(sql`${t.status} in ${sql.raw(activeRunStatusSql)}`),
     uniqueIndex("one_active_run_per_target")
       .on(t.concurrencyKey)
       .where(
-        sql`${t.status} in ('queued', 'running') and ${t.concurrencyKey} is not null`,
+        sql`${t.status} in ${sql.raw(activeRunStatusSql)} and ${t.concurrencyKey} is not null`,
       ),
     index("run_next_action")
       .on(t.nextActionAt, t.id)
-      .where(sql`${t.status} in ('queued', 'running')`),
+      .where(sql`${t.status} in ${sql.raw(activeRunStatusSql)}`),
     index("run_session_created").on(t.sessionId, t.createdAt, t.id),
   ],
 );

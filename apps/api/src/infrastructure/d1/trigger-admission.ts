@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { ProjectChanged } from "@/application/triggers/admit-trigger.ts";
 import { diagnosticRetentionMs } from "@tailos/core/diagnostics";
+import { activeRunStatusSql } from "./run-status.ts";
 
 import type {
   Admission,
@@ -21,7 +22,7 @@ export async function admitTrigger(
   // D1 serializes the batch. Only the transaction that inserts this session ID
   // writes its initial message and run. The event always refers to the winner.
   const scope = JSON.stringify([input.ownerId, input.concurrencyKey]);
-  const active = "concurrency_key = ? AND status IN ('queued', 'running')";
+  const active = `concurrency_key = ? AND status IN ${activeRunStatusSql}`;
   const delivery = "source = ? AND idempotency_key = ?";
   const created = "EXISTS (SELECT 1 FROM sessions WHERE id = ?)";
 

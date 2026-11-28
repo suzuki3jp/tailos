@@ -42,7 +42,7 @@ flowchart LR
 | [API の application](../../apps/api/src/application) | Project 設定、Routine 設定・Issue dispatch、Session 開始・継続・一覧、Run の進行・復旧、認証、通知、診断・照会・タイムライン。ユースケース関数と必要な依存の型を公開する。 |
 | [API の infrastructure](../../apps/api/src/infrastructure) | D1 のクエリ・トランザクション、R2、GitHub、Better Auth、プロバイダー接続、DO の実装を所有する。presentation が直接呼ぶ実装の組み立ては composition に置く。 |
 | [Runner](../../apps/runner/src) | `index.ts` から内部 HTTP の `server.ts` を起動する。共通実行手順、Git 作業ツリー、継続データと診断配送を担当する。`AgentAdapter` の Codex app-server と Claude Agent SDK 実装は、それぞれの SDK・プロトコルを扱う。 |
-| [Core](../../packages/core/package.json) | `auth` が認証と公開経路の定数、`models` が Provider とモデル・effort のカタログ、`runner` が Job・Run 結果・継続情報、`diagnostics` が診断、`timeline` が配信契約を所有する。公開入口は package exports。 |
+| [Core](../../packages/core/package.json) | `auth` が認証と公開経路の定数、`models` が Provider とモデル・effort のカタログ、`run-status` が保存する Run の状態、`runner` が Job・Run 結果・継続情報、`diagnostics` が診断、`timeline` が配信契約を所有する。公開入口は package exports。 |
 | [Diagnostics](../../packages/diagnostics/package.json) | Runner と API が使う Secretlint ベースの本文検査・マスキング。共有する入口は `@tailos/diagnostics`。 |
 | [運用・検証ツール](../../tools) | Preview の構築・公開・セットアップ・撤去、PDR の検索と検証。API の provision・deploy・seed は `apps/api/scripts`、リポジトリ固有の境界検査は `lint`。 |
 

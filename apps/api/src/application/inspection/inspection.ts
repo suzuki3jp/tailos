@@ -1,4 +1,5 @@
 import type { DiagnosticReader } from "@/application/diagnostics/store.ts";
+import type { RunStatus } from "@tailos/core/run-status";
 
 export type Position = { createdAt: number; id: string };
 export type Page<T> = { items: T[]; nextCursor: Position | null };
@@ -12,7 +13,7 @@ export type RunSummary = {
   id: string;
   sessionId: string;
   startMessageId: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: RunStatus;
   errorCode: string | null;
   createdAt: number;
   finishedAt: number | null;

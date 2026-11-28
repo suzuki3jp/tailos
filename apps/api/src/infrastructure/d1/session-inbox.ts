@@ -9,6 +9,7 @@ import {
   type IssueMessageReceipt,
 } from "@/application/triggers/admit-trigger.ts";
 import type { SessionMessage } from "@/application/sessions/continue-session.ts";
+import { activeRunStatusSql } from "./run-status.ts";
 
 /** A SQL expression for a Session ID, with its bindings. */
 type SessionExpression = { sql: string; bindings: unknown[] };
@@ -33,7 +34,7 @@ function startNext(
         i.author_kind, i.body, ?
       FROM session_inbox i JOIN sessions s ON s.id = i.session_id JOIN projects p ON p.id = s.project_id
       WHERE i.id = ${next} AND p.deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM runs WHERE session_id = i.session_id AND status IN ('queued', 'running'))`)
+        AND NOT EXISTS (SELECT 1 FROM runs WHERE session_id = i.session_id AND status IN ${activeRunStatusSql})`)
       .bind(messageId, now, ...session.bindings),
     db
       .prepare(`INSERT INTO runs (id, session_id, start_message_id, status, execution_context, deadline_at, next_action_at, created_at)
@@ -236,7 +237,7 @@ export async function dispatchSessionInbox(db: D1Database): Promise<string[]> {
     .prepare(`SELECT i.session_id AS sessionId FROM session_inbox i
     JOIN sessions s ON s.id = i.session_id JOIN projects p ON p.id = s.project_id
     WHERE i.run_id IS NULL AND p.deleted_at IS NULL
-      AND NOT EXISTS (SELECT 1 FROM runs WHERE session_id = i.session_id AND status IN ('queued', 'running'))
+      AND NOT EXISTS (SELECT 1 FROM runs WHERE session_id = i.session_id AND status IN ${activeRunStatusSql})
     GROUP BY i.session_id ORDER BY min(i.id) LIMIT 25`)
     .all<{ sessionId: string }>();
   const ids: string[] = [];
@@ -302,7 +303,7 @@ export async function admitSessionMessage(
     "web.message",
     JSON.stringify([input.ownerId, input.sessionId, input.requestId]),
   ];
-  const working = `(EXISTS (SELECT 1 FROM runs WHERE session_id = s.id AND status IN ('queued', 'running'))
+  const working = `(EXISTS (SELECT 1 FROM runs WHERE session_id = s.id AND status IN ${activeRunStatusSql})
     OR EXISTS (SELECT 1 FROM session_inbox WHERE session_id = s.id AND run_id IS NULL))`;
   const owned = `FROM sessions s JOIN projects p ON p.id = s.project_id
     WHERE s.id = ? AND s.owner_id = ? AND p.id = ? AND p.owner_id = ? AND p.deleted_at IS NULL`;

@@ -7,7 +7,7 @@ date: "2026-11-16"
 areas: [projects, api, database]
 keywords: [Project名, 自由な名前, name, migration, repository, リポジトリ重複]
 paths:
-  - apps/api/src/application/triggers/projects.ts
+  - apps/api/src/application/projects/settings.ts
   - apps/api/src/application/projects/**
   - apps/api/src/infrastructure/d1/projects.ts
   - apps/api/src/infrastructure/d1/schema.ts

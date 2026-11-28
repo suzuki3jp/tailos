@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { projectSchema } from "@/application/triggers/projects.ts";
+import { projectSchema } from "@/application/projects/settings.ts";
 import { Hono } from "hono";
 import { expect, test, vi } from "vitest";
 import { createProjectRoutes } from "./projects.ts";

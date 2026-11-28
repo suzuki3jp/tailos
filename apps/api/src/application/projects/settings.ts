@@ -64,5 +64,4 @@ export const projectSettings = v.strictObject({
 });
 
 export type Project = v.InferOutput<typeof projectSchema>;
-export type LegacyProject = v.InferOutput<typeof legacyProjectsSchema>[number];
 export type ProjectSettings = v.InferOutput<typeof projectSettings>;

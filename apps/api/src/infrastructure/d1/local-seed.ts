@@ -3,7 +3,7 @@ import type { ExecutionContext } from "@tailos/core/runner";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { RoutineSettings } from "../../application/routines/routines.ts";
-import type { Project } from "../../application/triggers/projects.ts";
+import type { Project } from "../../application/projects/settings.ts";
 import {
   authAccounts,
   projects,

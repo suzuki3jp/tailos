@@ -2,7 +2,7 @@ import * as v from "valibot";
 import { agentEngines, supportsSelection } from "@tailos/core/models";
 import type { AgentConnected } from "@/application/auth/agent-connection.ts";
 import { promptText } from "@tailos/core/runner";
-import { allowedActors, projectName } from "@/application/triggers/projects.ts";
+import { allowedActors, projectName } from "@/application/projects/settings.ts";
 
 export const implementationPrompt =
   "Implement the GitHub issue identified by the structured job context. Read the issue using tailos_github_get, make the required changes, and run relevant checks. Commit the changes on a new branch, push it, and open a pull request with gh whose body includes Closes #<issue number>. Summarize the result with the pull request URL.";

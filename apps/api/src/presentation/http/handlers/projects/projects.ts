@@ -9,7 +9,7 @@ import {
 import {
   legacyProjectsSchema,
   projectSettings,
-} from "@/application/triggers/projects.ts";
+} from "@/application/projects/settings.ts";
 import {
   ProjectConflict,
   type ProjectRepositories,

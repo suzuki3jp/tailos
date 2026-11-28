@@ -1,9 +1,9 @@
 import * as v from "valibot";
-import { projectSchema } from "@/application/triggers/projects.ts";
-import type {
-  Project,
-  ProjectSettings,
-} from "@/application/triggers/projects.ts";
+import {
+  projectSchema,
+  type Project,
+  type ProjectSettings,
+} from "./settings.ts";
 
 export type ProjectPosition = { name: string; id: string };
 export const projectSummary = v.strictObject({

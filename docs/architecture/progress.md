@@ -12,7 +12,7 @@
 | 完了 | API データ契約と共通インフラ | 一覧カーソルと書き込み時の JSON 入力検証を共通化した。[ラウンド 2](#ラウンド-2-一覧-api-のカーソル)と [ラウンド 13](#ラウンド-13-api-の-json-入力検証)を参照。 |
 | 完了 | API モジュール境界 | `Bindings` を RPC 契約の所有者にし、具象 Durable Object との型循環を解消した。[ラウンド 3](#ラウンド-3-cloudflare-bindings-の依存方向)を参照。 |
 | 完了 | ドメインとデータアクセス | Run の状態と進行中の判定を Core に集約した。[ラウンド 4](#ラウンド-4-run-の状態と進行中の判定)を参照。 |
-| 要調査 | API と Runner の設定・認証 | `bindings.ts`、Wrangler、deploy scripts、Egress に設定が分かれる。デプロイ入力と実行時の binding を照合する。生存期間が異なるログイン、MCP、Provider、Turn の資格情報は個別契約を前提とする。 |
+| 確認済み | API と Runner の設定・認証 | 本番と Preview の OAuth 入力は `readLoginConfig`、実行時の binding は `bindings.ts`、ブラウザの公開経路と Cookie 名は Core が所有する。ログイン、MCP、Provider、Turn の資格情報は対象と生存期間が異なる。 |
 | 完了 | ログと可観測性 | Codex と Claude が GitHub 取得の診断と Agent 向け結果の変換を共有。[ラウンド 5](#ラウンド-5-runner-の-github-取得診断)を参照。診断の収集・保存・再送はそれぞれの保証を持つ。 |
 | 完了 | Runner の Adapter と共通処理 | Codex と Claude のコマンド環境を一つの定義へ移行した。[ラウンド 6](#ラウンド-6-runner-のコマンド環境)を参照。 |
 | 完了 | UI と表示ルール | Sidebar と Routine 詳細の Recent Sessions の上限を Session に集約した。[ラウンド 8](#ラウンド-8-recent-sessions-の表示ルール)を参照。レイアウトの適用範囲には既存の互換要件がある。 |
@@ -20,8 +20,10 @@
 | 完了 | 依存規範の自動検査 | 内部の型参照を含む循環と workspace の未宣言・非公開依存を CI で検出する。[ラウンド 7](#ラウンド-7-内部依存の循環検査)と [ラウンド 11](#ラウンド-11-workspace-の公開境界)を参照。 |
 | 確認待ち | Run 実行とストレージの大きな再設計 | `runner-container.ts` は Run 進行、継続、Egress リース、診断の責務を併せ持つ。DO クラス・ストレージキー・責務の所有者を移す場合は、継続中 Session の移行とロールバックを人間と確認するまで保留する。 |
 | 確認待ち | 管理画面や外部契約の廃止 | 旧管理画面のルート、直通 API と smoke 経路、保存済み Run の結果形式には現行の呼び出しや互換性要件がある。廃止・URL 変更は利用実態と後継契約の合意が必要。 |
+| 確認待ち | Preview のビルドと公開の設定境界 | ビルドは PR の commit、公開スクリプトは信頼済みの main で動く。互換日と flags は現時点で一致する。PR が変更した互換設定を公開ジョブに渡す設計は、その入力を信頼する範囲を確定してから進める。 |
 | 完了 | 設計資料の現行化 | 現行の構成の説明をアーキテクチャへ集約し、運用手順を更新した。[ラウンド 9](#ラウンド-9-設計と運用資料の現行化)を参照。 |
 | 確認待ち | Claude の計画結果を Issue に送る経路 | 計画 Routine の初期プロンプトは `gh issue comment` を案内する。Claude の計画 Adapter は Bash を渡さず、組み込み GitHub ツールは参照用。Issue への返信方法と変更対象の Routine を合意してから変更する。 |
+| 完了 | Project のモデル所有権 | Project の現行設定と旧形式のスキーマを Project モジュールへ移行した。[ラウンド 14](#ラウンド-14-project-設定モデルの所有権)を参照。 |
 
 ## 各ラウンドに残す事項
 
@@ -122,3 +124,10 @@
 - **移行とレビュー**。Project 設定、Routine 設定、Session 追送を移行した。二つの同じ検証関数と追送のインライン検証を削除した。Home の新規 Session 開始には Provider の初回選択もあり、既存のケース分けを使う。三つの API のテストを強化し、変更前後で不正な JSON 値が同じ status と応答になることを確認した。
 - **参照した判断**。[Routine の保存](../pdr/records/PDR-20261118-routine-configuration-validation.md)、[Project 設定の範囲](../pdr/records/PDR-20261124-project-settings-routine-actors.md)、[Session への送信](../pdr/records/PDR-20261126-session-message-provider.md)。新しいプロダクト判断は発生しなかった。
 - **結果**。CI と同じ四つの検証、Web Worker ビルド、差分の空白検査が成功した。本番設定の Wrangler dry-run で API Worker と Runner イメージのビルドも成功した。
+
+## ラウンド 14 Project 設定モデルの所有権
+
+- **比較と決定**。Trigger 配下に置き続ける方式、現行と旧入力でスキーマを分割する方式、Project が同じ入力・保存スキーマを所有する方式を比較した。保存と明示的な旧 JSON 取り込みに共通する Project 設定を Project モジュールへ移した。Trigger にはイベントの解釈と受付を置く。
+- **移行とレビュー**。Project store、Routine 設定、D1、Project API、ローカル seed の参照を移し、参照されていない旧入力の型 export を削除した。スキーマの内容が同一であることを差分で照合した。PDR のパス検索用メタデータを更新し、決定章と理由は維持した。
+- **参照した判断**。[D1 への設定集約](../pdr/records/PDR-20261114-project-config-source.md)、[Project 名](../pdr/records/PDR-20261116-project-name-validation.md)、[Project と Routine の分担](../pdr/records/PDR-20261124-project-settings-routine-actors.md)。新しいプロダクト判断は発生しなかった。
+- **結果**。CI と同じ四つの検証、Web Worker ビルド、PDR 検査、差分の空白検査が成功した。

@@ -39,7 +39,7 @@ flowchart LR
 | --- | --- |
 | [Web](../../apps/web/src) | `app` が Vinext のルート・レイアウト・Provider を組み立てる。`_pages` が Home、Session 詳細、Routine、Project 設定、Account、Connect、MCP キー、診断画面を所有する。再利用する UI は `widgets`、ユーザー操作は `features`、業務概念の読み取り・表示は `entities`、汎用 UI・通信・公開設定は `shared`。slice の入口は `index.ts` と必要に応じて `index.server.ts`。Worker は CSP と API 転送を担う。 |
 | [API の composition](../../apps/api/src/bootstrap) | `worker.ts` と `bootstrap` がアダプターを組み立てる。本番ブラウザ API は `/api/v1`、ローカルの直通 API は `/v1`。公開型は `@tailos/api/browser` の `BrowserApi`。MCP は `/mcp`、GitHub からは `/webhooks/github`。内部経路の入口と認証は `bootstrap/http.ts` を参照する。 |
-| [API の application](../../apps/api/src/application) | Project 設定、Routine 設定・Issue dispatch、Session 開始・継続・一覧、Run の進行・復旧、認証、通知、診断・照会・タイムライン。ユースケース関数と必要な依存の型を公開する。 |
+| [API の application](../../apps/api/src/application) | Project 設定、Routine 設定・Issue dispatch、Session 開始・継続・一覧、Run の進行・復旧、認証、通知、診断・照会・タイムライン。ユースケース関数と必要な依存の型を公開する。Project の入力・保存・旧 JSON のスキーマは [Project 設定](../../apps/api/src/application/projects/settings.ts) が所有する。 |
 | [API の infrastructure](../../apps/api/src/infrastructure) | D1 のクエリ・トランザクション、R2、GitHub、Better Auth、プロバイダー接続、DO の実装を所有する。presentation が直接呼ぶ実装の組み立ては composition に置く。 |
 | [Runner](../../apps/runner/src) | `index.ts` から内部 HTTP の `server.ts` を起動する。共通実行手順、Git 作業ツリー、継続データと診断配送を担当する。`AgentAdapter` の Codex app-server と Claude Agent SDK 実装は、それぞれの SDK・プロトコルを扱う。 |
 | [Core](../../packages/core/package.json) | `auth` が認証と公開経路の定数、`models` が Provider とモデル・effort のカタログ、`run-status` が保存する Run の状態、`runner` が Job・Run 結果・継続情報、`diagnostics` が診断、`timeline` が配信契約を所有する。公開入口は package exports。 |

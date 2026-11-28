@@ -6,7 +6,7 @@ status: accepted
 date: "2026-11-14"
 areas: [projects, deployment]
 keywords: [PROJECTS, TAILOS_PROJECTS, D1, 移行, 初期値]
-paths: ["apps/api/src/application/triggers/projects.ts", "apps/api/src/presentation/http/handlers/github-webhook/**", "docs/deploy.md", ".github/workflows/deploy.yml"]
+paths: ["apps/api/src/application/projects/settings.ts", "apps/api/src/presentation/http/handlers/github-webhook/**", "docs/deploy.md", ".github/workflows/deploy.yml"]
 symbols: [projectsSchema]
 supersedes: []
 decided_by: suzuki3jp

@@ -6,7 +6,7 @@ status: accepted
 date: "2026-11-14"
 areas: [projects, agent]
 keywords: [agent, Codex, Claude, 単位 D, 設定画面]
-paths: ["apps/api/src/application/triggers/projects.ts", "apps/api/src/presentation/http/handlers/github-webhook/**", "apps/web/src/_pages/projects/**"]
+paths: ["apps/api/src/application/projects/settings.ts", "apps/api/src/presentation/http/handlers/github-webhook/**", "apps/web/src/_pages/projects/**"]
 symbols: [projectsSchema, ExecutionContext]
 supersedes: []
 decided_by: suzuki3jp

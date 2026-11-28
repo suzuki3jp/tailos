@@ -30,14 +30,16 @@ type ClaudeJob = Extract<RunnerJob, { engine: "claude" }>;
 type Call = { prompt: string; options: Options };
 type TailosTools = Parameters<ClaudeRuntime["tailosServer"]>[0];
 type GitHubRead = NonNullable<TailosTools["read"]>;
-type PublicationCall = NonNullable<TailosTools["publish"]>;
 
 const token = "claude-oauth-token";
-const bearer = "b".repeat(64);
 const checkout = {
   repository: "acme/widgets",
   baseSha: "a".repeat(40),
-  branch: `tailos/issue-1/${randomUUID()}`,
+  defaultBranch: "main",
+  author: {
+    name: "tailos-app[bot]",
+    email: "1+tailos-app[bot]@users.noreply.github.com",
+  },
 };
 const job = (overrides: Partial<ClaudeJob> = {}): ClaudeJob => ({
   version: 1,
@@ -46,7 +48,6 @@ const job = (overrides: Partial<ClaudeJob> = {}): ClaudeJob => ({
   prompt: "Fix the bug",
   deadlineAt: Date.now() + 600_000,
   access: { token, connectionVersion: randomUUID() },
-  lease: { url: "https://tailos.example/_runner/runs/1/credentials", bearer },
   ...overrides,
 });
 const success = (structured: unknown, sessionId = "session-1") => ({
@@ -65,19 +66,13 @@ const success = (structured: unknown, sessionId = "session-1") => ({
 // Replays one fixed message sequence per turn and records what was asked.
 function runtime(
   turns: Array<
-    | unknown[]
-    | ((
-        call: Call,
-        read?: GitHubRead,
-        publish?: PublicationCall,
-      ) => Promise<unknown[]>)
+    unknown[] | ((call: Call, read?: GitHubRead) => Promise<unknown[]>)
   >,
   sandboxAvailable = true,
 ) {
   const calls: Call[] = [];
   const proxies = { started: 0, closed: 0 };
   let read: GitHubRead | undefined;
-  let publish: PublicationCall | undefined;
   const fake: ClaudeRuntime = {
     async startProxy() {
       proxies.started++;
@@ -93,15 +88,12 @@ function runtime(
       const turn = turns[calls.length - 1];
       return (async function* () {
         if (!turn) throw new Error("Unexpected turn");
-        yield* typeof turn === "function"
-          ? await turn(call, read, publish)
-          : turn;
+        yield* typeof turn === "function" ? await turn(call, read) : turn;
       })();
     },
     sandboxAvailable: async () => sandboxAvailable,
     tailosServer(tools) {
       read = tools.read;
-      publish = tools.publish;
       return createSdkMcpServer({ name: "tailos" });
     },
   };
@@ -572,8 +564,7 @@ test("keeps file tools inside the workspace", async (t) => {
 
 test("builds the Tailos tool server with the installed Agent SDK", async () => {
   const read = vi.fn<GitHubRead>();
-  const publish = vi.fn<PublicationCall>();
-  const server = (await loadClaudeRuntime()).tailosServer({ read, publish });
+  const server = (await loadClaudeRuntime()).tailosServer({ read });
 
   expect(server).toMatchObject({ type: "sdk", name: "tailos" });
 });
@@ -591,36 +582,25 @@ async function keepTranscript(call: Call, id: string, content: string) {
   await writeFile(path, content);
 }
 
-test("gives an implementation turn the publication tool, run by the Runner", async (t) => {
+test("lets an implementation write its git directory, and offers no publication tool", async (t) => {
   const cwd = await workspace(t);
-  const publish = vi.fn(async () => ({
-    published: true as const,
-    sha: "c".repeat(40),
-    url: "https://github.com/acme/widgets/pull/1",
-  }));
-  let toolResult: unknown;
-  const { calls, agent } = runtime([
-    async (_call, _read, publication) => {
-      toolResult = await publication!({ headline: "fix: repair the widget" });
-      return [success({ reply: "Published" })];
-    },
-  ]);
+  const gitDir = join(cwd, "..", "git");
+  const { calls, agent } = runtime([[success({ reply: "Done" })]]);
 
-  const result = await agent().run(
+  await agent().run(
     job({ checkout }),
     new AbortController().signal,
     cwd,
     undefined,
     undefined,
-    publish,
+    gitDir,
   );
 
-  expect(result.reply).toBe("Published");
-  expect(publish).toHaveBeenCalledWith("fix: repair the widget", undefined);
-  expect(toolResult).toMatchObject({ success: true });
   const { prompt, options } = calls[0]!;
-  expect(options.allowedTools).toContain("mcp__tailos__publish");
-  expect(prompt).toContain("mcp__tailos__publish");
+  expect(options.sandbox?.filesystem?.allowWrite).toContain(gitDir);
+  expect(options.allowedTools).not.toContain("mcp__tailos__publish");
+  expect(prompt).toContain("git and gh are signed in");
+  expect(prompt).not.toContain("publish");
 });
 
 test("keeps the conversation for the next Turn and resumes it there", async (t) => {
@@ -736,7 +716,7 @@ test.for([
   );
 });
 
-test("tells the Agent when the previous work is lost or moved after a merge", async (t) => {
+test("tells the Agent when the previous work is lost", async (t) => {
   const cwd = await workspace(t);
   const lost = runtime([[success({ reply: "Done" })]]);
   await lost
@@ -747,17 +727,6 @@ test("tells the Agent when the previous work is lost or moved after a merge", as
     });
   expect(lost.calls[0]!.prompt).toMatch(
     /^Note: the work tree and conversation from this Session's previous turn could not be restored\./,
-  );
-
-  const merged = runtime([[success({ reply: "Done" })]]);
-  await merged
-    .agent()
-    .run(job({ checkout }), new AbortController().signal, cwd, undefined, {
-      realigned: { publishedSha: "d".repeat(40) },
-      save: () => {},
-    });
-  expect(merged.calls[0]!.prompt).toMatch(
-    /^Note: this Session's pull request has been merged\./,
   );
 });
 

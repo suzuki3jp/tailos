@@ -17,7 +17,6 @@ import {
   AgentSandboxUnavailable,
   type AgentAdapter,
   type Conversation,
-  type Publish,
 } from "@/agent.ts";
 import { rolloutPath } from "@/continuity.ts";
 import { continuityNotice } from "@/continuity-notice.ts";
@@ -33,11 +32,7 @@ import {
   githubToolCallSchema,
 } from "@/github-tool.ts";
 import { prepareGitHubCli, trustEnvironment } from "@/egress.ts";
-import {
-  callPublicationTool,
-  publicationTool,
-  publicationToolCallSchema,
-} from "@/publication-tool.ts";
+import { retiredToolCallSchema, retiredToolResult } from "@/retired-tools.ts";
 
 const threadSchema = v.object({
   thread: v.object({
@@ -192,7 +187,7 @@ export function createCodexAgent(
   http = fetch,
 ): AgentAdapter {
   return {
-    async run(job, signal, cwd, diagnostics, conversation, publish) {
+    async run(job, signal, cwd, diagnostics, conversation, gitDir) {
       if (job.engine !== "codex") throw new Error("Invalid Codex job");
       const root = await mkdtemp(join(tmpdir(), "tailos-codex-"));
       // Outside the Agent's writable roots, and rebuilt every Turn: only the
@@ -237,7 +232,7 @@ export function createCodexAgent(
               thread = started;
             },
           },
-          publish,
+          gitDir,
         );
       } finally {
         // Codex may not report the path of a resumed thread: it is where
@@ -297,7 +292,7 @@ async function runTurn(
     /** The previous Turn ran on another Model Provider. */
     foreign?: boolean;
   },
-  publish?: Publish,
+  gitDir?: string,
 ) {
   // Commands may always reach the internet: GitHub credentials are added
   // outside the container, so none are here to send.
@@ -305,7 +300,8 @@ async function runTurn(
     environment && job.mode !== "plan"
       ? {
           type: "workspaceWrite" as const,
-          writableRoots: [cwd, environment],
+          // The Agent commits, so it writes the git directory too.
+          writableRoots: [cwd, environment, ...(gitDir ? [gitDir] : [])],
           networkAccess: true,
           excludeSlashTmp: true,
           excludeTmpdirEnvVar: true,
@@ -364,7 +360,7 @@ async function runTurn(
       ),
     }),
   });
-  const sensitive = new Set([access.accessToken, job.refresh.bearer]);
+  const sensitive = new Set([access.accessToken]);
   const loginParams = () => ({
     accessToken: access.accessToken,
     chatgptAccountId: access.accountId,
@@ -381,27 +377,9 @@ async function runTurn(
   };
   rpc.onFailure = fail;
   rpc.onRequest = async (method, params) => {
-    if (
-      method === "item/tool/call" &&
-      publish &&
-      threadId &&
-      v.is(publicationToolCallSchema, params)
-    ) {
-      if (params.threadId !== threadId)
-        throw new Error("Unexpected tool thread");
-      // The publication span records the outcome; the tool span only the call.
-      const span = diagnostics?.start(
-        "tool",
-        JSON.stringify({ name: publicationTool.name }),
-        agentSpan,
-      );
-      const result = await callPublicationTool(publish, params.arguments);
-      if (span)
-        diagnostics?.end(span, {
-          outcome: result.success ? "succeeded" : "failed",
-        });
-      return result;
-    }
+    // A conversation from before may still offer a tool that is gone.
+    if (method === "item/tool/call" && v.is(retiredToolCallSchema, params))
+      return retiredToolResult(params.tool);
     if (method === "item/tool/call" && githubReader && threadId) {
       const call = v.parse(githubToolCallSchema, params);
       if (call.threadId !== threadId) throw new Error("Unexpected tool thread");
@@ -629,7 +607,7 @@ async function runTurn(
         // A Session's conversation is kept for its next Turn.
         ephemeral: !conversation,
         ...(job.checkout && {
-          dynamicTools: [githubTool, ...(publish ? [publicationTool] : [])],
+          dynamicTools: [githubTool],
         }),
       }),
     );
@@ -651,12 +629,8 @@ async function runTurn(
       job,
       signal,
       prompt:
-        continuityNotice(lostWork, lostConversation, conversation?.realigned) +
-        agentPrompt(
-          job,
-          githubTool.name,
-          publish ? publicationTool.name : undefined,
-        ),
+        continuityNotice(lostWork, lostConversation) +
+        agentPrompt(job, githubTool.name),
       sensitive,
       failure: () => failure,
       async turn(prompt, revision, timeoutMs) {

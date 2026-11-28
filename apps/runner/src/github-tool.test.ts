@@ -5,7 +5,11 @@ import { githubIssueDigest } from "@tailos/core/runner";
 const checkout = {
   repository: "owner/repo",
   baseSha: "a".repeat(40),
-  branch: "tailos/issue-17/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+  defaultBranch: "main",
+  author: {
+    name: "tailos-app[bot]",
+    email: "1+tailos-app[bot]@users.noreply.github.com",
+  },
 };
 const item = {
   number: 17,

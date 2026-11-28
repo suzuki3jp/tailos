@@ -3,21 +3,15 @@ import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   maxContinuityBytes,
-  maxPublicationBytes,
   maxRunnerJobBytes,
-  PublicationRefusal,
-  PublishedWork,
   RunnerJob,
   RunnerStatus,
-  SessionPublication,
   type RunnerEvent,
 } from "@tailos/core/runner";
 import * as v from "valibot";
 import {
   AgentSandboxUnavailable,
   fakeAgent,
-  PublicationFailed,
-  PublicationRefused,
   type AgentAdapter,
 } from "@/agent.ts";
 import { claudeAgent } from "@/claude-agent.ts";
@@ -83,43 +77,8 @@ function json(response: ServerResponse, code: number, body: object) {
     .end(JSON.stringify(body));
 }
 
-/**
- * Asks the Run's controller to commit checked work and open or update the
- * Session's pull request. It waits for GitHub, so it may take a while.
- */
-export async function publishWork(
-  lease: { url: string; bearer: string },
-  work: SessionPublication,
-  signal: AbortSignal,
-): Promise<PublishedWork> {
-  const url = new URL("publish", lease.url);
-  if (url.protocol !== "https:" || url.username || url.password)
-    throw new Error("Invalid publication URL");
-  const body = JSON.stringify(v.parse(SessionPublication, work));
-  if (Buffer.byteLength(body) > maxPublicationBytes)
-    throw new PublicationFailed("unsupported_changes");
-  const response = await fetch(url, {
-    method: "POST",
-    redirect: "error",
-    headers: {
-      Authorization: `Bearer ${lease.bearer}`,
-      "Content-Type": "application/json",
-    },
-    body,
-    signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]),
-  });
-  const result: unknown = await response.json().catch(() => null);
-  if (response.ok) return v.parse(PublishedWork, result);
-  const refusal = v.safeParse(PublicationRefusal, result);
-  if (refusal.success) throw new PublicationRefused(refusal.output);
-  throw new Error("Publication unavailable");
-}
-
 function jobErrorCode(error: unknown) {
   if (error instanceof AgentSandboxUnavailable) return "sandbox_unavailable";
-  // A base the Agent chose is refused to it; the job does not fail on it.
-  if (error instanceof PublicationFailed && error.code !== "invalid_base")
-    return error.code;
   return "agent_failed";
 }
 
@@ -198,16 +157,8 @@ async function execute(
         ? await runInGitWorkspace(
             input.checkout,
             signal,
-            (cwd, conversation, publish) =>
-              agent.run(input, signal, cwd, diagnostics, conversation, publish),
-            input.mode !== "plan"
-              ? (work) =>
-                  publishWork(
-                    input.engine === "codex" ? input.refresh : input.lease,
-                    work,
-                    signal,
-                  )
-              : undefined,
+            ({ cwd, gitDir }, conversation) =>
+              agent.run(input, signal, cwd, diagnostics, conversation, gitDir),
             undefined,
             diagnostics,
             input.mode,

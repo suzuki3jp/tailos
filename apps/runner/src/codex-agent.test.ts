@@ -75,7 +75,7 @@ const script = `
             !input[0].text.includes("use the bundled executable directly") ||
             !input[0].text.includes("pnpm_config_pm_on_fail=ignore"))
           throw new Error("Expected instructions to use the bundled pnpm for verification");
-        if (!input[0].text.includes("cannot publish") || outputSchema.required.includes("headline") || !outputSchema.required.includes("reply"))
+        if (!input[0].text.includes("git and gh are signed in") || outputSchema.required.includes("headline") || !outputSchema.required.includes("reply"))
           throw new Error("Missing repository response schema");
       } else if (!input[0].text.startsWith("Answer the prompt") || !input[0].text.includes("concise progress messages") || outputSchema !== undefined) {
         throw new Error("Unexpected turn input");
@@ -142,7 +142,6 @@ function testJob(): Extract<RunnerJob, { engine: "codex" }> {
       connectionVersion: randomUUID(),
       accessVersion: randomUUID(),
     },
-    refresh: { url: "https://tailos.example/refresh", bearer: "a".repeat(64) },
   };
 }
 
@@ -174,33 +173,35 @@ test.for(["readOnly", "workspaceWrite"] as const)(
       job.checkout = {
         repository: "owner/repo",
         baseSha: "a".repeat(40),
-        branch: `tailos/issue-1/${job.runId}`,
+        defaultBranch: "main",
+        author: {
+          name: "tailos-app[bot]",
+          email: "1+tailos-app[bot]@users.noreply.github.com",
+        },
       };
     }
     const agent = createCodexAgent(launchStub(mode), async (url, init) => {
       const headers = new Headers(init?.headers);
-      if (String(url) !== job.refresh.url) {
-        expect(job.checkout).toBeDefined();
-        expect(init?.method).toBe("GET");
-        expect(init?.redirect).toBe("error");
-        // The Run's token is added outside the container.
-        expect(headers.get("Authorization")).toBeNull();
-        const issue =
-          String(url) === "https://api.github.com/repos/owner/repo/issues/17";
-        if (!issue)
-          expect(String(url)).toBe(
-            "https://api.github.com/repos/owner/repo/pulls/34",
-          );
-        return Response.json({
-          number: issue ? 17 : 34,
-          title: issue ? "issue" : "pull_request",
-          state: "open",
-          body: null,
-          html_url: "https://github.com/owner/repo",
-        });
-      }
-      // Tokens are refreshed outside the container, never through the Runner.
-      throw new Error("Codex token refresh reached the API");
+      // Tokens are refreshed outside the container: only GitHub reads come
+      // through the Runner.
+      expect(job.checkout).toBeDefined();
+      expect(init?.method).toBe("GET");
+      expect(init?.redirect).toBe("error");
+      // The Run's token is added outside the container.
+      expect(headers.get("Authorization")).toBeNull();
+      const issue =
+        String(url) === "https://api.github.com/repos/owner/repo/issues/17";
+      if (!issue)
+        expect(String(url)).toBe(
+          "https://api.github.com/repos/owner/repo/pulls/34",
+        );
+      return Response.json({
+        number: issue ? 17 : 34,
+        title: issue ? "issue" : "pull_request",
+        state: "open",
+        body: null,
+        html_url: "https://github.com/owner/repo",
+      });
     });
 
     expect(
@@ -247,7 +248,7 @@ test.for([0, 1])(
         result: {
           exitCode,
           stdout: `probe output ${job.access.accessToken}`,
-          stderr: `bwrap: execvp codex-linux-sandbox: No such file or directory ${job.refresh.bearer}`,
+          stderr: `bwrap: execvp codex-linux-sandbox: No such file or directory`,
         },
       }),
       async () => Response.json({ ...job.access, accessToken: "new-access" }),
@@ -265,7 +266,6 @@ test.for([0, 1])(
       await diagnostics.finish();
     }
     expect(sent.join("")).not.toContain(job.access.accessToken);
-    expect(sent.join("")).not.toContain(job.refresh.bearer);
     const records = sent.flatMap(
       (packet) => parseDiagnosticBatch(JSON.parse(packet)).records,
     );
@@ -280,8 +280,7 @@ test.for([0, 1])(
     );
     expect(JSON.parse(probe?.body ?? "null")).toEqual({
       stdout: "probe output [REDACTED]",
-      stderr:
-        "bwrap: execvp codex-linux-sandbox: No such file or directory [REDACTED]",
+      stderr: "bwrap: execvp codex-linux-sandbox: No such file or directory",
     });
     expect(
       records.some(
@@ -377,7 +376,11 @@ ${script}`,
   job.checkout = {
     repository: "owner/repo",
     baseSha: "a".repeat(40),
-    branch: `tailos/issue-1/${job.runId}`,
+    defaultBranch: "main",
+    author: {
+      name: "tailos-app[bot]",
+      email: "1+tailos-app[bot]@users.noreply.github.com",
+    },
   };
 
   await expect(
@@ -438,7 +441,11 @@ test.for([false, true])(
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
-      branch: "tailos/issue-1/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      defaultBranch: "main",
+      author: {
+        name: "tailos-app[bot]",
+        email: "1+tailos-app[bot]@users.noreply.github.com",
+      },
     };
     const agent = createCodexAgent((directory) =>
       spawn(
@@ -760,7 +767,11 @@ function replyJob(mode: "plain" | "implement" | "plan") {
     job.checkout = {
       repository: "owner/repo",
       baseSha: "a".repeat(40),
-      branch: `tailos/issue-1/${job.runId}`,
+      defaultBranch: "main",
+      author: {
+        name: "tailos-app[bot]",
+        email: "1+tailos-app[bot]@users.noreply.github.com",
+      },
     };
   }
   return job;
@@ -1240,9 +1251,9 @@ test.for([
   },
 );
 
-test("offers the publication tool to an implementation and answers its calls", async () => {
+test("lets an implementation write its git directory, and answers a retired tool", async () => {
   const job = replyJob("implement");
-  const published: unknown[] = [];
+  const gitDir = "/tmp/tailos-git-test";
   const agent = createCodexAgent((directory) =>
     spawn(
       process.execPath,
@@ -1251,29 +1262,27 @@ test("offers the publication tool to an implementation and answers its calls", a
         `
 const assert = require("node:assert/strict");
 const send = msg => process.stdout.write(JSON.stringify(msg) + "\\n");
-const results = [];
-const publish = (id, headline, base) => send({ id, method: "item/tool/call", params: {
-  threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline, ...(base && { base }) }
-} });
 require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
   const r = JSON.parse(line);
   const respond = result => send({ id: r.id, result });
   if (r.method === "initialize" || r.method === "account/login/start") respond({});
   if (r.method === "command/exec") respond({ exitCode: 0 });
   if (r.method === "thread/start") {
-    assert.deepEqual(r.params.dynamicTools.map(tool => tool.name), ["tailos_github_get", "tailos_publish"]);
+    assert.deepEqual(r.params.dynamicTools.map(tool => tool.name), ["tailos_github_get"]);
     respond({ thread: { id: "work" } });
   }
   if (r.method === "turn/start") {
-    assert.ok(r.params.input[0].text.includes("call tailos_publish"));
-    assert.ok(!r.params.outputSchema.required.includes("headline"));
+    assert.ok(r.params.input[0].text.includes("git and gh are signed in"));
+    assert.ok(!r.params.input[0].text.includes("tailos_publish"));
+    assert.ok(r.params.sandboxPolicy.writableRoots.includes(${JSON.stringify(gitDir)}));
     respond({});
-    publish("publish-1", "fix: handle an empty input");
+    // A conversation from before may still call the publication tool.
+    send({ id: "retired", method: "item/tool/call", params: {
+      threadId: "work", namespace: null, tool: "tailos_publish", arguments: { headline: "fix: x" }
+    } });
   }
-  if (String(r.id).startsWith("publish-")) {
-    results.push(r.result);
-    if (results.length === 1) return publish("publish-2", "not a headline", "feature");
-    send({ method: "item/completed", params: { threadId: "work", item: { type: "agentMessage", text: JSON.stringify({ reply: JSON.stringify(results), sessionTitle: null }) } } });
+  if (r.id === "retired") {
+    send({ method: "item/completed", params: { threadId: "work", item: { type: "agentMessage", text: JSON.stringify({ reply: JSON.stringify(r.result), sessionTitle: null }) } } });
     send({ method: "turn/completed", params: { threadId: "work", turn: { status: "completed" } } });
   }
 });`,
@@ -1287,69 +1296,9 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
     process.cwd(),
     undefined,
     undefined,
-    async (headline, base) => {
-      published.push(base ? [headline, base] : headline);
-      return headline === "fix: handle an empty input"
-        ? {
-            published: true,
-            sha: "b".repeat(40),
-            url: "https://github.com/owner/repo/pull/7",
-          }
-        : { published: false, reason: "invalid_change_headline" };
-    },
+    gitDir,
   );
-  expect(published).toEqual([
-    "fix: handle an empty input",
-    ["not a headline", "feature"],
-  ]);
-  const [first, second] = JSON.parse(result.reply);
-  expect(first).toMatchObject({ success: true });
-  expect(first.contentItems[0].text).toContain(
-    "https://github.com/owner/repo/pull/7",
-  );
-  expect(second).toMatchObject({ success: false });
-  expect(second.contentItems[0].text).toContain("Conventional Commits");
+  const retired = JSON.parse(result.reply);
+  expect(retired).toMatchObject({ success: false });
+  expect(retired.contentItems[0].text).toContain("git and gh");
 });
-
-test.for([
-  { kept: undefined, text: "was re-applied on top as uncommitted changes" },
-  {
-    kept: "refs/tailos/unpublished",
-    text: "git diff refs/tailos/unpublished^ refs/tailos/unpublished",
-  },
-  {
-    kept: "refs/tailos/unpublished",
-    keptEarlier: "refs/tailos/unpublished^2",
-    text: "git diff refs/tailos/unpublished^2^ refs/tailos/unpublished^2",
-  },
-])(
-  "tells the Agent that its work moved onto the default branch after a merge (kept: $kept, earlier: $keptEarlier)",
-  async ({ kept, keptEarlier, text }) => {
-    const save = vi.fn();
-    const agent = createCodexAgent(conversationStub([], true, true));
-    await agent.run(
-      testJob(),
-      AbortSignal.timeout(5000),
-      process.cwd(),
-      undefined,
-      {
-        resume: {
-          threadId: "saved-thread",
-          path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-saved-thread.jsonl",
-          content: Buffer.from("earlier turn\n"),
-        },
-        realigned: {
-          publishedSha: "e".repeat(40),
-          ...(kept && { kept }),
-          ...(keptEarlier && { keptEarlier }),
-        },
-        save,
-      },
-    );
-    const content = save.mock.calls[0]![0].content.toString();
-    expect(content).toContain(
-      "Note: this Session's pull request has been merged.",
-    );
-    expect(content).toContain(text);
-  },
-);

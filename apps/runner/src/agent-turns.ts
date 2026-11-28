@@ -20,14 +20,9 @@ const planReplySchema = v.object({
   ...PlanResult.entries,
 });
 
-// The first input of a Run. `githubTool` and `publishTool` are the names the
-// Agent calls the Tailos tools by, which differ between Agent runtimes. A
-// runtime without the publication tool cannot publish.
-export function agentPrompt(
-  job: RepositoryJob,
-  githubTool: string,
-  publishTool?: string,
-) {
+// The first input of a Run. `githubTool` is the name the Agent calls the
+// Tailos tool by, which differs between Agent runtimes.
+export function agentPrompt(job: RepositoryJob, githubTool: string) {
   const sourceContext = job.githubContext
     ? "\n\nJob context (JSON):\n" +
       JSON.stringify({ github: job.githubContext }) +
@@ -39,7 +34,7 @@ export function agentPrompt(
       : "";
   return (
     sourceContext +
-    workPrompt(job, githubTool, publishTool) +
+    workPrompt(job, githubTool) +
     sessionTitleInstruction +
     "\nDuring the work, provide concise progress messages at meaningful phase changes. Keep these separate from the final structured answer. Do not include credentials or private reasoning."
   );
@@ -54,11 +49,7 @@ function routineMessage(job: RepositoryJob) {
     : "";
 }
 
-function workPrompt(
-  job: RepositoryJob,
-  githubTool: string,
-  publishTool?: string,
-) {
+function workPrompt(job: RepositoryJob, githubTool: string) {
   if (job.mode === "plan") {
     return (
       job.prompt +
@@ -77,23 +68,15 @@ function workPrompt(
       "If dependency installation is blocked, still run the applicable checks that can use tools already on PATH. " +
       "Fix failures caused by your changes and rerun the affected checks on the final changes. " +
       "In reply, summarize your work, the commands you ran and their results, and explain any applicable checks you could not run." +
-      publishInstruction(job, publishTool)
+      gitInstruction
     );
   }
   return job.prompt + routineMessage(job);
 }
 
-function publishInstruction(job: RepositoryJob, publishTool?: string) {
-  if (!publishTool)
-    return " This runtime cannot publish changes: say so if the user asks for a pull request.";
-  return (
-    ` To deliver changes as a pull request, call ${publishTool} after the checks pass. It publishes the whole work tree; publishing again in this Session adds a commit to the same pull request. Publish only when the request asks for changes to the repository, not for answers or investigation. Include the pull request URL in reply, or say why nothing was published.` +
-    // A labeled issue asks for its implementation: deliver it.
-    (job.githubContext
-      ? ` This work implements the GitHub issue above: when you changed files for it, publish them with ${publishTool} before you finish.`
-      : "")
-  );
-}
+// The work tree is the Agent's: Tailos does not decide how work is delivered.
+const gitInstruction =
+  " The work tree is a git repository whose origin is the target repository, and git and gh are signed in to it. Whether and how to commit, push branches and open pull requests is up to the request and the repository's instructions. If you push or open a pull request, include its URL in reply.";
 
 // JSON Schema of the final answer, or undefined when the answer is plain text.
 export function replySchema(job: RepositoryJob) {

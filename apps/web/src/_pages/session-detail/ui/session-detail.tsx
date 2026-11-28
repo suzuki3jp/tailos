@@ -74,7 +74,7 @@ export function SessionDetail({ id }: { id: string }) {
           )}
           <ol className="divide-y divide-rule">
             {detail.runs.map((run) => {
-              const { url, plan } = runResult(run.result);
+              const { urls, plan } = runResult(run.result);
               return (
                 <li key={run.id} className="space-y-2 py-4">
                   <p
@@ -113,11 +113,13 @@ export function SessionDetail({ id }: { id: string }) {
                       {run.errorCode}
                     </p>
                   )}
-                  {url && (
-                    <a href={url} className="action">
-                      Pull Request を開く
+                  {urls?.map((url) => (
+                    <a key={url} href={url} className="action">
+                      {urls.length > 1
+                        ? `Pull Request #${url.split("/").pop()} を開く`
+                        : "Pull Request を開く"}
                     </a>
-                  )}
+                  ))}
                 </li>
               );
             })}

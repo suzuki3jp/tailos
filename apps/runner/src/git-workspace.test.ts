@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import {
-  chmod,
+  access,
   mkdir,
   mkdtemp,
   readFile,
-  rename,
+  readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,145 +16,27 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, test, vi, type TestContext } from "vitest";
 import {
+  bundlePrerequisites,
   runInGitWorkspace,
-  type Publisher,
+  type Workspace,
   type WorkspaceContinuity,
 } from "@/git-workspace.ts";
 import { decodeSavedWork } from "@/continuity.ts";
-import { PublicationRefused } from "@/agent.ts";
-import { access } from "node:fs/promises";
 import {
   parseDiagnosticBatch,
   type Diagnostics,
 } from "@tailos/core/diagnostics";
 import { RunnerDiagnostics } from "@/diagnostics.ts";
 
-async function repository(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), "tailos-git-test-"));
-  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
-  const seed = join(directory, "seed");
-  const git = (cwd: string, ...args: string[]) =>
-    gitIn(cwd, {}, undefined, ...args);
+// Each Turn runs real git commands, several Turns to a test: slower machines
+// such as CI need more than the default time.
+vi.setConfig({ testTimeout: 30_000 });
 
-  git(directory, "init", "--quiet", "-b", "main", seed);
-  await writeFile(join(seed, "README.md"), "base\n");
-  await writeFile(join(seed, "script.sh"), "#!/bin/sh\nprintf old\n", {
-    mode: 0o755,
-  });
-  git(seed, "add", ".");
-  git(
-    seed,
-    "-c",
-    "user.name=Seed",
-    "-c",
-    "user.email=seed@example.test",
-    "commit",
-    "--quiet",
-    "-m",
-    "Base",
-  );
-  const baseSha = git(seed, "rev-parse", "HEAD");
-  const branch = "tailos/session/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
-
-  /**
-   * Stands in for the controller and GitHub: signs the checked changes on
-   * top of their parent, as `createCommitOnBranch` would, and moves the
-   * Session's branch.
-   */
-  const publisher = vi.fn(async (work: SessionPublication) => {
-    const index = { GIT_INDEX_FILE: join(directory, "publish-index") };
-    gitIn(seed, index, undefined, "read-tree", work.parentSha);
-    for (const file of work.additions()) gitIn(seed, index, undefined, ...file);
-    for (const { path } of work.changes.deletions)
-      gitIn(seed, index, undefined, "update-index", "--force-remove", path);
-    const tree = gitIn(seed, index, undefined, "write-tree");
-    expect(tree).toBe(work.tree);
-    const sha = gitIn(
-      seed,
-      {
-        GIT_AUTHOR_NAME: "GitHub",
-        GIT_AUTHOR_EMAIL: "noreply@github.com",
-        GIT_COMMITTER_NAME: "GitHub",
-        GIT_COMMITTER_EMAIL: "noreply@github.com",
-      },
-      undefined,
-      "commit-tree",
-      tree,
-      "-p",
-      work.parentSha,
-      "-m",
-      work.headline,
-    );
-    git(seed, "update-ref", `refs/heads/${work.branch}`, sha);
-    return { sha, url: "https://github.com/owner/private/pull/1" };
-  });
-  /** What GitHub would store for each added file. */
-  const signed = (work: Omit<SessionPublication, "additions">) => ({
-    ...work,
-    additions: () =>
-      work.changes.additions.map(({ path, contents }) => {
-        const mode =
-          git(seed, "ls-tree", work.parentSha, "--", path).split(" ")[0] ||
-          "100644";
-        const blob = gitIn(
-          seed,
-          {},
-          Buffer.from(contents, "base64"),
-          "hash-object",
-          "-w",
-          "--stdin",
-        );
-        return [
-          "update-index",
-          "--add",
-          "--cacheinfo",
-          `${mode},${blob},${path}`,
-        ];
-      }),
-  });
-
-  return {
-    baseSha,
-    branch,
-    publisher,
-    run(
-      work: Parameters<typeof runInGitWorkspace>[2],
-      options: {
-        mode?: "plan";
-        diagnostics?: Diagnostics;
-        continuity?: WorkspaceContinuity;
-        publishedSha?: string;
-        publisher?: Publisher;
-        checkout?: Partial<Parameters<typeof runInGitWorkspace>[0]>;
-      } = {},
-    ) {
-      return runInGitWorkspace(
-        {
-          repository: "owner/private",
-          baseSha,
-          branch,
-          ...(options.publishedSha && { publishedSha: options.publishedSha }),
-          ...options.checkout,
-        },
-        AbortSignal.timeout(15_000),
-        work,
-        options.publisher ??
-          ((work) => publisher(signed(work) as unknown as SessionPublication)),
-        pathToFileURL(seed).href,
-        options.diagnostics,
-        options.mode,
-        options.continuity,
-      );
-    },
-    git: (...args: string[]) => git(seed, ...args),
-    publish: (work: Parameters<Publisher>[0]) =>
-      publisher(signed(work) as unknown as SessionPublication),
-  };
-}
-
-type SessionPublication = Parameters<Publisher>[0] & {
-  additions(): string[][];
+const author = {
+  name: "tailos-app[bot]",
+  email: "123+tailos-app[bot]@users.noreply.github.com",
 };
+const identity = ["-c", "user.name=Seed", "-c", "user.email=seed@example.test"];
 
 function gitIn(
   cwd: string,
@@ -172,22 +57,97 @@ function gitIn(
   }).trim();
 }
 
-/** HEAD of a workspace whose `.git` points at metadata kept elsewhere. */
-async function head(cwd: string) {
-  const pointer = await readFile(join(cwd, ".git"), "utf8");
-  return gitIn(
-    cwd,
-    {},
-    undefined,
-    `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
-    "rev-parse",
-    "HEAD",
-  );
+/** Runs git in the Agent's work tree, as the Agent's commands do. */
+const agentGit = (cwd: string, ...args: string[]) =>
+  gitIn(cwd, {}, undefined, ...args);
+
+async function repository(t: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), "tailos-git-test-"));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const seed = join(directory, "seed");
+  const git = (...args: string[]) => gitIn(seed, {}, undefined, ...args);
+
+  gitIn(directory, {}, undefined, "init", "--quiet", "-b", "main", seed);
+  await writeFile(join(seed, "README.md"), "base\n");
+  await writeFile(join(seed, "script.sh"), "#!/bin/sh\nprintf old\n", {
+    mode: 0o755,
+  });
+  git("add", ".");
+  git(...identity, "commit", "--quiet", "-m", "Base");
+  const baseSha = git("rev-parse", "HEAD");
+  const remote = pathToFileURL(seed).href;
+
+  return {
+    baseSha,
+    remote,
+    seed,
+    run(
+      work: Parameters<typeof runInGitWorkspace>[2],
+      options: {
+        mode?: "plan";
+        diagnostics?: Diagnostics;
+        continuity?: WorkspaceContinuity;
+      } = {},
+    ) {
+      return runInGitWorkspace(
+        {
+          repository: "owner/private",
+          baseSha,
+          defaultBranch: "main",
+          author,
+        },
+        AbortSignal.timeout(15_000),
+        work,
+        remote,
+        options.diagnostics,
+        options.mode,
+        options.continuity,
+      );
+    },
+    git,
+  };
 }
 
-const result = { reply: "Renamed README" };
+type Repository = Awaited<ReturnType<typeof repository>>;
 
-test("records a failed publication and completes workspace cleanup", async (t) => {
+/** Runs a Turn that carries work over, and returns what it saved. */
+async function turn(
+  repo: Repository,
+  restore: WorkspaceContinuity["restore"],
+  work: Parameters<typeof runInGitWorkspace>[2],
+  workDir?: string,
+) {
+  let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
+  const result = await repo
+    .run(work, {
+      continuity: {
+        ...(restore && { restore }),
+        ...(workDir && { workDir }),
+        saved: (result) => {
+          saved = result;
+        },
+      },
+    })
+    .catch((error: unknown) => error);
+  return { result, saved };
+}
+
+function archiveOf(
+  saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined,
+) {
+  if (!saved || !("archive" in saved)) throw new Error("not saved");
+  return saved.archive;
+}
+
+const exists = (path: string) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+const result = { reply: "Done" };
+
+test("records checkout and cleanup in diagnostics", async (t) => {
   const repo = await repository(t);
   const packets: string[] = [];
   const diagnostics = new RunnerDiagnostics(
@@ -211,28 +171,12 @@ test("records a failed publication and completes workspace cleanup", async (t) =
       return new Response(null, { status: 204 });
     },
   );
-  const failure = new Error("Publication unavailable");
-  await expect(
-    repo.run(
-      async (cwd, _conversation, publish) => {
-        await writeFile(join(cwd, "README.md"), "updated\n");
-        // The Agent is told; its Turn goes on.
-        await expect(publish!("docs: update the readme")).rejects.toBe(failure);
-        return result;
-      },
-      {
-        diagnostics,
-        publisher: async () => {
-          throw failure;
-        },
-      },
-    ),
-  ).resolves.toEqual(result);
-  await diagnostics.finish();
-  const batches = packets.map((packet) =>
-    parseDiagnosticBatch(JSON.parse(packet)),
+  await expect(repo.run(async () => result, { diagnostics })).resolves.toEqual(
+    result,
   );
-  const finishes = batches
+  await diagnostics.finish();
+  const finishes = packets
+    .map((packet) => parseDiagnosticBatch(JSON.parse(packet)))
     .flatMap((batch) => batch.records)
     .filter((record) => record.name === "span.finished");
   expect(
@@ -242,328 +186,210 @@ test("records a failed publication and completes workspace cleanup", async (t) =
     ]),
   ).toEqual([
     ["checkout", "succeeded"],
-    ["publication", "failed"],
     ["cleanup", "succeeded"],
     ["cleanup", "succeeded"],
   ]);
-  expect(JSON.parse(finishes[1]!.body!).errors[0].message).toBe(
-    failure.message,
-  );
-  expect(batches.at(-1)?.completed?.dropped).toBe(0);
 });
 
-test("publishes the whole work tree without pushing or storing credentials", async (t) => {
+test("starts like a shallow clone that the Agent commits and pushes in as the App's bot", async (t) => {
   const repo = await repository(t);
-  let published: unknown;
-  let after = "";
+  let workspace: Workspace | undefined;
   await expect(
-    repo.run(async (cwd, _conversation, publish) => {
-      const pointer = await readFile(join(cwd, ".git"), "utf8");
-      const metadata = pointer.slice("gitdir: ".length).trim();
-      expect(await readFile(join(metadata, "config"), "utf8")).not.toMatch(
-        /extraheader|Authorization/i,
+    repo.run(async (current) => {
+      workspace = current;
+      const { cwd, gitDir } = current;
+      expect(await readFile(join(cwd, ".git"), "utf8")).toBe(
+        `gitdir: ${gitDir}\n`,
       );
-      await rename(join(cwd, "README.md"), join(cwd, "Guide.md"));
-      published = await publish!("docs: rename readme");
-      after = await head(cwd);
-      return { ...result, sessionTitle: "Documentation update" };
-    }),
-  ).resolves.toEqual({
-    reply: result.reply,
-    sessionTitle: "Documentation update",
-  });
-  expect(repo.publisher).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({
-      branch: repo.branch,
-      parentSha: repo.baseSha,
-      headline: "docs: rename readme",
-      tree: expect.stringMatching(/^[a-f0-9]{40}$/),
-      changes: {
-        additions: [
-          {
-            path: "Guide.md",
-            contents: Buffer.from("base\n").toString("base64"),
-          },
-        ],
-        deletions: [{ path: "README.md" }],
-      },
-    }),
-  );
-  const sha = repo.git("rev-parse", `refs/heads/${repo.branch}`);
-  expect(published).toEqual({
-    published: true,
-    sha,
-    url: "https://github.com/owner/private/pull/1",
-  });
-  // The work tree now sits on the published commit.
-  expect(after).toBe(sha);
-  // Only the controller moved a branch: the Runner pushed nothing.
-  expect(repo.git("for-each-ref", "--format=%(refname)")).toBe(
-    `refs/heads/main\nrefs/heads/${repo.branch}`,
-  );
-});
-
-test("publishes again on top of the last publication, in this Turn and the next", async (t) => {
-  const repo = await repository(t);
-  let first = "";
-  await repo.run(async (cwd, _conversation, publish) => {
-    await writeFile(join(cwd, "README.md"), "one\n");
-    await publish!("docs: first change");
-    first = await head(cwd);
-    await writeFile(join(cwd, "notes.txt"), "two\n");
-    expect(await publish!("docs: second change")).toMatchObject({
-      published: true,
-    });
-    // Nothing changed since the last publication.
-    expect(await publish!("docs: nothing")).toEqual({
-      published: false,
-      reason: "no_changes",
-    });
-    return result;
-  });
-  const second = repo.publisher.mock.calls[1]![0];
-  expect(second.parentSha).toBe(first);
-  expect(second.changes).toEqual({
-    additions: [
-      { path: "notes.txt", contents: Buffer.from("two\n").toString("base64") },
-    ],
-    deletions: [],
-  });
-
-  // A later Turn without the saved work starts from what was published.
-  const published = repo.git("rev-parse", `refs/heads/${repo.branch}`);
-  await repo.run(
-    async (cwd, _conversation, publish) => {
-      expect(await head(cwd)).toBe(published);
-      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe("two\n");
-      await writeFile(join(cwd, "notes.txt"), "three\n");
-      await publish!("docs: third change");
+      const config = await readFile(join(gitDir, "config"), "utf8");
+      // No credentials: GitHub requests get the token outside the container.
+      expect(config).not.toMatch(/extraheader|Authorization|token/i);
+      expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+      expect(agentGit(cwd, "rev-parse", "HEAD", "origin/main")).toBe(
+        `${repo.baseSha}\n${repo.baseSha}`,
+      );
+      expect(agentGit(cwd, "remote", "get-url", "origin")).toBe(repo.remote);
+      expect(
+        agentGit(cwd, "rev-parse", "--abbrev-ref", "main@{upstream}"),
+      ).toBe("origin/main");
+      // The Agent owns the repository: branches, commits and pushes.
+      agentGit(cwd, "switch", "--quiet", "-c", "feature");
+      await writeFile(join(cwd, "README.md"), "feature\n");
+      agentGit(cwd, "commit", "--quiet", "-am", "docs: change the readme");
+      agentGit(cwd, "push", "--quiet", "-u", "origin", "feature");
       return result;
-    },
-    { publishedSha: published },
-  );
-  expect(repo.publisher.mock.calls[2]![0].parentSha).toBe(published);
-});
-
-test("builds on a publication whose answer was lost when it publishes newer work", async (t) => {
-  const repo = await repository(t);
-  let lost = "";
-  const sent: Parameters<Publisher>[0][] = [];
-  // Stands in for the controller, which remembers the lost publication.
-  const publisher: Publisher = async (work) => {
-    sent.push(work);
-    if (!lost) {
-      // GitHub has the commit, but its answer never reaches the Runner.
-      lost = (await repo.publish(work)).sha;
-      throw new Error("Publication unavailable");
-    }
-    if (work.parentSha !== lost)
-      throw new PublicationRefused({ error: "parent_moved", sha: lost });
-    return repo.publish(work);
-  };
-  await repo.run(
-    async (cwd, _conversation, publish) => {
-      await writeFile(join(cwd, "README.md"), "one\n");
-      await expect(publish!("docs: change the readme")).rejects.toThrow();
-      // The Agent fixes something, then publishes again.
-      await writeFile(join(cwd, "notes.txt"), "two\n");
-      expect(await publish!("docs: add notes")).toMatchObject({
-        published: true,
-      });
-      return result;
-    },
-    { publisher },
-  );
-  expect(sent.map((work) => work.parentSha)).toEqual([
-    repo.baseSha,
-    repo.baseSha,
-    lost,
-  ]);
-  // Only what changed since the lost publication is sent on top of it.
-  expect(sent[2]!.changes).toEqual({
-    additions: [
-      { path: "notes.txt", contents: Buffer.from("two\n").toString("base64") },
-    ],
-    deletions: [],
-  });
-});
-
-test("publishes an existing executable with a content-only edit", async (t) => {
-  const repo = await repository(t);
-  const contents = "#!/bin/sh\nprintf new\n";
-  await repo.run(async (cwd, _conversation, publish) => {
-    await writeFile(join(cwd, "script.sh"), contents);
-    expect(await publish!("fix: update script output")).toMatchObject({
-      published: true,
-    });
-    return result;
-  });
-  expect(repo.publisher).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({
-      changes: {
-        additions: [
-          {
-            path: "script.sh",
-            contents: Buffer.from(contents).toString("base64"),
-          },
-        ],
-        deletions: [],
-      },
     }),
+  ).resolves.toEqual(result);
+  const pushed = repo.git("rev-parse", "refs/heads/feature");
+  expect(repo.git("log", "-1", "--format=%an <%ae>|%cn <%ce>", pushed)).toBe(
+    `${author.name} <${author.email}>|${author.name} <${author.email}>`,
   );
+  expect(repo.git("rev-parse", `${pushed}^`)).toBe(repo.baseSha);
+  // The work tree and its git directory are gone without continuity.
+  expect(await exists(workspace!.cwd)).toBe(false);
+  expect(await exists(workspace!.gitDir)).toBe(false);
 });
 
-test("refuses changes to executable mode, new executable files, and invalid headlines", async (t) => {
-  const repo = await repository(t);
-  await repo.run(async (cwd, _conversation, publish) => {
-    await chmod(join(cwd, "README.md"), 0o755);
-    expect(await publish!("fix: change a mode")).toEqual({
-      published: false,
-      reason: "unsupported_changes",
-    });
-    await chmod(join(cwd, "README.md"), 0o644);
-    await writeFile(join(cwd, "new-script.sh"), "#!/bin/sh\n", {
-      mode: 0o755,
-    });
-    expect(await publish!("feat: add a script")).toEqual({
-      published: false,
-      reason: "unsupported_changes",
-    });
-    expect(await publish!("Implement GitHub issue\nextra line")).toEqual({
-      published: false,
-      reason: "invalid_change_headline",
-    });
-    return result;
-  });
-  expect(repo.publisher).not.toHaveBeenCalled();
-});
-
-test("refuses to publish once the trusted Git config changed", async (t) => {
-  const repo = await repository(t);
-  await repo.run(async (cwd, _conversation, publish) => {
-    await writeFile(join(cwd, "README.md"), "changed\n");
-    const pointer = await readFile(join(cwd, ".git"), "utf8");
-    await writeFile(
-      join(pointer.slice("gitdir: ".length).trim(), "config"),
-      "[core]\nfsmonitor = /bin/false\n",
-    );
-    await expect(publish!("docs: change")).rejects.toThrow(
-      "Git metadata configuration changed",
-    );
-    return result;
-  });
-  expect(repo.publisher).not.toHaveBeenCalled();
-});
-
-test("planning reads the base and cannot publish, even if an adapter changes files", async (t) => {
+test("planning reads the base", async (t) => {
   const repo = await repository(t);
   const plan = { planPresented: false, needsAnswer: true };
-  let workspace = "";
   await expect(
     repo.run(
-      async (cwd, _conversation, publish) => {
-        workspace = cwd;
-        expect(publish).toBeUndefined();
+      async ({ cwd }) => {
         expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
-        await writeFile(join(cwd, "README.md"), "untrusted adapter");
         return { reply: "Which behavior is desired?", plan };
       },
       { mode: "plan" },
     ),
   ).resolves.toEqual({ reply: "Which behavior is desired?", plan });
-  expect(repo.publisher).not.toHaveBeenCalled();
-  await expect(readFile(join(workspace, "README.md"))).rejects.toThrow();
 });
 
-/** Runs a Turn that carries work over, and returns what it saved. */
-async function turn(
-  repo: Awaited<ReturnType<typeof repository>>,
-  restore: WorkspaceContinuity["restore"],
-  work: Parameters<typeof runInGitWorkspace>[2],
-  workDir?: string,
-) {
-  let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
-  const result = await repo
-    .run(work, {
-      continuity: {
-        ...(restore && { restore }),
-        ...(workDir && { workDir }),
-        saved: (result) => {
-          saved = result;
-        },
-      },
-    })
-    .catch((error: unknown) => error);
-  return { result, saved };
-}
-
-const exists = (path: string) =>
-  access(path).then(
-    () => true,
-    () => false,
-  );
-
-test("carries the work tree and conversation over to the next Turn", async (t) => {
+test("carries branches, HEAD, the work tree, the git settings and the conversation over to the next Turn", async (t) => {
   const repo = await repository(t);
   const rollout = {
     threadId: "thread-1",
     path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread-1.jsonl",
     content: Buffer.from('{"type":"session_meta"}\n'),
   };
-  const first = await turn(repo, undefined, async (cwd, conversation) => {
+  let feature = "";
+  let other = "";
+  const first = await turn(repo, undefined, async ({ cwd }, conversation) => {
     expect(conversation?.resume).toBeUndefined();
     expect(conversation?.lost).toBeUndefined();
-    await writeFile(join(cwd, "README.md"), "changed\n");
+    agentGit(cwd, "switch", "--quiet", "-c", "other");
+    await writeFile(join(cwd, "other.txt"), "other\n");
+    agentGit(cwd, "add", "other.txt");
+    agentGit(cwd, "commit", "--quiet", "-m", "feat: other");
+    other = agentGit(cwd, "rev-parse", "HEAD");
+    agentGit(cwd, "switch", "--quiet", "-c", "feature", "main");
+    await writeFile(join(cwd, "README.md"), "committed\n");
+    agentGit(cwd, "commit", "--quiet", "-am", "docs: commit");
+    feature = agentGit(cwd, "rev-parse", "HEAD");
+    agentGit(cwd, "push", "--quiet", "-u", "origin", "feature");
+    agentGit(cwd, "config", "user.name", "Someone");
+    // Uncommitted, deleted and untracked files go along too.
+    await writeFile(join(cwd, "README.md"), "uncommitted\n");
     await rm(join(cwd, "script.sh"));
     await writeFile(join(cwd, "notes.txt"), "untracked\n");
     conversation?.save(rollout);
     return { reply: "first" };
   });
   expect(first.result).toMatchObject({ reply: "first" });
-  if (!first.saved || !("archive" in first.saved)) throw new Error("not saved");
-  const saved = await decodeSavedWork(first.saved.archive);
-  expect(saved.baseSha).toBe(repo.baseSha);
-  expect(saved.head).toBe(repo.baseSha);
-  expect(saved.conversation).toStrictEqual(rollout);
+  const saved = await decodeSavedWork(archiveOf(first.saved));
+  expect(saved).toMatchObject({
+    baseSha: repo.baseSha,
+    head: feature,
+    branch: "refs/heads/feature",
+    refs: [
+      { name: "refs/heads/feature", sha: feature },
+      { name: "refs/heads/main", sha: repo.baseSha },
+      { name: "refs/heads/other", sha: other },
+      // The remote's branches as last seen, without their history.
+      { name: "refs/remotes/origin/feature", sha: feature },
+      { name: "refs/remotes/origin/main", sha: repo.baseSha },
+    ],
+    conversation: rollout,
+  });
+  expect(saved.gitConfig?.toString()).toContain("name = Someone");
+
+  const check = async (cwd: string) => {
+    expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/feature");
+    expect(agentGit(cwd, "rev-parse", "feature", "other", "main")).toBe(
+      `${feature}\n${other}\n${repo.baseSha}`,
+    );
+    expect(agentGit(cwd, "config", "user.name")).toBe("Someone");
+    expect(
+      agentGit(cwd, "rev-parse", "--abbrev-ref", "feature@{upstream}"),
+    ).toBe("origin/feature");
+    expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
+      "uncommitted\n",
+    );
+    expect(await exists(join(cwd, "script.sh"))).toBe(false);
+    expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe("untracked\n");
+    // Changes stay unstaged, as the Agent left them.
+    expect(agentGit(cwd, "diff", "--cached", "--name-only")).toBe("");
+  };
 
   // A failed Turn still keeps its work for the next one.
   const second = await turn(
     repo,
-    first.saved.archive,
-    async (cwd, conversation) => {
+    archiveOf(first.saved),
+    async ({ cwd }, conversation) => {
       expect(conversation?.resume).toStrictEqual(rollout);
       expect(conversation?.lost).toBeUndefined();
-      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("changed\n");
-      expect(await exists(join(cwd, "script.sh"))).toBe(false);
-      expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe(
-        "untracked\n",
-      );
-      await writeFile(join(cwd, "more.txt"), "more\n");
+      await check(cwd);
       throw new Error("Agent failed");
     },
   );
   expect(second.result).toBeInstanceOf(Error);
-  if (!second.saved || !("archive" in second.saved))
-    throw new Error("not saved");
 
   const third = await turn(
     repo,
-    second.saved.archive,
-    async (cwd, conversation, publish) => {
+    archiveOf(second.saved),
+    async ({ cwd }, conversation) => {
       // Without a newer conversation, the earlier one still continues.
       expect(conversation?.resume).toStrictEqual(rollout);
-      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("changed\n");
-      expect(await readFile(join(cwd, "more.txt"), "utf8")).toBe("more\n");
-      // The publication covers everything since the base, including
-      // earlier Turns.
-      expect(await publish!("docs: add more")).toMatchObject({
-        published: true,
-      });
+      await check(cwd);
       return { reply: "third" };
     },
   );
   expect(third.result).toMatchObject({ reply: "third" });
-  expect(repo.publisher.mock.calls[0]![0].changes.additions).toHaveLength(3);
+});
+
+test("carries a detached HEAD and branches from a shallow fetch over", async (t) => {
+  const repo = await repository(t);
+  // A branch whose history does not include the base.
+  repo.git("switch", "--quiet", "--orphan", "unrelated");
+  await writeFile(join(repo.seed, "unrelated.txt"), "one\n");
+  repo.git("add", "unrelated.txt");
+  repo.git(...identity, "commit", "--quiet", "-m", "One");
+  await writeFile(join(repo.seed, "unrelated.txt"), "two\n");
+  repo.git(...identity, "commit", "--quiet", "-am", "Two");
+  repo.git("switch", "--quiet", "main");
+
+  let mine = "";
+  const first = await turn(repo, undefined, async ({ cwd }) => {
+    agentGit(cwd, "fetch", "--quiet", "--depth", "1", "origin", "unrelated");
+    agentGit(cwd, "switch", "--quiet", "-c", "mine", "FETCH_HEAD");
+    await writeFile(join(cwd, "unrelated.txt"), "three\n");
+    agentGit(cwd, "commit", "--quiet", "-am", "feat: three");
+    mine = agentGit(cwd, "rev-parse", "HEAD");
+    agentGit(cwd, "switch", "--quiet", "--detach", "main");
+    return result;
+  });
+  const saved = await decodeSavedWork(archiveOf(first.saved));
+  expect(saved.branch).toBeUndefined();
+  // The shallow boundary comes from the repository again.
+  expect(bundlePrerequisites(saved.bundle).sort()).toEqual(
+    [repo.baseSha, repo.git("rev-parse", "unrelated")].sort(),
+  );
+
+  const second = await turn(repo, archiveOf(first.saved), async ({ cwd }) => {
+    expect(() => agentGit(cwd, "symbolic-ref", "--quiet", "HEAD")).toThrow();
+    expect(agentGit(cwd, "rev-parse", "HEAD", "mine")).toBe(
+      `${repo.baseSha}\n${mine}`,
+    );
+    expect(agentGit(cwd, "show", "mine:unrelated.txt")).toBe("three");
+    return result;
+  });
+  expect(second.result).toEqual(result);
+});
+
+test("keeps the files of a branch without commits yet", async (t) => {
+  const repo = await repository(t);
+  const first = await turn(repo, undefined, async ({ cwd }) => {
+    agentGit(cwd, "switch", "--quiet", "--orphan", "docs");
+    await writeFile(join(cwd, "guide.md"), "guide\n");
+    return result;
+  });
+  const saved = await decodeSavedWork(archiveOf(first.saved));
+  expect(saved).toMatchObject({ head: repo.baseSha });
+  expect(saved.branch).toBeUndefined();
+  const second = await turn(repo, archiveOf(first.saved), async ({ cwd }) => {
+    expect(await readFile(join(cwd, "guide.md"), "utf8")).toBe("guide\n");
+    return result;
+  });
+  expect(second.result).toEqual(result);
 });
 
 test.for([
@@ -576,10 +402,11 @@ test.for([
     const { result, saved } = await turn(
       repo,
       restore,
-      async (cwd, conversation) => {
+      async ({ cwd }, conversation) => {
         expect(conversation?.lost).toBe(true);
         expect(conversation?.resume).toBeUndefined();
         expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("base\n");
+        expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
         return { reply: "fresh" };
       },
     );
@@ -595,17 +422,18 @@ test("keeps the previous work when the Turn never reached it", async (t) => {
     {
       repository: "owner/private",
       baseSha: "f".repeat(40),
-      branch: repo.branch,
+      defaultBranch: "main",
+      author,
     },
     AbortSignal.timeout(15_000),
     async () => ({ reply: "never" }),
-    undefined,
     "file:///nonexistent",
     undefined,
     undefined,
     { restore: "lost", saved: (result) => (saved = result) },
   ).catch(() => {});
   expect(saved).toStrictEqual({ skipped: true });
+  expect(repo.baseSha).toMatch(/^[a-f0-9]{40}$/);
 });
 
 test("uses the work left in place when it is exactly the saved work", async (t) => {
@@ -615,25 +443,30 @@ test("uses the work left in place when it is exactly the saved work", async (t) 
   const first = await turn(
     repo,
     undefined,
-    async (cwd) => {
+    async ({ cwd }) => {
       await writeFile(join(cwd, ".gitignore"), "deps/\n");
       await mkdir(join(cwd, "deps"));
       // Ignored files are not saved, but survive in a kept container.
       await writeFile(join(cwd, "deps", "installed"), "yes\n");
+      agentGit(cwd, "switch", "--quiet", "-c", "feature");
+      agentGit(cwd, "config", "user.name", "Someone");
       return { reply: "first" };
     },
     kept,
   );
-  if (!first.saved || !("archive" in first.saved)) throw new Error("not saved");
-  const archive = first.saved.archive;
+  const archive = archiveOf(first.saved);
 
   const seen = async (workDir: string) => {
     let installed = false;
     await turn(
       repo,
       archive,
-      async (cwd) => {
+      async ({ cwd }) => {
         expect(await readFile(join(cwd, ".gitignore"), "utf8")).toBe("deps/\n");
+        expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe(
+          "refs/heads/feature",
+        );
+        expect(agentGit(cwd, "config", "user.name")).toBe("Someone");
         installed = await exists(join(cwd, "deps", "installed"));
         return { reply: "next" };
       },
@@ -648,338 +481,198 @@ test("uses the work left in place when it is exactly the saved work", async (t) 
   t.onTestFinished(() => rm(fresh, { recursive: true, force: true }));
   expect(await seen(fresh)).toBe(false);
 
-  // Work in place is not trusted once its git configuration changed.
-  await writeFile(
-    join(kept, "git", "config"),
-    (await readFile(join(kept, "git", "config"), "utf8")) +
-      "[core]\n\tpager = sh\n",
-  );
+  // Work in place is not used once it differs from the saved work.
+  agentGit(join(kept, "repo"), "branch", "extra");
   expect(await seen(kept)).toBe(false);
 });
 
-/**
- * Merges the Session's pull request the way GitHub squashes it: one commit on
- * `main` with the published tree, followed by `then` on the default branch.
- */
-async function squashMerge(
-  repo: Awaited<ReturnType<typeof repository>>,
-  published: string,
-  then: Record<string, string>,
-) {
-  const tree = repo.git("rev-parse", `${published}^{tree}`);
-  const identity = [
-    "-c",
-    "user.name=Seed",
-    "-c",
-    "user.email=seed@example.test",
-  ];
-  const squash = repo.git(
-    ...identity,
-    "commit-tree",
-    tree,
-    "-p",
-    repo.baseSha,
-    "-m",
-    "Squashed",
-  );
-  repo.git("update-ref", "refs/heads/main", squash);
-  repo.git("checkout", "--quiet", "--force", "main");
-  for (const [path, contents] of Object.entries(then))
-    await writeFile(
-      join(repo.git("rev-parse", "--show-toplevel"), path),
-      contents,
-    );
-  repo.git("add", ".");
-  repo.git(...identity, "commit", "--quiet", "-m", "Later work");
-  return repo.git("rev-parse", "main");
-}
+test("the Runner's own git commands never read the Agent's git settings", async (t) => {
+  const repo = await repository(t);
+  const marker = join(await mkdtemp(join(tmpdir(), "tailos-marker-")), "ran");
+  t.onTestFinished(() => rm(marker, { recursive: true, force: true }));
+  const { result, saved } = await turn(repo, undefined, async ({ cwd }) => {
+    // Saving runs `git add`: a clean filter would run here if it were read.
+    await writeFile(join(cwd, ".gitattributes"), "* filter=evil\n");
+    agentGit(cwd, "config", "filter.evil.clean", `touch ${marker}; cat`);
+    agentGit(cwd, "config", "core.pager", `touch ${marker}`);
+    return { reply: "first" };
+  });
+  expect(result).toMatchObject({ reply: "first" });
+  expect(await exists(marker)).toBe(false);
+  const work = await decodeSavedWork(archiveOf(saved));
+  // The Agent's settings are kept as data for the next Turn.
+  expect(work.gitConfig?.toString()).toContain('[filter "evil"]');
 
-/** A Turn that publishes, then leaves unpublished work for the next one. */
-async function publishedTurn(
-  repo: Awaited<ReturnType<typeof repository>>,
-  unpublished: (cwd: string) => Promise<void>,
-) {
-  let saved: Parameters<WorkspaceContinuity["saved"]>[0] | undefined;
-  let published = "";
-  await repo.run(
-    async (cwd, conversation, publish) => {
-      await writeFile(join(cwd, "README.md"), "published\n");
-      published = ((await publish!("docs: publish")) as { sha: string }).sha;
-      await unpublished(cwd);
-      conversation?.save({
-        threadId: "thread-1",
-        path: "sessions/2026/11/24/rollout-2026-11-24T00-00-00-thread-1.jsonl",
-        content: Buffer.from("{}\n"),
-      });
+  await turn(repo, archiveOf(saved), async ({ cwd }) => {
+    expect(agentGit(cwd, "config", "filter.evil.clean")).toContain("touch");
+    return { reply: "second" };
+  });
+  expect(await exists(marker)).toBe(false);
+});
+
+test("never writes the git settings through a link the Agent left", async (t) => {
+  const repo = await repository(t);
+  const outside = await mkdtemp(join(tmpdir(), "tailos-outside-"));
+  t.onTestFinished(() => rm(outside, { recursive: true, force: true }));
+  const target = join(outside, "runner.cjs");
+  await writeFile(target, "the Runner's own file\n");
+  const { result, saved } = await turn(repo, undefined, async ({ gitDir }) => {
+    await rm(join(gitDir, "config"));
+    await symlink(target, join(gitDir, "config"));
+    return { reply: "linked" };
+  });
+  expect(result).toMatchObject({ reply: "linked" });
+  expect(await readFile(target, "utf8")).toBe("the Runner's own file\n");
+  // A link is not the Agent's settings: the next Turn gets the Runner's.
+  expect((await decodeSavedWork(archiveOf(saved))).gitConfig).toBeUndefined();
+});
+
+test("writes nothing through links the Agent left in the git directory", async (t) => {
+  const repo = await repository(t);
+  const kept = await mkdtemp(join(tmpdir(), "tailos-work-"));
+  t.onTestFinished(() => rm(kept, { recursive: true, force: true }));
+  const outside = await mkdtemp(join(tmpdir(), "tailos-outside-"));
+  t.onTestFinished(() => rm(outside, { recursive: true, force: true }));
+  const plant = async (gitDir: string) => {
+    // Where the Runner would write a reference or a loose object.
+    await rm(join(gitDir, "refs", "tailos"), { recursive: true, force: true });
+    await symlink(outside, join(gitDir, "refs", "tailos"));
+    for (let i = 0; i < 256; i++) {
+      const fanout = join(gitDir, "objects", i.toString(16).padStart(2, "0"));
+      if (!(await exists(fanout))) await symlink(outside, fanout);
+    }
+  };
+  const first = await turn(
+    repo,
+    undefined,
+    async ({ cwd, gitDir }) => {
+      await writeFile(join(cwd, "notes.txt"), "untracked\n");
+      await plant(gitDir);
       return result;
     },
-    { continuity: { saved: (result) => (saved = result) } },
+    kept,
   );
-  if (!saved || !("archive" in saved)) throw new Error("not saved");
-  return { archive: saved.archive, published };
-}
-
-test("moves unpublished work onto the latest default branch after the merge", async (t) => {
-  const repo = await repository(t);
-  const { archive, published } = await publishedTurn(repo, async (cwd) => {
-    await writeFile(join(cwd, "notes.txt"), "unpublished\n");
-    await writeFile(join(cwd, "script.sh"), "#!/bin/sh\nprintf unpublished\n");
-  });
-  const latest = await squashMerge(repo, published, { "other.txt": "main\n" });
-
-  let realigned: unknown;
-  let sent: Parameters<Publisher>[0] | undefined;
-  await repo.run(
-    async (cwd, conversation, publish) => {
-      realigned = conversation?.realigned;
-      expect(conversation?.resume?.threadId).toBe("thread-1");
-      expect(await head(cwd)).toBe(latest);
-      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
-        "published\n",
-      );
-      expect(await readFile(join(cwd, "other.txt"), "utf8")).toBe("main\n");
+  const archive = archiveOf(first.saved);
+  // Looking at the work left in place writes nothing through them either.
+  const second = await turn(
+    repo,
+    archive,
+    async ({ cwd }) => {
       expect(await readFile(join(cwd, "notes.txt"), "utf8")).toBe(
-        "unpublished\n",
+        "untracked\n",
       );
-      await publish!("docs: carry on");
       return result;
     },
-    {
-      continuity: { restore: archive, saved: () => {} },
-      checkout: {
-        baseSha: latest,
-        branch: `${repo.branch}-2`,
-        realign: { previousBase: repo.baseSha, publishedSha: published },
-      },
-      publisher: async (work) => {
-        sent = work;
-        return repo.publish(work);
-      },
-    },
+    kept,
   );
-  expect(realigned).toEqual({ publishedSha: published });
-  // The new pull request holds only what was not merged.
-  expect(sent?.parentSha).toBe(latest);
-  expect(sent?.changes.additions.map((file) => file.path).sort()).toEqual([
-    "notes.txt",
-    "script.sh",
-  ]);
-  expect(sent?.changes.deletions).toEqual([]);
+  expect(second.result).toEqual(result);
+  expect(await readdir(outside)).toEqual([]);
 });
 
-test("keeps conflicting unpublished work aside, across Turns until the Agent deletes it", async (t) => {
+test("does not save a git directory that refers to another one", async (t) => {
   const repo = await repository(t);
-  const { archive, published } = await publishedTurn(repo, async (cwd) => {
-    await writeFile(join(cwd, "README.md"), "unpublished\n");
+  const { saved } = await turn(repo, undefined, async ({ gitDir }) => {
+    await writeFile(join(gitDir, "commondir"), "/tmp/elsewhere\n");
+    return result;
   });
-  const latest = await squashMerge(repo, published, {
-    "README.md": "changed on main\n",
-  });
-  const inRepo = async (cwd: string, ...args: string[]) => {
-    const pointer = await readFile(join(cwd, ".git"), "utf8");
-    return gitIn(
-      cwd,
+  expect(saved).toStrictEqual({ failed: "error" });
+});
+
+test("restores work saved before Sessions kept branches", async (t) => {
+  const repo = await repository(t);
+  // What a Turn saved then: a work commit on HEAD, and work kept aside after
+  // a merge, in a bundle from the base.
+  const tree = (contents: string) => {
+    const blob = gitIn(
+      repo.seed,
       {},
-      undefined,
-      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
-      ...args,
+      Buffer.from(contents),
+      "hash-object",
+      "-w",
+      "--stdin",
+    );
+    return gitIn(
+      repo.seed,
+      {},
+      Buffer.from(`100644 blob ${blob}\tREADME.md\n`),
+      "mktree",
     );
   };
-  /** The unpublished change, as the Agent is told to look at it. */
-  const keptChange = (cwd: string) =>
-    inRepo(
-      cwd,
-      "diff",
-      "refs/tailos/unpublished^",
-      "refs/tailos/unpublished",
-      "--",
-      "README.md",
+  const commit = (contents: string, message: string) =>
+    repo.git(
+      ...identity,
+      "commit-tree",
+      tree(contents),
+      "-p",
+      repo.baseSha,
+      "-m",
+      message,
     );
+  const work = commit("saved\n", "Tailos saved work");
+  const kept = commit("kept\n", "Tailos unpublished work");
+  repo.git("update-ref", "refs/tailos/continuity", work);
+  repo.git("update-ref", "refs/tailos/unpublished", kept);
+  const bundle = join(repo.seed, "..", "old.bundle");
+  repo.git(
+    "bundle",
+    "create",
+    bundle,
+    "refs/tailos/continuity",
+    "refs/tailos/unpublished",
+    `^${repo.baseSha}`,
+  );
+  const data = await readFile(bundle);
+  const archive = await promisify(gzip)(
+    Buffer.concat([
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          baseSha: repo.baseSha,
+          head: repo.baseSha,
+          work,
+          bundle: data.length,
+          kept,
+        }) + "\n",
+      ),
+      data,
+    ]),
+  );
 
-  // Read through a holder: each Turn sets it from its callback.
-  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
-  const lastSaved = () => out.saved;
-  const next = { baseSha: latest, branch: `${repo.branch}-2` };
-  await repo.run(
-    async (cwd, conversation) => {
-      expect(conversation?.realigned).toEqual({
-        publishedSha: published,
-        kept: "refs/tailos/unpublished",
-      });
+  const { result: restored, saved } = await turn(
+    repo,
+    archive,
+    async ({ cwd }, conversation) => {
       expect(conversation?.lost).toBeUndefined();
-      expect(await head(cwd)).toBe(latest);
-      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe(
-        "changed on main\n",
-      );
-      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
+      expect(await readFile(join(cwd, "README.md"), "utf8")).toBe("saved\n");
+      expect(
+        agentGit(cwd, "rev-parse", "HEAD", "refs/tailos/unpublished"),
+      ).toBe(`${repo.baseSha}\n${kept}`);
+      // It starts like a clone, as a new Session does.
+      expect(agentGit(cwd, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+      expect(agentGit(cwd, "rev-parse", "origin/main")).toBe(repo.baseSha);
+      // The Runner's settings, with the App's bot as the author.
+      expect(agentGit(cwd, "config", "user.name")).toBe(author.name);
       return result;
     },
-    {
-      continuity: { restore: archive, saved: (result) => (out.saved = result) },
-      checkout: {
-        ...next,
-        realign: { previousBase: repo.baseSha, publishedSha: published },
-      },
-    },
   );
-  const first = lastSaved();
-  if (!first || !("archive" in first)) throw new Error("not saved");
-  expect((await decodeSavedWork(first.archive)).kept).toMatch(/^[a-f0-9]{40}$/);
-
-  // A later Turn, in a new container, still has it; the Agent deletes it.
-  const later = first.archive;
-  delete out.saved;
-  await repo.run(
-    async (cwd, conversation) => {
-      expect(conversation?.realigned).toBeUndefined();
-      expect(await keptChange(cwd)).toContain("-published\n+unpublished");
-      await inRepo(cwd, "update-ref", "-d", "refs/tailos/unpublished");
-      return result;
-    },
-    {
-      continuity: { restore: later, saved: (result) => (out.saved = result) },
-      checkout: next,
-    },
-  );
-  const second = lastSaved();
-  if (!second || !("archive" in second)) throw new Error("not saved");
-  expect((await decodeSavedWork(second.archive)).kept).toBeUndefined();
+  expect(restored).toEqual(result);
+  // Kept work still goes along, until the Agent deletes it.
+  expect((await decodeSavedWork(archiveOf(saved))).refs).toEqual([
+    { name: "refs/heads/main", sha: repo.baseSha },
+    { name: "refs/remotes/origin/main", sha: repo.baseSha },
+    { name: "refs/tailos/unpublished", sha: kept },
+  ]);
 });
 
-test("a second conflicting merge keeps the work kept after the first one", async (t) => {
-  const repo = await repository(t);
-  const { archive, published } = await publishedTurn(repo, async (cwd) => {
-    await writeFile(join(cwd, "README.md"), "first unpublished\n");
-  });
-  const latest = await squashMerge(repo, published, {
-    "README.md": "changed on main\n",
-  });
-  const inRepo = async (cwd: string, ...args: string[]) => {
-    const pointer = await readFile(join(cwd, ".git"), "utf8");
-    return gitIn(
-      cwd,
-      {},
-      undefined,
-      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
-      ...args,
-    );
-  };
-  const out: { saved?: Parameters<WorkspaceContinuity["saved"]>[0] } = {};
-  let second = "";
-  // The first work is kept aside; the Agent publishes more without
-  // deleting it, and leaves another change that will conflict too.
-  await repo.run(
-    async (cwd, conversation, publish) => {
-      expect(conversation?.realigned?.kept).toBe("refs/tailos/unpublished");
-      await writeFile(join(cwd, "README.md"), "published again\n");
-      second = ((await publish!("docs: publish again")) as { sha: string }).sha;
-      await writeFile(join(cwd, "README.md"), "second unpublished\n");
-      return result;
-    },
-    {
-      continuity: { restore: archive, saved: (saved) => (out.saved = saved) },
-      checkout: {
-        baseSha: latest,
-        branch: `${repo.branch}-2`,
-        realign: { previousBase: repo.baseSha, publishedSha: published },
-      },
-    },
-  );
-  const saved = out.saved;
-  if (!saved || !("archive" in saved)) throw new Error("not saved");
-  const again = await squashMerge(repo, second, {
-    "README.md": "changed on main again\n",
-  });
-  await repo.run(
-    async (cwd, conversation) => {
-      expect(conversation?.realigned).toEqual({
-        publishedSha: second,
-        kept: "refs/tailos/unpublished",
-        keptEarlier: "refs/tailos/unpublished^2",
-      });
-      // Both are there, each as the Agent is told to look at it.
-      expect(
-        await inRepo(
-          cwd,
-          "diff",
-          "refs/tailos/unpublished^",
-          "refs/tailos/unpublished",
-        ),
-      ).toContain("-published again\n+second unpublished");
-      expect(
-        await inRepo(
-          cwd,
-          "diff",
-          "refs/tailos/unpublished^2^",
-          "refs/tailos/unpublished^2",
-        ),
-      ).toContain("-published\n+first unpublished");
-      return result;
-    },
-    {
-      continuity: { restore: saved.archive, saved: () => {} },
-      checkout: {
-        baseSha: again,
-        branch: `${repo.branch}-3`,
-        realign: { previousBase: latest, publishedSha: second },
-      },
-    },
-  );
-});
-
-test("publishes into the branch the Agent moved the work to", async (t) => {
-  const repo = await repository(t);
-  const seed = repo.git("rev-parse", "--show-toplevel");
-  const identity = [
-    "-c",
-    "user.name=Seed",
-    "-c",
-    "user.email=seed@example.test",
-  ];
-  repo.git("checkout", "--quiet", "-b", "feature");
-  await writeFile(join(seed, "feature.txt"), "feature\n");
-  repo.git("add", "feature.txt");
-  repo.git(...identity, "commit", "--quiet", "-m", "Feature");
-  const feature = repo.git("rev-parse", "HEAD");
-  repo.git("checkout", "--quiet", "main");
-  const inRepo = async (cwd: string, ...args: string[]) => {
-    const pointer = await readFile(join(cwd, ".git"), "utf8");
-    return gitIn(
-      cwd,
-      {},
-      undefined,
-      `--git-dir=${pointer.slice("gitdir: ".length).trim()}`,
-      ...args,
-    );
-  };
-  let sent: Parameters<Publisher>[0] | undefined;
-  const outcomes: unknown[] = [];
-  await repo.run(
-    async (cwd, _conversation, publish) => {
-      // The user asked to continue the feature branch.
-      await inRepo(cwd, "fetch", "--quiet", seed, "refs/heads/feature");
-      await inRepo(cwd, "checkout", "--quiet", "--detach", "FETCH_HEAD");
-      await writeFile(join(cwd, "notes.txt"), "on feature\n");
-      outcomes.push(await publish!("docs: add notes", "missing"));
-      outcomes.push(await publish!("docs: add notes", "-bad"));
-      outcomes.push(await publish!("docs: add notes", "feature"));
-      return result;
-    },
-    {
-      publisher: async (work) => {
-        sent = work;
-        return repo.publish(work);
-      },
-    },
-  );
-  expect(outcomes.slice(0, 2)).toEqual([
-    { published: false, reason: "invalid_base" },
-    { published: false, reason: "invalid_base" },
-  ]);
-  expect(outcomes[2]).toMatchObject({ published: true });
-  // Only the Agent's change goes into the pull request into the feature.
-  expect(sent).toMatchObject({ base: "feature", parentSha: feature });
-  expect(sent?.changes.additions.map((file) => file.path)).toEqual([
-    "notes.txt",
-  ]);
+test("reads the commits a bundle needs from its header", () => {
+  const a = "a".repeat(40);
+  const b = "b".repeat(40);
+  expect(
+    bundlePrerequisites(
+      Buffer.from(
+        `# v2 git bundle\n-${a} Base\n-${b}\n${"c".repeat(40)} refs/heads/x\n\nPACK`,
+      ),
+    ),
+  ).toEqual([a, b]);
+  expect(() => bundlePrerequisites(Buffer.from("not a bundle\n\n"))).toThrow();
 });

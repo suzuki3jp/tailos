@@ -20,11 +20,14 @@ const job: RepositoryJob = {
     connectionVersion: crypto.randomUUID(),
     accessVersion: crypto.randomUUID(),
   },
-  refresh: { url: "https://api.example/refresh", bearer: "a".repeat(64) },
   checkout: {
     repository: "owner/repo",
     baseSha: "b".repeat(40),
-    branch: `tailos/issue-3/${crypto.randomUUID()}`,
+    defaultBranch: "main",
+    author: {
+      name: "tailos-app[bot]",
+      email: "1+tailos-app[bot]@users.noreply.github.com",
+    },
   },
 };
 

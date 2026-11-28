@@ -1,9 +1,4 @@
-import type {
-  PlanResult,
-  PublicationRefusal,
-  PublishedWork,
-  RunnerJob,
-} from "@tailos/core/runner";
+import type { PlanResult, RunnerJob } from "@tailos/core/runner";
 import type { Diagnostics } from "@tailos/core/diagnostics";
 import type { SavedConversation } from "@/continuity.ts";
 
@@ -12,27 +7,6 @@ export type AgentResult = {
   sessionTitle?: string;
   plan?: PlanResult;
 };
-
-/** What the publication tool did, in terms the Agent can act on. */
-export type PublishOutcome =
-  | ({ published: true } & PublishedWork)
-  | {
-      published: false;
-      reason:
-        | "no_changes"
-        | "in_progress"
-        | "invalid_change_headline"
-        | "unsupported_changes"
-        | Exclude<PublicationRefusal["error"], "parent_moved">;
-    };
-/**
- * Publishes the work tree with a Conventional Commits headline, to a pull
- * request into `base` (the default branch when omitted).
- */
-export type Publish = (
-  headline: unknown,
-  base?: string,
-) => Promise<PublishOutcome>;
 
 /**
  * The Agent's conversation across the Turns of a Session. `resume` continues
@@ -43,13 +17,6 @@ export type Publish = (
 export type Conversation = {
   resume?: SavedConversation;
   lost?: boolean;
-  /**
-   * The Session's pull request was merged and its work moved onto the latest
-   * default branch: what was not published yet was re-applied, or kept
-   * aside at `kept` because it conflicts. Work kept that way after an
-   * earlier merge, and not deleted since, is still at `keptEarlier`.
-   */
-  realigned?: { publishedSha: string; kept?: string; keptEarlier?: string };
   save(conversation: SavedConversation): void;
 };
 
@@ -60,34 +27,12 @@ export interface AgentAdapter {
     cwd?: string,
     diagnostics?: Diagnostics,
     conversation?: Conversation,
-    publish?: Publish,
+    /** The work tree's git directory, which the Agent may write. */
+    gitDir?: string,
   ): Promise<AgentResult>;
 }
 
 export class AgentSandboxUnavailable extends Error {}
-export class PublicationFailed extends Error {
-  constructor(
-    readonly code:
-      | "invalid_change_headline"
-      | "unsupported_changes"
-      | "invalid_base",
-  ) {
-    super(code);
-  }
-}
-
-/** The controller refused a publication for a reason the Agent can act on. */
-export class PublicationRefused extends Error {
-  readonly code: PublicationRefusal["error"];
-  /** With `parent_moved`, where the Session's branch is now. */
-  readonly sha?: string;
-  constructor(refusal: PublicationRefusal) {
-    super(refusal.error);
-    this.code = refusal.error;
-    if ("sha" in refusal) this.sha = refusal.sha;
-  }
-}
-
 export const fakeAgent: AgentAdapter = {
   async run(job, signal) {
     signal.throwIfAborted();

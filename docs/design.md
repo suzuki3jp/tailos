@@ -31,8 +31,7 @@ flowchart LR
     DO -->|内部 HTTP| Runner[apps/runner · Cloudflare Containers]
     DO --> D1
     DO --> R2[(R2 · ログと成果物)]
-    Runner -->|公開用の差分を預ける| API
-    API -->|署名付きコミットと PR を作成| GitHub
+    Runner -->|Agent が git と gh で push・PR 作成| GitHub
 ```
 
 - **起動の境界。** GitHub の署名検証、起動者と対象の確認、ラベルの判定は API のトリガー実装が担当し、Session に入れる依頼へ変換する。自動で PR を公開できるかなどの権限は API が確定する。将来は Web や API からの依頼も同じ実行経路に載せられる。
@@ -42,7 +41,7 @@ flowchart LR
 
 ## Session と実行のデータモデル
 
-**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。PR 作成で Run は完了し、Session には会話と各 Run の結果が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。 Session の Run は Session ごとの Durable Object が 1 つずつ処理し、前の Run の状態を消してから次の Run を始める。
+**Session は、ユーザーが開くチャットの単位。Run は、その Session で受理した依頼を結果まで処理する一回分。** Issue にラベルを付けると、一致した Routine のプロンプトによる自動化メッセージが最初の Run を起動する。Agent の返答で Run は完了し、Session には会話と各 Run の結果（push したブランチの PR を含む）が残る。Codex の Thread など、Agent 固有の会話状態は Adapter が扱う。 Session の Run は Session ごとの Durable Object が 1 つずつ処理し、前の Run の状態を消してから次の Run を始める。
 
 ```mermaid
 erDiagram
@@ -136,7 +135,7 @@ ChatGPT 接続は Web のボタンからデバイスコード認証を始める�
 
 Claude 接続は、利用者が手元で `claude setup-token` を実行して得た長期トークンを Web の接続画面に貼り付けて保存する。保存時は形式だけを確かめ、ChatGPT 接続と同じ方式で暗号化して保持する。保存した値は応答やログに出さない。トークンは更新できないので、接続画面は保存日と有効期限の目安を示し、期限の 30 日前から発行し直しを案内する。Runner には置き換え用のトークンだけを渡し、Claude Code がモデル API（`api.anthropic.com` の `/v1/messages`）へ送る通信を Workers 側で横取りして、Run の接続のトークンを差し込む。
 
-GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Runner には対象リポジトリに限定した短命の読み取りトークンを渡す。Agent はリポジトリの指示と CI 設定に沿って整形・lint・テストなどのコマンドを作業ディレクトリで実行し、結果を返答に記載する。Runner は差分が公開可能な形式かを確認して API に預ける。API は GitHub App で署名付きコミットを作り、署名・親・tree を照合してから PR を作る。公開されたコミットの検証は対象リポジトリの CI が担う。英語の Conventional Commits の見出しをコミットと PR で共有する。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
+GitHub では専用の権限主体として GitHub App を使う。App の秘密鍵は API 側に置く。Agent の GitHub への通信はコンテナの外で受け、対象リポジトリに限定した短命のトークンを Turn の間だけ差し込む。Agent はリポジトリの指示と CI 設定に沿って整形・lint・テストなどのコマンドを作業ディレクトリで実行し、結果を返答に記載する。ブランチ・コミット・PR は Agent が git と gh で直接扱い、作者は GitHub App の bot とする（[作業の公開の判断](pdr/records/PDR-20261128-agent-git-publication.md)）。Tailos は push されたブランチ名を記録し、その PR を Run の結果として表示する。公開されたコミットの検証は対象リポジトリの CI が担う。既定ブランチへの直接 push やマージはブランチ保護で制限し、App にルールの迂回権限を与えない。
 
 ## ローカル開発とデプロイ
 
@@ -167,12 +166,12 @@ D1 のスキーマとマイグレーションは `apps/api` に置く。Drizzle 
 | フェーズ | 作るもの | 完了条件 |
 | --- | --- | --- |
 | 2. ChatGPT 接続と Codex 実行 | ChatGPT 接続画面、認証情報の保管・更新、Codex app-server Adapter | ブラウザで ChatGPT に接続し、実際の Codex がテストジョブを完走する。Session の履歴に依頼と返答が残る |
-| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。GitHub App で作業ブランチに署名付きコミットを作成し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
+| 3. GitHub Issue → PR | ラベル Webhook を起動イベントと最初の依頼に変換する。Agent が作業ブランチに push し、PR を開く | Private リポジトリでラベル付与から PR 作成まで通り、Session の Run に PR が記録される。再送は元の Session、完了後のラベル付け直しは新しい Session になる |
 | 4. 本番デプロイと運用確認 | フェーズ 1 から使ってきたデプロイワークフローを本番に適用する。D1 マイグレーション、Worker・Runner イメージのデプロイ、本番ドメインの設定を行う | `tailos.app` で ChatGPT 接続から Issue → PR まで通り、`sessionId` から会話と Run の結果や失敗理由を追える |
 
 ### Issue コメントによる計画会話
 
-計画会話は Project の plan Routine として動く（[計画会話の判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。Routine の許可ユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、その Routine と Issue の Session にメッセージが届く。同じ Issue のコマンド語のない `@tailos <回答・修正依頼>` は、その Issue で最後に使われたコメント起動の Session に続く。続ける Session がなければ、アプリが開始方法を一度だけ返信する（`issue_guidance`）。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。plan Routine は読み取り専用で、公開ツールを持たない。
+計画会話は Project の plan Routine として動く（[計画会話の判断](pdr/records/PDR-20261125-planning-tables-dropped.md)）。Routine の許可ユーザーが open な Issue の新規コメント先頭に `@tailos plan` と投稿すると、その Routine と Issue の Session にメッセージが届く。同じ Issue のコマンド語のない `@tailos <回答・修正依頼>` は、その Issue で最後に使われたコメント起動の Session に続く。続ける Session がなければ、アプリが開始方法を一度だけ返信する（`issue_guidance`）。非メンション、引用・コードフェンス・インデント中のコマンド、編集・削除、Bot、PR、closed Issue、許可外の repository / installation / actor は起動しない。メンション文字列は App のログイン名によらず `@tailos` とする。plan Routine は読み取り専用で、作業ツリーに書き込まない。
 
 Issue を起点にする Routine（label と計画）は、Routine と Issue の組ごとに 1 つの Session を持つ（`routine_sessions`、[Routine の受付の判断](pdr/records/PDR-20261124-issue-routine-dispatch.md)）。届いたメッセージは `session_inbox` に届いた順に保存し、Session に進行中の Turn がなければその場で Turn（Run）にする。進行中なら待ち、Turn の終わり（Durable Object）と Cron が次のメッセージを Turn にする。Turn の時間上限は Turn を作った時点から数える。label は delivery、コメントはコメント ID で重複を除く。受付と最初の Turn の作成は一つの D1 batch で行い、Session 単位の active Run 一意制約を維持する。
 

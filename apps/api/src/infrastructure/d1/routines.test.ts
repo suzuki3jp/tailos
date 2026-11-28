@@ -7,6 +7,7 @@ import { dispatchIssueEvent } from "@/application/routines/dispatch-issue.ts";
 import type { IssueMessage } from "@/application/triggers/admit-trigger.ts";
 import {
   implementationPrompt,
+  legacyImplementationPrompt,
   type RoutineSettings,
 } from "@/application/routines/routines.ts";
 const owner = "00000000-0000-4000-8000-000000000001";
@@ -111,9 +112,13 @@ test("migration preserves label configuration as an enabled Routine and removes 
   const changes = (await d1Routines(DB).history(owner, id))!.changes.filter(
     (change) => change.routineId === id,
   );
-  expect(changes).toHaveLength(1);
-  expect(changes[0]).toMatchObject({ actorId: "migration:routines" });
-  expect(changes[0].createdAt).toBeGreaterThan(2);
+  // The default prompt said Tailos publishes; a later migration gives it the
+  // prompt that asks the Agent to open the pull request.
+  expect(changes.map((change) => change.actorId).sort()).toEqual([
+    "migration:git-publication",
+    "migration:routines",
+  ]);
+  expect(changes.every((change) => change.createdAt > 2)).toBe(true);
   const projects = d1Projects(DB);
   await projects.update(id, 1, { ...settings, name: "Edited" }, owner);
   const history = (
@@ -126,6 +131,64 @@ test("migration preserves label configuration as an enabled Routine and removes 
     actor_id: owner,
   });
 });
+test("migration gives Routines with the old default prompt the new one, and keeps written prompts", async (t) => {
+  const oldDefault = legacyImplementationPrompt;
+  const projectId = crypto.randomUUID();
+  const routine = (id: string, prompt: string, deletedAt: number | null) => [
+    id,
+    projectId,
+    JSON.stringify({ ...routineSettings, prompt }),
+    owner,
+    deletedAt,
+  ];
+  const kept = crypto.randomUUID();
+  const written = crypto.randomUUID();
+  const deleted = crypto.randomUUID();
+  const { DB } = await createTestBindings(t, {
+    beforeMigration: async (db, file) => {
+      if (!file.startsWith("0015_")) return;
+      await db
+        .prepare(
+          "INSERT INTO projects (id, name, owner_id, repository_id, config, created_at, updated_at, updated_by) VALUES (?, 'Project', ?, 42, ?, 1, 1, ?)",
+        )
+        .bind(projectId, owner, JSON.stringify(settings), owner)
+        .run();
+      for (const values of [
+        routine(kept, oldDefault, null),
+        routine(written, "Implement it my way.", null),
+        routine(deleted, oldDefault, 3),
+      ])
+        await db
+          .prepare(
+            "INSERT INTO routines (id, project_id, config, created_at, updated_at, updated_by, deleted_at) VALUES (?, ?, ?, 1, 1, ?, ?)",
+          )
+          .bind(...values)
+          .run();
+    },
+  });
+  const rows = (
+    await DB.prepare(
+      "SELECT id, json_extract(config, '$.prompt') AS prompt, revision, updated_by FROM routines",
+    ).all<{
+      id: string;
+      prompt: string;
+      revision: number;
+      updated_by: string;
+    }>()
+  ).results;
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  expect(byId.get(kept)).toMatchObject({
+    prompt: implementationPrompt,
+    revision: 2,
+    updated_by: "migration:git-publication",
+  });
+  expect(byId.get(written)).toMatchObject({
+    prompt: "Implement it my way.",
+    revision: 1,
+  });
+  expect(byId.get(deleted)).toMatchObject({ prompt: oldDefault, revision: 1 });
+});
+
 test("owned Routine CRUD uses revisions, retains deleted history, and rolls back settings when audit fails", async (t) => {
   const db = await createTestDb(t);
   const project = await d1Projects(db).create(settings, owner);

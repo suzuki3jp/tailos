@@ -1,32 +1,27 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-  changeHeadline,
-  continuitySaveMs,
-  maxPublicationBytes,
-  type FileChanges,
-  type PublishedWork,
-  type RunnerJob,
-  type SessionPublication,
-} from "@tailos/core/runner";
-import * as v from "valibot";
+import { continuitySaveMs, type RunnerJob } from "@tailos/core/runner";
 import type { Diagnostics } from "@tailos/core/diagnostics";
-import {
-  PublicationFailed,
-  PublicationRefused,
-  type AgentResult,
-  type Conversation,
-  type Publish,
-  type PublishOutcome,
-} from "@/agent.ts";
+import type { AgentResult, Conversation } from "@/agent.ts";
 import {
   ContinuityTooLarge,
   decodeSavedWork,
   encodeSavedWork,
+  keptRef,
+  maxSavedRefs,
   type SavedConversation,
   type SavedWork,
 } from "@/continuity.ts";
@@ -41,8 +36,6 @@ const exec = promisify(execFile);
 type Checkout = NonNullable<
   Extract<RunnerJob, { engine: "codex" }>["checkout"]
 >;
-/** Hands checked work to the controller, which commits it and opens the PR. */
-export type Publisher = (work: SessionPublication) => Promise<PublishedWork>;
 
 /**
  * What the previous Turn left, and where this Turn's saved work goes. With a
@@ -60,12 +53,18 @@ export type WorkspaceContinuity = {
   ): void;
 };
 
+/** Where the Agent's work tree and its git directory are. */
+export type Workspace = { cwd: string; gitDir: string };
+
 const continuityRef = "refs/tailos/continuity";
-/** Where unpublished work that conflicts with the latest default branch stays. */
-export const unpublishedRef = "refs/tailos/unpublished";
+const remoteRef = (name: string) => name.startsWith("refs/remotes/");
+/** Where a restore puts the saved commits before the branches move to them. */
+const restorePrefix = "refs/tailos/restore/";
+/** The output git commands may print, such as a list of many branches. */
+const maxOutputBytes = 16 * 1024 * 1024;
 const digest = (data: Buffer) =>
   createHash("sha256").update(data).digest("hex");
-// The saved work commit is never published, only carried to the next Turn.
+// The saved work commit is never pushed, only carried to the next Turn.
 const continuityIdentity = {
   GIT_AUTHOR_NAME: "Tailos",
   GIT_AUTHOR_EMAIL: "tailos@localhost",
@@ -73,15 +72,39 @@ const continuityIdentity = {
   GIT_COMMITTER_EMAIL: "tailos@localhost",
 };
 
+/**
+ * The commits a bundle needs but does not carry, from its header: the lines
+ * after the signature that start with `-`, before the first empty line.
+ */
+export function bundlePrerequisites(bundle: Buffer) {
+  const end = bundle.indexOf("\n\n");
+  if (end < 0) throw new Error("Invalid bundle");
+  const lines = bundle.subarray(0, end).toString("utf8").split("\n");
+  if (!/^# v[23] git bundle$/.test(lines[0] ?? ""))
+    throw new Error("Invalid bundle");
+  return lines
+    .slice(1)
+    .filter((line) => line.startsWith("-"))
+    .map((line) => {
+      const sha = /^-([a-f0-9]{40})(?: |$)/.exec(line)?.[1];
+      if (!sha) throw new Error("Invalid bundle");
+      return sha;
+    });
+}
+
+/**
+ * Prepares the Session's work tree, runs the Agent in it, and saves the work
+ * for the next Turn. The Agent owns the repository: it may commit, switch and
+ * create branches, change the git configuration and push. The Runner's own git
+ * commands never read the Agent's configuration.
+ */
 export async function runInGitWorkspace(
   checkout: Checkout,
   signal: AbortSignal,
   work: (
-    cwd: string,
+    workspace: Workspace,
     conversation?: Conversation,
-    publish?: Publish,
   ) => Promise<AgentResult>,
-  publisher: Publisher | undefined,
   remote = `https://github.com/${checkout.repository}.git`,
   diagnostics?: Diagnostics,
   mode?: RunnerJob["mode"],
@@ -117,40 +140,23 @@ export async function runInGitWorkspace(
     GIT_CONFIG_GLOBAL: "/dev/null",
     ...trustEnvironment(),
   };
-  const git = async (
+  const run = async (
     args: string[],
-    options: { env?: Record<string, string>; signal?: AbortSignal } = {},
+    options: {
+      env?: Record<string, string>;
+      signal?: AbortSignal;
+      cwd?: string;
+    } = {},
   ) => {
     try {
       return (
-        await exec(
-          "git",
-          [
-            "--git-dir=" + metadata,
-            "--work-tree=" + cwd,
-            "--no-pager",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "credential.helper=",
-            "-c",
-            "http.proxy=",
-            "-c",
-            "http.sslVerify=true",
-            "-c",
-            "http.followRedirects=false",
-            ...args,
-          ],
-          {
-            cwd,
-            env: { ...env, ...options.env },
-            signal: options.signal ?? signal,
-            maxBuffer: maxPublicationBytes,
-            encoding: "buffer",
-          },
-        )
+        await exec("git", args, {
+          cwd: options.cwd ?? cwd,
+          env: { ...env, ...options.env },
+          signal: options.signal ?? signal,
+          maxBuffer: maxOutputBytes,
+          encoding: "buffer",
+        })
       ).stdout;
     } catch (error) {
       // Git errors can carry transport headers or private repository data.
@@ -160,74 +166,198 @@ export async function runInGitWorkspace(
       );
     }
   };
+  const git = (
+    args: string[],
+    options: { env?: Record<string, string>; signal?: AbortSignal } = {},
+  ) =>
+    run(
+      [
+        "--git-dir=" + metadata,
+        "--work-tree=" + cwd,
+        "--no-pager",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "credential.helper=",
+        "-c",
+        "http.proxy=",
+        "-c",
+        "http.sslVerify=true",
+        "-c",
+        "http.followRedirects=false",
+        // Nothing may write the git directory behind the Runner's back.
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "maintenance.auto=false",
+        ...args,
+      ],
+      options,
+    );
+  const text = async (
+    args: string[],
+    options: { env?: Record<string, string>; signal?: AbortSignal } = {},
+  ) => (await git(args, options)).toString().trim();
   const configPath = join(metadata, "config");
-  let trustedConfig: Buffer | undefined;
-  let agentStarted = false;
-  let savedConversation: SavedConversation | undefined;
-
-  /** The tree of the whole work tree on HEAD, without touching the index. */
-  const workTree = async (head: string, options: { signal?: AbortSignal }) => {
-    const index = { GIT_INDEX_FILE: join(metadata, "tailos-continuity-index") };
-    await git(["read-tree", head], { ...options, env: index });
-    await git(["add", "--all"], { ...options, env: index });
-    return (await git(["write-tree"], { ...options, env: index }))
-      .toString()
-      .trim();
+  // The Agent writes the git directory: the Runner's own files go elsewhere.
+  const scratch = await mkdtemp(
+    join(process.env.TAILOS_GIT_STATE_DIR ?? tmpdir(), "tailos-runner-"),
+  );
+  /**
+   * Where the Runner writes objects while the git directory is the Agent's:
+   * it reads the Agent's objects, and never writes through a link there.
+   */
+  const scratchObjects = join(scratch, "objects");
+  await mkdir(scratchObjects);
+  const ownObjects = {
+    GIT_OBJECT_DIRECTORY: scratchObjects,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(metadata, "objects"),
   };
 
   /**
-   * Whether the work tree in place is exactly the saved work: same base,
-   * HEAD and files, and git configuration that the Session still trusts.
+   * A file of the git directory as it is, or undefined when it is not a
+   * regular file. Links are not followed: they could point anywhere.
    */
-  const matchesInPlace = async (saved: SavedWork) => {
+  const readOwnFile = async (path: string) => {
+    const file = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    ).catch(() => undefined);
+    if (!file) return undefined;
     try {
-      if (saved.baseSha !== restoreBase() || !saved.config) return false;
-      if (digest(await readFile(configPath)) !== saved.config) return false;
-      const head = (await git(["rev-parse", "HEAD"])).toString().trim();
-      if (head !== saved.head) return false;
-      const tree = (
-        await git(["rev-parse", "--verify", `${saved.work}^{tree}`])
-      )
-        .toString()
-        .trim();
-      return (await workTree(head, {})) === tree;
-    } catch {
-      return false;
+      return (await file.stat()).isFile() ? await file.readFile() : undefined;
+    } finally {
+      await file.close();
+    }
+  };
+  const readConfig = () => readOwnFile(configPath);
+  /** Replaces the configuration without writing through a link. */
+  const writeConfig = async (data: Buffer) => {
+    await rm(configPath, { force: true });
+    await writeFile(configPath, data, { flag: "wx" });
+  };
+
+  /**
+   * The configuration the Runner's git commands use: a clone's, with the
+   * GitHub App's bot as the author. The Agent starts with it too.
+   */
+  const runnerConfig = await (async () => {
+    // The work tree may not exist yet.
+    const outside = { cwd: tmpdir() };
+    const valid = await run(
+      ["check-ref-format", "--branch", checkout.defaultBranch],
+      outside,
+    ).then(
+      (name) => name.toString().trim() === checkout.defaultBranch,
+      () => false,
+    );
+    if (!valid) throw new Error("Invalid default branch");
+    const directory = await mkdtemp(join(tmpdir(), "tailos-config-"));
+    try {
+      const file = join(directory, "config");
+      const set = (key: string, value: string) =>
+        run(["config", "--file", file, key, value], outside);
+      await set("core.repositoryformatversion", "0");
+      await set("core.filemode", "true");
+      await set("core.bare", "false");
+      await set("core.logallrefupdates", "true");
+      await set("remote.origin.url", remote);
+      await set("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
+      await set(`branch.${checkout.defaultBranch}.remote`, "origin");
+      await set(
+        `branch.${checkout.defaultBranch}.merge`,
+        `refs/heads/${checkout.defaultBranch}`,
+      );
+      await set("user.name", checkout.author.name);
+      await set("user.email", checkout.author.email);
+      return await readFile(file);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  })();
+
+  /**
+   * Makes the Runner's git commands safe to run on a git directory the Agent
+   * may have changed: they read the Runner's configuration, and nothing
+   * outside the git directory. They must also write nothing there but the
+   * configuration: objects go to `scratchObjects`, references to a repository
+   * of the Runner's own. Returns what the Agent's configuration was.
+   */
+  const asRunner = async () => {
+    const own = await stat(join(metadata, "commondir")).then(
+      () => false,
+      () => true,
+    );
+    if (!own) throw new Error("Git metadata refers to another directory");
+    const agentConfig = await readConfig();
+    await writeConfig(runnerConfig);
+    return agentConfig;
+  };
+
+  /**
+   * The tree of the whole work tree on HEAD, without touching the index or
+   * the git directory.
+   */
+  const workTree = async (head: string, options: { signal?: AbortSignal }) => {
+    const index = { GIT_INDEX_FILE: join(scratch, "index"), ...ownObjects };
+    try {
+      await git(["read-tree", head], { ...options, env: index });
+      await git(["add", "--all"], { ...options, env: index });
+      return await text(["write-tree"], { ...options, env: index });
+    } finally {
+      await rm(index.GIT_INDEX_FILE, { force: true });
     }
   };
 
-  /** Puts the previous Turn's commits and work tree on top of its base. */
-  const restore = async (saved: SavedWork) => {
-    if (saved.baseSha !== restoreBase())
-      throw new Error("Saved work has another base");
-    const bundle = join(metadata, "tailos-continuity.bundle");
-    await writeFile(bundle, saved.bundle);
-    await git([
-      "fetch",
-      "--quiet",
-      "--no-tags",
-      bundle,
-      `${continuityRef}:${continuityRef}`,
-      ...(saved.kept ? [`+${unpublishedRef}:${unpublishedRef}`] : []),
-    ]);
-    await rm(bundle, { force: true });
-    if (
-      saved.kept &&
-      (await git(["rev-parse", unpublishedRef])).toString().trim() !==
-        saved.kept
-    )
-      throw new Error("Kept work does not match");
-    const parent = (await git(["rev-parse", `${saved.work}^`])).toString();
-    if (parent.trim() !== saved.head)
-      throw new Error("Saved work does not follow its HEAD");
-    await git(["merge-base", "--is-ancestor", restoreBase(), saved.head]);
-    await git(["checkout", "--quiet", "--detach", saved.head]);
-    // Bring the work tree to the saved one, then leave those changes
-    // unstaged as they were.
-    await git(["read-tree", "-m", "-u", saved.head, saved.work]);
-    await git(["reset", "--quiet"]);
-    await git(["update-ref", "-d", continuityRef]);
-    return saved.conversation;
+  /**
+   * The references the Session keeps, sorted by name: branches, the remote's
+   * branches as last seen, and older kept work. A remote's symbolic HEAD is
+   * left out.
+   */
+  const keptRefs = async (options: { signal?: AbortSignal } = {}) => {
+    const output = await text(
+      [
+        "for-each-ref",
+        "--format=%(objectname) %(refname)",
+        "refs/heads/",
+        "refs/remotes/",
+        keptRef,
+      ],
+      options,
+    );
+    const refs = (output ? output.split("\n") : [])
+      .map((line) => ({ name: line.slice(41), sha: line.slice(0, 40) }))
+      .filter(({ name }) => !/^refs\/remotes\/[^/]+\/HEAD$/.test(name));
+    if (refs.length > maxSavedRefs) throw new ContinuityTooLarge();
+    return refs.sort((a, b) => (a.name < b.name ? -1 : 1));
+  };
+
+  /** The local branch HEAD is on, or undefined when it is detached. */
+  const headBranch = (options: { signal?: AbortSignal } = {}) =>
+    text(["symbolic-ref", "--quiet", "HEAD"], options).then(
+      (name) => name || undefined,
+      () => undefined,
+    );
+
+  /**
+   * Whether the work tree in place is exactly the saved work: same HEAD,
+   * branches, files and git configuration. Runs as the Runner.
+   */
+  const matchesInPlace = async (saved: SavedWork, agentConfig?: Buffer) => {
+    try {
+      if (!saved.gitConfig || !agentConfig) return false;
+      if (digest(agentConfig) !== digest(saved.gitConfig)) return false;
+      if ((await text(["rev-parse", "HEAD"])) !== saved.head) return false;
+      if ((await headBranch()) !== saved.branch) return false;
+      const names = (refs: SavedWork["refs"]) =>
+        refs.map(({ name, sha }) => `${sha} ${name}`).join("\n");
+      if (names(await keptRefs()) !== names(saved.refs)) return false;
+      return !!saved.tree && (await workTree(saved.head, {})) === saved.tree;
+    } catch {
+      return false;
+    }
   };
 
   /**
@@ -250,333 +380,194 @@ export async function runInGitWorkspace(
       ]);
   };
 
-  /**
-   * Moves the restored work onto the latest default branch after the
-   * Session's pull request was merged. What changed since `publishedSha`, in
-   * commits or not, is applied on top as uncommitted changes. When it
-   * conflicts, the work tree is the default branch as it is, and the work
-   * stays at `unpublishedRef` for the Agent, across Turns until it deletes
-   * it: a root commit with the published tree, and on it one with the work
-   * tree, so that it needs no other commit to be carried over.
-   */
-  const realign = async (publishedSha: string) => {
-    const head = (await git(["rev-parse", "HEAD"])).toString().trim();
-    const work = (
-      await git(
-        [
-          "commit-tree",
-          await workTree(head, {}),
-          "-p",
-          head,
-          "-m",
-          "Tailos unpublished work",
-        ],
-        { env: continuityIdentity },
-      )
-    )
-      .toString()
-      .trim();
-    await ensureCommit(publishedSha);
-    const patch = join(metadata, "tailos-realign.patch");
-    await git([
-      "diff",
-      "--binary",
-      "--full-index",
-      `--output=${patch}`,
-      publishedSha,
-      work,
-    ]);
+  /** An empty repository with the Runner's configuration. */
+  const initialize = async () => {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(metadata, { recursive: true, force: true });
+    await mkdir(cwd, { recursive: true });
+    await mkdir(metadata, { recursive: true });
+    await git(["init", "--quiet"]);
+    await writeConfig(runnerConfig);
+    await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, {
+      flag: "wx",
+    });
+  };
+
+  /** The start of a Session: like a shallow clone of the default branch. */
+  const start = async () => {
     await ensureCommit(checkout.baseSha, true);
-    const start = async () => {
-      await git([
-        "checkout",
-        "--quiet",
-        "--force",
-        "--detach",
-        checkout.baseSha,
-      ]);
-      // Ignored files, such as installed dependencies, stay.
-      await git(["clean", "--quiet", "-d", "--force"]);
-    };
-    await start();
-    try {
-      if ((await readFile(patch)).length) {
-        await git(["apply", "--3way", "--whitespace=nowarn", patch]);
-        // Unpublished work stays uncommitted, as the Agent left it.
-        await git(["reset", "--quiet"]);
-      }
-      return { publishedSha };
-    } catch {
-      const commit = async (tree: string, parents: string[], message: string) =>
-        (
-          await git(
-            [
-              "commit-tree",
-              tree,
-              ...parents.flatMap((parent) => ["-p", parent]),
-              "-m",
-              message,
-            ],
-            { env: continuityIdentity },
-          )
-        )
-          .toString()
-          .trim();
-      const merged = await commit(
-        `${publishedSha}^{tree}`,
-        [],
-        `Tailos published work ${publishedSha}`,
-      );
-      // Work kept after an earlier merge, which the Agent has not deleted,
-      // stays reachable as the second parent.
-      const earlier = await git([
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        unpublishedRef,
-      ]).then(
-        (sha) => sha.toString().trim(),
-        () => undefined,
-      );
-      await git([
-        "update-ref",
-        unpublishedRef,
-        await commit(
-          `${work}^{tree}`,
-          [merged, ...(earlier ? [earlier] : [])],
-          "Tailos unpublished work",
-        ),
-      ]);
-      await start();
-      return {
-        publishedSha,
-        kept: unpublishedRef,
-        ...(earlier && { keptEarlier: `${unpublishedRef}^2` }),
-      };
-    } finally {
-      await rm(patch, { force: true });
-    }
-  };
-
-  /**
-   * The whole work tree as changes from `parent`, checked as GitHub can sign
-   * them. Null when the work tree is exactly `parent`.
-   */
-  const checkedChanges = async (parent: string) => {
-    const tree = await workTree(parent, {});
-    const paths = await git([
-      "diff-tree",
-      "-r",
-      "-z",
-      "--raw",
-      "--no-renames",
-      parent,
-      tree,
+    await git([
+      "checkout",
+      "--quiet",
+      "--force",
+      "-B",
+      checkout.defaultBranch,
+      checkout.baseSha,
     ]);
-    if (!paths.length) return null;
-    const changes: FileChanges = { additions: [], deletions: [] };
-    const entries = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
-      .decode(paths)
-      .split("\0");
-    let size = 0;
-    for (let i = 0; i < entries.length - 1; i += 2) {
-      const [oldMode, newMode, , oid, status] = entries[i]!.slice(1).split(" ");
-      const path = entries[i + 1]!;
-      if (path.split("/").includes("node_modules") || i >= 1024)
-        throw new PublicationFailed("unsupported_changes");
-      if (status === "D") {
-        changes.deletions.push({ path });
-        continue;
-      }
-      // GitHub preserves the mode of an existing regular file and creates new files as 100644.
-      const supported =
-        status === "A"
-          ? newMode === "100644"
-          : oldMode === newMode &&
-            (newMode === "100644" || newMode === "100755");
-      if (!supported) throw new PublicationFailed("unsupported_changes");
-      const contents = (await git(["cat-file", "blob", oid!])).toString(
-        "base64",
-      );
-      size += contents.length;
-      if (size >= maxPublicationBytes)
-        throw new PublicationFailed("unsupported_changes");
-      changes.additions.push({ path, contents });
-    }
-    return { tree, changes };
+    await git([
+      "update-ref",
+      `refs/remotes/origin/${checkout.defaultBranch}`,
+      checkout.baseSha,
+    ]);
   };
 
-  // The head of the Session's branch: what the next publication builds on.
-  let published = checkout.publishedSha;
-  let publishing = false;
   /**
-   * Publishes the whole work tree on the Session's branch. Refusals that the
-   * Agent can act on are outcomes; anything else throws.
+   * Puts the previous Turn's branches, HEAD and work tree back on top of its
+   * base. The commits the bundle needs come from the target repository.
    */
-  /**
-   * Where the work starts on `base`, which the Agent moved to: the newest
-   * commit of the branch that the work tree is on.
-   */
-  const startOn = async (base: string) => {
-    const valid = await git(["check-ref-format", "--branch", base]).then(
-      () => true,
-      () => false,
-    );
-    if (!valid) throw new PublicationFailed("invalid_base");
-    const ref = "refs/tailos/base";
+  const restore = async (saved: SavedWork) => {
+    if (saved.baseSha !== checkout.baseSha)
+      throw new Error("Saved work has another base");
+    const prerequisites = bundlePrerequisites(saved.bundle);
+    if (prerequisites.length > maxSavedRefs)
+      throw new Error("Saved work needs too many commits");
+    await start();
+    for (const sha of prerequisites) await ensureCommit(sha, true);
+    const bundle = join(scratch, "restore.bundle");
+    await writeFile(bundle, saved.bundle);
     try {
       await git([
         "fetch",
         "--quiet",
         "--no-tags",
-        "--depth",
-        "200",
-        remote,
-        `+refs/heads/${base}:${ref}`,
+        bundle,
+        `+refs/*:${restorePrefix}*`,
       ]);
-      return (await git(["merge-base", "HEAD", ref])).toString().trim();
-    } catch {
-      throw new PublicationFailed("invalid_base");
     } finally {
-      await git(["update-ref", "-d", ref]).catch(() => {});
+      await rm(bundle, { force: true });
     }
-  };
-
-  const publish: Publish = async (headline, base) => {
-    if (!publisher || mode === "plan")
-      throw new Error("This Turn cannot publish");
-    if (publishing) return { published: false, reason: "in_progress" };
-    publishing = true;
-    const span = diagnostics?.start("publication");
-    try {
-      if (!trustedConfig || !(await readFile(configPath)).equals(trustedConfig))
-        throw new Error("Git metadata configuration changed");
-      const validated = v.safeParse(changeHeadline, headline);
-      if (!validated.success)
-        return finish({ published: false, reason: "invalid_change_headline" });
-      const submit = async () => {
-        // The first publication into another branch builds on where the
-        // work tree is on it.
-        const parent =
-          published ?? (base ? await startOn(base) : checkout.baseSha);
-        await ensureCommit(parent);
-        const work = await checkedChanges(parent);
-        if (!work) return null;
-        return publisher({
-          branch: checkout.branch,
-          ...(base && { base }),
-          parentSha: parent,
-          tree: work.tree,
-          headline: validated.output,
-          changes: work.changes,
-        });
-      };
-      const result = await submit().catch(async (error: unknown) => {
-        // An earlier publication whose answer was lost moved the branch:
-        // build on it, once.
-        if (
-          !(error instanceof PublicationRefused) ||
-          error.code !== "parent_moved" ||
-          !error.sha
-        )
-          throw error;
-        published = error.sha;
-        await ensureCommit(error.sha);
-        await git(["reset", "--quiet", error.sha]);
-        return submit();
-      });
-      if (!result) return finish({ published: false, reason: "no_changes" });
-      published = result.sha;
-      // The work tree now sits on the published commit, as on GitHub. The
-      // files stay as they are.
-      await ensureCommit(result.sha)
-        .then(() => git(["reset", "--quiet", result.sha]))
-        .catch(() => {});
-      return finish({ published: true, ...result });
-    } catch (error) {
-      if (error instanceof PublicationFailed)
-        return finish({ published: false, reason: error.code });
-      if (error instanceof PublicationRefused && error.code !== "parent_moved")
-        return finish({ published: false, reason: error.code });
-      if (span)
-        diagnostics?.end(
-          span,
-          { outcome: "failed" },
-          diagnosticErrorBody(error),
-        );
-      throw error;
-    } finally {
-      publishing = false;
+    if ((await text(["rev-parse", `${saved.work}^`])) !== saved.head)
+      throw new Error("Saved work does not follow its HEAD");
+    await git(["checkout", "--quiet", "--force", "--detach", saved.head]);
+    // Branches the Agent no longer has, such as the default branch, go.
+    // Work saved before Sessions kept branches keeps those of the start.
+    if (!saved.legacy)
+      for (const ref of await keptRefs())
+        if (!saved.refs.some((kept) => kept.name === ref.name))
+          await git(["update-ref", "-d", ref.name]);
+    for (const ref of saved.refs) {
+      const present = await git(["cat-file", "-e", `${ref.sha}^{commit}`]).then(
+        () => true,
+        () => false,
+      );
+      // The remote's branches are only what was last fetched: one whose
+      // commits are not carried stays as the base has it, until a fetch.
+      if (!present && remoteRef(ref.name)) continue;
+      if (!present) throw new Error("Saved branch is missing its commit");
+      await git(["update-ref", ref.name, ref.sha]);
     }
-    function finish(outcome: PublishOutcome) {
-      if (span)
-        diagnostics?.end(
-          span,
-          { outcome: outcome.published ? "succeeded" : "failed" },
-          JSON.stringify(outcome),
-        );
-      return outcome;
+    // Bring the work tree to the saved one, then leave those changes
+    // unstaged as they were.
+    await git(["read-tree", "-m", "-u", saved.head, saved.work]);
+    await git(["reset", "--quiet"]);
+    const branch =
+      saved.branch ??
+      (saved.legacy && saved.head === checkout.baseSha
+        ? `refs/heads/${checkout.defaultBranch}`
+        : undefined);
+    if (branch) {
+      if ((await text(["rev-parse", "--verify", branch])) !== saved.head)
+        throw new Error("Saved HEAD is not on its branch");
+      await git(["symbolic-ref", "HEAD", branch]);
     }
+    const restored = await text([
+      "for-each-ref",
+      "--format=%(refname)",
+      restorePrefix,
+    ]);
+    for (const name of restored ? restored.split("\n") : [])
+      await git(["update-ref", "-d", name]);
+    return saved.conversation;
   };
 
   /** Hands this Turn's work to the controller; never fails the Turn. */
+  let agentStarted = false;
+  let savedConversation: SavedConversation | undefined;
   const save = async () => {
     if (!continuity) return;
     // Nothing ran on the previous Turn's work, which therefore stays current.
-    if (!agentStarted || !trustedConfig) {
+    if (!agentStarted) {
       continuity.saved({ skipped: true });
       return;
     }
     const saveSignal = AbortSignal.timeout(continuitySaveMs);
+    const options = { signal: saveSignal };
+    let agentConfig: Buffer | undefined;
     try {
-      if (!(await readFile(configPath)).equals(trustedConfig))
-        throw new Error("Git metadata configuration changed");
-      const head = (await git(["rev-parse", "HEAD"], { signal: saveSignal }))
-        .toString()
-        .trim();
-      const tree = await workTree(head, { signal: saveSignal });
-      const work = (
-        await git(
-          ["commit-tree", tree, "-p", head, "-m", "Tailos saved work"],
-          {
-            env: continuityIdentity,
-            signal: saveSignal,
-          },
-        )
-      )
-        .toString()
-        .trim();
-      await git(["update-ref", continuityRef, work], { signal: saveSignal });
-      // Work kept aside after a merge goes along until the Agent deletes it.
-      const kept = await git(
-        ["rev-parse", "--verify", "--quiet", unpublishedRef],
-        {
-          signal: saveSignal,
-        },
-      ).then(
-        (sha) => sha.toString().trim(),
-        () => undefined,
+      agentConfig = await asRunner();
+      // A branch without commits yet has no HEAD: its files are kept as
+      // changes on the base, without the branch.
+      const born = await text(
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        options,
+      ).catch(() => undefined);
+      const head = born || checkout.baseSha;
+      const branch = born ? await headBranch(options) : undefined;
+      const refs = await keptRefs(options);
+      const tree = await workTree(head, options);
+      const work = await text(
+        ["commit-tree", tree, "-p", head, "-m", "Tailos saved work"],
+        { env: { ...continuityIdentity, ...ownObjects }, signal: saveSignal },
       );
-      const bundle = join(metadata, "tailos-continuity.bundle");
-      await git(
-        [
-          "bundle",
-          "create",
-          bundle,
-          continuityRef,
-          ...(kept ? [unpublishedRef] : []),
-          `^${checkout.baseSha}`,
-        ],
-        { signal: saveSignal },
+      // History before the base or a shallow fetch's boundary is not here:
+      // the next Turn fetches those commits again.
+      const shallow = ((await readOwnFile(join(metadata, "shallow"))) ?? "")
+        .toString()
+        .split("\n")
+        .filter((line) => /^[a-f0-9]{40}$/.test(line));
+      // The remote's branches stay out: their history can be long, and it is
+      // on GitHub.
+      const bundled = [
+        { name: continuityRef, sha: work },
+        ...refs.filter((ref) => !remoteRef(ref.name)),
+      ];
+      // References only go in a repository of the Runner's own, which reads
+      // the objects of both.
+      const repository = join(scratch, "bundle.git");
+      const inRepository = (args: string[]) =>
+        run(
+          [
+            "--git-dir=" + repository,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "gc.auto=0",
+            ...args,
+          ],
+          { cwd: scratch, signal: saveSignal },
+        );
+      await run(["init", "--quiet", "--bare", repository], {
+        cwd: scratch,
+        signal: saveSignal,
+      });
+      await writeFile(
+        join(repository, "objects", "info", "alternates"),
+        `${scratchObjects}\n${join(metadata, "objects")}\n`,
       );
+      if (shallow.length)
+        await writeFile(join(repository, "shallow"), shallow.join("\n") + "\n");
+      for (const ref of bundled)
+        await inRepository(["update-ref", ref.name, ref.sha]);
+      const bundle = join(scratch, "save.bundle");
+      await inRepository([
+        "bundle",
+        "create",
+        bundle,
+        ...bundled.map((ref) => ref.name),
+        "--not",
+        checkout.baseSha,
+        ...shallow,
+      ]);
       continuity.saved({
         archive: await encodeSavedWork({
           baseSha: checkout.baseSha,
           head,
           work,
-          config: digest(trustedConfig),
+          tree,
+          ...(branch && { branch }),
+          refs,
+          ...(agentConfig && { gitConfig: agentConfig }),
           bundle: await readFile(bundle),
-          ...(kept && { kept }),
           ...(savedConversation && { conversation: savedConversation }),
         }),
       });
@@ -594,16 +585,14 @@ export async function runInGitWorkspace(
           { outcome: "failed" },
           diagnosticErrorBody(error),
         );
+    } finally {
+      // A container kept for the next Turn has the Agent's settings in place.
+      if (agentConfig) await writeConfig(agentConfig).catch(() => {});
     }
   };
 
   // The previous Turn's saved work, read once for both ways of restoring it.
   let saved: SavedWork | undefined;
-  // The saved work sits on its own base; after a merge it moves from there.
-  const restoreBase = () =>
-    saved && checkout.realign
-      ? checkout.realign.previousBase
-      : checkout.baseSha;
   let unreadable: unknown;
   if (Buffer.isBuffer(continuity?.restore))
     saved = await decodeSavedWork(continuity.restore).catch((error) => {
@@ -614,75 +603,48 @@ export async function runInGitWorkspace(
   let activeSpan: string | undefined;
   try {
     // A container kept or restored from a snapshot may already hold the work.
-    const inPlace = !!saved && !!workDir && (await matchesInPlace(saved));
+    let inPlace = false;
+    if (saved && workDir) {
+      const agentConfig = await asRunner().catch(() => undefined);
+      inPlace = await matchesInPlace(saved, agentConfig);
+    }
+    // What the Agent starts with: its own settings, or the Runner's.
+    let agentConfig: Buffer = runnerConfig;
+    let conversation: Conversation | undefined;
     if (!inPlace) {
-      if (workDir) {
-        await rm(cwd, { recursive: true, force: true });
-        await rm(metadata, { recursive: true, force: true });
-        await mkdir(cwd, { recursive: true });
-        await mkdir(metadata, { recursive: true });
-      }
       activeSpan = diagnostics?.start(
         "checkout",
         JSON.stringify({
           repository: checkout.repository,
-          baseSha: restoreBase(),
-          branch: checkout.branch,
+          baseSha: checkout.baseSha,
         }),
       );
-      await git(["init", "--quiet"]);
-      await writeFile(join(cwd, ".git"), `gitdir: ${metadata}\n`, {
-        flag: "wx",
-      });
-      await git([
-        "fetch",
-        "--quiet",
-        "--depth",
-        "1",
-        "--no-tags",
-        remote,
-        restoreBase(),
-      ]);
-      await git(["checkout", "--quiet", "--detach", restoreBase()]);
-      // What the Session already published is the starting point.
-      if (checkout.publishedSha) {
-        await ensureCommit(checkout.publishedSha);
-        await git(["checkout", "--quiet", "--detach", checkout.publishedSha]);
-      }
+      await initialize();
+      if (!saved) await start();
       if (activeSpan) diagnostics?.end(activeSpan);
       activeSpan = undefined;
     }
-    let conversation: Conversation | undefined;
     if (continuity) {
       let resume: SavedConversation | undefined;
       let lost = continuity.restore === "lost";
-      let realigned: Conversation["realigned"];
       if (Buffer.isBuffer(continuity.restore)) {
         activeSpan = diagnostics?.start("continuity");
         try {
           if (!saved) throw unreadable;
           if (!inPlace) await restore(saved);
           resume = saved.conversation;
-          if (checkout.realign)
-            realigned = await realign(checkout.realign.publishedSha);
+          if (saved.gitConfig) agentConfig = saved.gitConfig;
           if (activeSpan)
             diagnostics?.end(
               activeSpan,
               {},
-              JSON.stringify({
-                restored: true,
-                inPlace,
-                ...(realigned && { realigned: !realigned.kept }),
-              }),
+              JSON.stringify({ restored: true, inPlace }),
             );
         } catch (error) {
           lost = true;
-          // Start again from what was published, or the base, without what
-          // the restore left behind.
-          const start = checkout.publishedSha ?? checkout.baseSha;
-          await ensureCommit(start);
-          await git(["checkout", "--quiet", "--force", "--detach", start]);
-          await git(["clean", "--quiet", "-d", "--force", "-x"]);
+          // Start again from the base, without what the restore left.
+          await initialize();
+          await start();
           if (activeSpan)
             diagnostics?.end(
               activeSpan,
@@ -706,18 +668,16 @@ export async function runInGitWorkspace(
       conversation = {
         ...(resume && { resume }),
         ...(lost && { lost: true }),
-        ...(realigned && { realigned }),
         save: (saved) => {
           savedConversation = saved;
         },
       };
     }
-    trustedConfig = await readFile(configPath);
+    await writeConfig(agentConfig);
     agentStarted = true;
     const { reply, plan, sessionTitle } = await work(
-      cwd,
+      { cwd, gitDir: metadata },
       conversation,
-      mode === "plan" ? undefined : publish,
     );
     const title = sessionTitle ? { sessionTitle } : {};
     signal.throwIfAborted();
@@ -725,7 +685,6 @@ export async function runInGitWorkspace(
       if (!plan) throw new Error("Missing plan result");
       return { reply, plan, ...title };
     }
-    // Publishing is the Agent's choice, made with the publication tool.
     return { reply, ...title };
   } catch (error) {
     if (activeSpan)
@@ -737,6 +696,7 @@ export async function runInGitWorkspace(
     throw error;
   } finally {
     await save();
+    await rm(scratch, { recursive: true, force: true });
     // The work stays for a snapshot or the Session's next Turn.
     const cleanup = workDir
       ? []

@@ -24,7 +24,7 @@ export function RunActivity({
 }) {
   const active = isActiveRun(run);
   const [open, setOpen] = useState(active);
-  const { url, plan } = runResult(run.result);
+  const { urls, plan } = runResult(run.result);
   return (
     <div className="space-y-2">
       <Disclosure
@@ -78,7 +78,7 @@ export function RunActivity({
             )}
         </div>
       </Disclosure>
-      {(run.errorCode || plan || url) && (
+      {(run.errorCode || plan || urls) && (
         <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {run.errorCode && (
             <span className="wrap-anywhere text-destructive">
@@ -86,11 +86,13 @@ export function RunActivity({
             </span>
           )}
           {plan && <span>{plan}</span>}
-          {url && (
-            <a className="underline" href={url}>
-              Open pull request
+          {urls?.map((url) => (
+            <a key={url} className="underline" href={url}>
+              {urls.length > 1
+                ? `Open pull request #${url.split("/").pop()}`
+                : "Open pull request"}
             </a>
-          )}
+          ))}
         </div>
       )}
     </div>

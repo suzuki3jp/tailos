@@ -12,9 +12,11 @@ export type RunInput = {
   executionContext: string;
   deadlineAt: number;
 };
-type PublicationResult =
-  | { kind: "no_changes" }
-  | { kind: "pull_request"; url: string; branch: string; sha: string };
+/** The pull requests of the branches the Turn pushed. */
+type PublicationResult = {
+  kind: "pull_requests";
+  pullRequests: { branch: string; url: string }[];
+};
 type RunOutcome =
   | {
       status: "succeeded";
@@ -147,7 +149,7 @@ function publishedPullRequest(outcome: RunnerStatus | RunOutcome) {
     outcome.status === "succeeded" && "publicationResult" in outcome
       ? (outcome.publicationResult as PublicationResult | undefined)
       : undefined;
-  return result?.kind === "pull_request";
+  return !!result?.pullRequests.length;
 }
 
 function completionResult(
@@ -213,8 +215,8 @@ async function storeOutcome(
     if (await store.complete(runId, outcome.reply, storedResult, finishedAt))
       return "succeeded";
   } catch {
-    // A pull request the Turn published is its result: keep trying until the
-    // Run's deadline.
+    // Pull requests the Turn opened are part of its result: keep trying until
+    // the Run's deadline.
     if (published && Date.now() < deadlineAt) {
       return "running";
     }

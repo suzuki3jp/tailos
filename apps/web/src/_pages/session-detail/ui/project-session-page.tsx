@@ -11,6 +11,7 @@ export function ProjectSessionPage({ projectId, sessionId }: Props) {
     <PageShell
       fixedHeight
       activePage="sessions"
+      projectId={projectId}
       activeSessionId={sessionId}
       projectControl={
         <SessionProjectName projectId={projectId} sessionId={sessionId} />

@@ -60,6 +60,8 @@ const startInput = v.strictObject({
   effort: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(50))),
 });
 
+const routineId = v.pipe(v.string(), v.uuid());
+
 /** What a send answers when the owner has not connected the provider. */
 const notConnected = {
   codex: "codex_not_connected",
@@ -217,12 +219,23 @@ export function createSessionRoutes<Detail>(
     .get(
       "/",
       operatorAuth,
-      validator("query", (query: { limit?: string; cursor?: string }) => query),
+      validator(
+        "query",
+        (query: { limit?: string; cursor?: string; routineId?: string }) =>
+          query,
+      ),
       async (c) => {
         // Preserve repeated keys so the shared parser can reject them.
-        const input = sessionListInput(new URL(c.req.url).searchParams);
+        const query = new URL(c.req.url).searchParams;
+        const input = sessionListInput(query);
         const projectId = c.req.param("projectId");
-        if (!input || !projectId)
+        const routineIds = query.getAll("routineId");
+        if (
+          !input ||
+          !projectId ||
+          routineIds.length > 1 ||
+          routineIds.some((id) => !v.safeParse(routineId, id).success)
+        )
           return c.json({ error: "invalid_input" as const }, 400);
         return c.json(
           await listSessions(
@@ -230,6 +243,7 @@ export function createSessionRoutes<Detail>(
             c.var.operatorUserId,
             input,
             projectId,
+            routineIds[0],
           ),
         );
       },

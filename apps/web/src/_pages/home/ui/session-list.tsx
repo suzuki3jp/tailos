@@ -4,11 +4,11 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Button } from "@/shared/ui/design-systems";
 import {
   accountSessionsQueryOptions,
+  SessionRow,
   uniqueSessions,
 } from "@/entities/session";
 import { requestErrorStatus } from "../api/queries";
 import { DataRequestState } from "./data-request-state";
-import { SessionRow } from "./session-row";
 import { useProjectSelection } from "@/features/select-project";
 
 const RECENT_SESSION_LIMIT = 5;

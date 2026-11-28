@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { updatedLabel } from "./session-presentation";
+import { updatedLabel } from "./updated-label";
 
 test("formats API millisecond timestamps as minutes, hours and days without negative elapsed times", () => {
   const now = Date.UTC(2026, 10, 17);

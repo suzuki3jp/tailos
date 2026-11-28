@@ -7,6 +7,7 @@ import {
   diagnosticEvents,
   diagnosticTraces,
   projects,
+  routineSessions,
   runs,
   sessionMessages,
   sessions,
@@ -50,7 +51,7 @@ export function d1Sessions(database: D1Database) {
   const db = drizzle(database);
   return {
     async list(
-      ...[ownerId, limit, before, projectId]: Parameters<
+      ...[ownerId, limit, before, projectId, routineId]: Parameters<
         SessionListStore["list"]
       >
     ) {
@@ -80,6 +81,20 @@ export function d1Sessions(database: D1Database) {
             projectId === undefined
               ? undefined
               : eq(sessions.projectId, projectId),
+            routineId === undefined
+              ? undefined
+              : exists(
+                  db
+                    .select({ id: routineSessions.sessionId })
+                    .from(routineSessions)
+                    .where(
+                      and(
+                        eq(routineSessions.sessionId, sessions.id),
+                        eq(routineSessions.ownerId, ownerId),
+                        eq(routineSessions.routineId, routineId),
+                      ),
+                    ),
+                ),
             before
               ? sql`(${sessions.updatedAt}, ${sessions.id}) < (${before.updatedAt}, ${before.id})`
               : undefined,

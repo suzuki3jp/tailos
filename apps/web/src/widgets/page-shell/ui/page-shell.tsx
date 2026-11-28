@@ -15,18 +15,24 @@ import {
 } from "@/features/select-project";
 import { SidebarAccount } from "./sidebar-account";
 import { SidebarRecentSessions } from "./sidebar-recent-sessions";
-
-const sidebarItemClass =
-  "flex h-9 w-full items-center gap-3 px-6 py-2.5 text-caption hover:bg-sidebar-accent [&_svg]:shrink-0 [&_svg]:text-foreground-strong";
+import { sidebarItemClass } from "./sidebar-item";
+import { SidebarRoutinesLink } from "./sidebar-routines-link";
+import { SelectedProjectRoutinesLink } from "./selected-project-routines-link";
 
 type Props = {
   children: ReactNode;
   projectControl: ReactNode;
   sessionsHref?: string;
-  activePage?: "home" | "sessions" | "settings";
+  activePage?: "home" | "sessions" | "routines" | "settings";
+  /** The Project the page belongs to, whose Routines the sidebar links to. */
+  projectId?: string;
   /** The Session shown on the page, highlighted in Recent Sessions. */
   activeSessionId?: string;
   fixedHeight?: boolean;
+};
+
+type SidebarProps = Omit<Props, "children" | "projectId"> & {
+  routinesLink: ReactNode;
 };
 
 function Sidebar({
@@ -34,7 +40,8 @@ function Sidebar({
   sessionsHref = "/#recent-sessions",
   activePage,
   activeSessionId,
-}: Omit<Props, "children">) {
+  routinesLink,
+}: SidebarProps) {
   return (
     <>
       <div className="flex h-15 shrink-0 items-center gap-2.5 px-3">
@@ -66,6 +73,7 @@ function Sidebar({
             <IconMessages aria-hidden="true" size={20} />
             Sessions
           </Link>
+          {routinesLink}
           <Button
             unstyled
             type="button"
@@ -98,8 +106,19 @@ function Sidebar({
 export function PageShell({
   children,
   fixedHeight = false,
-  ...navigation
-}: Props) {
+  projectId,
+  routinesLink,
+  ...props
+}: Props & { routinesLink?: ReactNode }) {
+  const navigation = {
+    ...props,
+    routinesLink: routinesLink ?? (
+      <SidebarRoutinesLink
+        projectId={projectId}
+        active={props.activePage === "routines"}
+      />
+    ),
+  };
   return (
     <div
       className={cn(
@@ -142,7 +161,15 @@ export function PageShell({
 export function ProjectPageShell(props: Omit<Props, "projectControl">) {
   return (
     <ProjectSelectionProvider>
-      <PageShell {...props} projectControl={<CurrentProjectSelect />} />
+      <PageShell
+        {...props}
+        projectControl={<CurrentProjectSelect />}
+        routinesLink={
+          <SelectedProjectRoutinesLink
+            active={props.activePage === "routines"}
+          />
+        }
+      />
     </ProjectSelectionProvider>
   );
 }
@@ -151,10 +178,13 @@ export function PageContent({
   children,
   slot,
   home = false,
+  centered = home,
 }: {
   children: ReactNode;
   slot?: ReactNode;
   home?: boolean;
+  /** Center the content in the whole area, without room for a right slot. */
+  centered?: boolean;
 }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
@@ -168,7 +198,7 @@ export function PageContent({
           {children}
         </main>
       </div>
-      {!home && <div className="hidden w-60 shrink-0 xl:block">{slot}</div>}
+      {!centered && <div className="hidden w-60 shrink-0 xl:block">{slot}</div>}
     </div>
   );
 }

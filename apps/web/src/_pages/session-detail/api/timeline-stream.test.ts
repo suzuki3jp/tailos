@@ -5,6 +5,8 @@ import { openSessionTimeline } from "./timeline-stream";
 import { timelineQueryOptions } from "./timeline";
 import { accountSessionsQueryOptions } from "@/entities/session";
 
+// The Session entity also exports its row, which links with next/link.
+vi.mock("next/link", () => ({ default: () => null }));
 class Socket {
   static OPEN = 1;
   static instances: Socket[] = [];

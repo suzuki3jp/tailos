@@ -5,8 +5,9 @@ import {
   IconMessageReport,
 } from "@tabler/icons-react";
 import { sessionPath } from "@/shared/lib/session-path";
-import { UnreadMark, type AccountSession } from "@/entities/session";
-import { updatedLabel } from "../model/session-presentation";
+import type { AccountSession } from "../api/account-sessions";
+import { updatedLabel } from "../model/updated-label";
+import { UnreadMark } from "./unread-mark";
 
 const statusIcons = {
   failed: IconMessageReport,
